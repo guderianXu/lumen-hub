@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "usb9-lcd"
+version = "0.1.0"
+description = "Control an ASUS TUF GAMING LC III ARGB LCD over motherboard USB 9-pin HID"
+requires-python = ">=3.10"
+dependencies = [
+  "openrgb-python>=0.3.6",
+  "Pillow>=10.0",
+  "PySide6>=6.7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+lianli = [
+  "pyusb>=1.2",
+  "pycryptodomex>=3.20",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["usb9_lcd*"]

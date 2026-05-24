@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.superpowers/
+.cache/
+logs/
+*.log
+build/
+dist/
+htmlcov/
+.coverage
+assets/user/
