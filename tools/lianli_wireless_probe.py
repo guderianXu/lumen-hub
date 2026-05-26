@@ -365,6 +365,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     validation_gate.add_argument("--capture-dir", type=Path, default=Path(".cache/lianli/captures"))
     validation_gate.add_argument("--hardware-dir", type=Path, default=Path(".cache/lianli/hardware"))
+    validation_gate.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Optional directory containing saved analyze-artifact/extract-wireless-js/diff-artifacts JSON reports",
+    )
     validation_gate.add_argument("--version", default="2.1.17")
     validation_gate.add_argument("--capture-base", default=None)
     validation_gate.add_argument(
@@ -1965,6 +1970,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = lianli_validation_gate(
             capture_dir=args.capture_dir,
             hardware_dir=args.hardware_dir,
+            artifact_dir=args.artifact_dir,
             version=args.version,
             capture_base=args.capture_base,
             experiment_dir=args.experiment_dir,

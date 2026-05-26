@@ -1342,6 +1342,62 @@ def test_probe_lianli_validation_gate_keeps_receiver_status_when_captures_missin
     assert checks["linux-safe-pwm-gate"]["status"] == "ok"
 
 
+def test_probe_lianli_validation_gate_includes_optional_artifact_matrix(tmp_path):
+    artifact_dir = tmp_path / "artifact-reports"
+    artifact_dir.mkdir()
+    (artifact_dir / "analyze-artifact-v2.1.17.json").write_text(
+        json.dumps(
+            {
+                "operation": "analyze-artifact",
+                "path": str(tmp_path / "L-Connect-v2.1.17.exe"),
+                "matches": [
+                    {
+                        "label": "RF sender VID:PID text",
+                        "category": "usb-id",
+                        "confidence": "high",
+                        "count": 1,
+                    },
+                    {
+                        "label": "RF receiver VID:PID text",
+                        "category": "usb-id",
+                        "confidence": "high",
+                        "count": 1,
+                    },
+                ],
+                "summary": {
+                    "categories": {"usb-id": 2},
+                    "confidence": {"high": 2},
+                    "high_confidence_patterns": ["RF sender VID:PID text", "RF receiver VID:PID text"],
+                },
+                "warnings": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = _run_probe(
+        "lianli-validation-gate",
+        "--capture-dir",
+        str(tmp_path / "captures"),
+        "--hardware-dir",
+        str(tmp_path / "hardware"),
+        "--artifact-dir",
+        str(artifact_dir),
+        "--version",
+        "2.1.17",
+        "--capture-base",
+        "lianli-v2117",
+    )
+    checks = {item["name"]: item for item in payload["checklist"]}
+
+    assert payload["artifact_status"] == "matrix-ready"
+    assert payload["artifact_target_version"] == "v2.1.17"
+    assert payload["artifact_target_assessment"] == "rf-usb-protocol-lead"
+    assert checks["official-static-artifact-evidence"]["status"] == "ok"
+    assert "artifact-evidence-matrix" in " ".join(payload["recommended_commands"])
+
+
 def test_probe_receiver_evidence_report_flags_receiver_identity_conflict(tmp_path):
     _write_receiver_evidence_required_payloads(tmp_path)
     readonly_live_list = tmp_path / "readonly" / "live-list.json"

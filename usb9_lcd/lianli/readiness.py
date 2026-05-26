@@ -9,6 +9,7 @@ from usb9_lcd.lianli.analysis import (
     receiver_evidence_report,
     receiver_pairing_risk_report,
 )
+from usb9_lcd.lianli.artifact import artifact_evidence_matrix
 from usb9_lcd.lianli.capture import capture_gap_report
 
 
@@ -16,6 +17,7 @@ def lianli_validation_gate(
     *,
     capture_dir: Path,
     hardware_dir: Path,
+    artifact_dir: Path | None = None,
     version: str = "2.1.17",
     capture_base: str | None = None,
     experiment_dir: Path | None = None,
@@ -38,7 +40,9 @@ def lianli_validation_gate(
     )
     evidence = _receiver_evidence_or_missing(hardware_dir)
     pairing = _receiver_pairing_or_missing(hardware_dir, evidence)
-    checklist = _validation_checklist(capture, evidence, pairing)
+    artifact = _artifact_matrix_or_missing(artifact_dir) if artifact_dir is not None else _artifact_not_configured()
+    target_artifact = _target_artifact_version(artifact, version)
+    checklist = _validation_checklist(capture, evidence, pairing, artifact, target_artifact=target_artifact)
     blockers = [item for item in checklist if item["status"] == "blocker"]
     warnings = [item for item in checklist if item["status"] == "warning"]
     status = _validation_status(capture, evidence, pairing, blockers, warnings)
@@ -48,7 +52,12 @@ def lianli_validation_gate(
         "version": version,
         "capture_dir": str(capture_dir),
         "hardware_dir": str(hardware_dir),
+        "artifact_dir": str(artifact_dir.expanduser()) if artifact_dir is not None else "",
         "capture_base": str(capture.get("capture_base") or capture_base or f"l-connect-v{version}"),
+        "artifact_status": str(artifact.get("status") or ""),
+        "artifact_target_version": str(target_artifact.get("version") or ""),
+        "artifact_target_assessment": str(target_artifact.get("assessment") or ""),
+        "artifact_target_capture_priority": str(target_artifact.get("capture_priority") or ""),
         "capture_status": str(capture.get("status") or ""),
         "receiver_evidence_status": str(evidence.get("status") or ""),
         "receiver_next_action_status": _receiver_next_action_status(evidence),
@@ -64,14 +73,48 @@ def lianli_validation_gate(
             pairing,
             capture_dir=capture_dir,
             hardware_dir=hardware_dir,
+            artifact_dir=artifact_dir.expanduser() if artifact_dir is not None else None,
             version=version,
             capture_base=str(capture.get("capture_base") or capture_base or f"l-connect-v{version}"),
         ),
         "reports": {
+            "artifact_evidence": artifact,
             "capture_gap": capture,
             "receiver_evidence": evidence,
             "pairing_risk": pairing,
         },
+        }
+
+
+def _artifact_not_configured() -> dict[str, Any]:
+    return {
+        "operation": "artifact-evidence-matrix",
+        "path": "",
+        "status": "not-configured",
+        "version_count": 0,
+        "summary": {},
+        "versions": [],
+        "errors": [],
+    }
+
+
+def _artifact_matrix_or_missing(path: Path) -> dict[str, Any]:
+    root = path.expanduser()
+    try:
+        matrix = artifact_evidence_matrix(root)
+    except Exception as error:  # noqa: BLE001 - missing static reports should not hide capture/hardware blockers.
+        return {
+            "operation": "artifact-evidence-matrix",
+            "path": str(root),
+            "status": "missing-artifact-reports" if not root.exists() else "analysis-error",
+            "version_count": 0,
+            "summary": {},
+            "versions": [],
+            "errors": [{"path": str(root), "error": str(error)}],
+        }
+    return {
+        **matrix,
+        "status": "matrix-ready" if int(matrix.get("version_count") or 0) else "no-artifact-versions",
     }
 
 
@@ -144,6 +187,9 @@ def _validation_checklist(
     capture: dict[str, Any],
     evidence: dict[str, Any],
     pairing: dict[str, Any],
+    artifact: dict[str, Any],
+    *,
+    target_artifact: dict[str, Any],
 ) -> list[dict[str, Any]]:
     gap_ids = {str(item.get("id") or "") for item in _dict_items(capture.get("scenario_gaps"))}
     operation_gaps = {
@@ -158,6 +204,7 @@ def _validation_checklist(
     required_missing = _int_value(evidence.get("required_missing_count"))
 
     checks = [
+        *_artifact_checks(artifact, target_artifact),
         _check(
             "windows-baseline-capture",
             "ok"
@@ -204,6 +251,63 @@ def _validation_checklist(
         _pairing_check(pairing, next_status),
     ]
     return checks
+
+
+def _artifact_checks(artifact: dict[str, Any], target_artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    artifact_status = str(artifact.get("status") or "")
+    if artifact_status == "not-configured":
+        return []
+    if artifact_status != "matrix-ready":
+        return [
+            _check(
+                "official-static-artifact-evidence",
+                "warning",
+                "Official L-Connect static report matrix is missing or could not be analyzed.",
+                value=artifact_status or "unknown",
+            )
+        ]
+    if not target_artifact:
+        summary = artifact.get("summary") if isinstance(artifact.get("summary"), dict) else {}
+        high_versions = _string_list(summary.get("high_priority_capture_versions"))
+        return [
+            _check(
+                "official-static-artifact-evidence",
+                "warning",
+                "Static reports exist, but none match the target L-Connect version used by the capture plan.",
+                value="target-version-missing",
+                detail={"high_priority_capture_versions": high_versions},
+            )
+        ]
+
+    assessment = str(target_artifact.get("assessment") or "")
+    if assessment == "rf-usb-protocol-lead":
+        status = "ok"
+        message = "Official static reports contain high-confidence RF sender/receiver evidence for the target version."
+    elif assessment == "rf-usb-low-confidence-lead":
+        status = "warning"
+        message = "Only low-confidence raw RF VID/PID static hits are present; confirm through installed files or USBPcap."
+    elif assessment == "wireless-adjacent-lead":
+        status = "warning"
+        message = "Static reports show wireless-adjacent clues, but not enough direct RF USB protocol evidence."
+    elif assessment == "wired-hid-fan-lead":
+        status = "warning"
+        message = "Static reports show wired HID fan clues, which must stay separate from L-Wireless RF evidence."
+    else:
+        status = "warning"
+        message = "No actionable official static L-Wireless evidence was found for the target version."
+    return [
+        _check(
+            "official-static-artifact-evidence",
+            status,
+            message,
+            value=assessment or "unknown",
+            detail={
+                "version": str(target_artifact.get("version") or ""),
+                "capture_priority": str(target_artifact.get("capture_priority") or ""),
+                "report_count": _int_value(target_artifact.get("report_count")),
+            },
+        )
+    ]
 
 
 def _operation_check(
@@ -332,10 +436,13 @@ def _validation_recommended_commands(
     *,
     capture_dir: Path,
     hardware_dir: Path,
+    artifact_dir: Path | None,
     version: str,
     capture_base: str,
 ) -> list[str]:
     commands = _string_list(capture.get("recommended_commands"))
+    if artifact_dir is not None:
+        commands.append(_tool_command("artifact-evidence-matrix", str(artifact_dir)))
     evidence_status = str(evidence.get("status") or "")
     if evidence_status in {"missing-evidence-directory", "missing-readonly-evidence", "analysis-error"}:
         commands.append(
@@ -371,6 +478,19 @@ def _validation_recommended_commands(
         )
     )
     return _unique_preserve_order(commands)
+
+
+def _target_artifact_version(artifact: dict[str, Any], version: str) -> dict[str, Any]:
+    wanted = _normalize_version(version)
+    for item in _dict_items(artifact.get("versions")):
+        if _normalize_version(str(item.get("version") or "")) == wanted:
+            return item
+    return {}
+
+
+def _normalize_version(version: str) -> str:
+    text = str(version or "").strip().lower()
+    return text[1:] if text.startswith("v") else text
 
 
 def _receiver_next_action(evidence: dict[str, Any]) -> dict[str, Any]:
