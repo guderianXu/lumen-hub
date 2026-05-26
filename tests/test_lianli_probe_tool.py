@@ -170,6 +170,75 @@ def _write_receiver_safe_pwm_evidence(path: Path) -> Path:
     return output_dir
 
 
+def _write_receiver_safe_sync_evidence(path: Path) -> Path:
+    output_dir = path / "experiments" / "safe-sync-aa-bb-cc-dd-ee-ff"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, payload in {
+        "live-list-before.json": {"operation": "live-list-before", "device_count": 1, "devices": [_device_payload()]},
+        "live-pwm-sync.json": {
+            "operation": "live-pwm-sync",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "enabled": True,
+            "fallback_pwm": 100,
+            "expected_pwm_values": [6, 6, 6, 6],
+            "packets_written": 4,
+        },
+        "live-list-after.json": {
+            "operation": "live-list-after",
+            "device_count": 1,
+            "devices": [_device_payload(pwm=[6, 6, 6, 6])],
+        },
+        "analyze-live-pwm-sync.json": {
+            "operation": "analyze-log",
+            "source_operation": "live-pwm-sync",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "likely_effective": True,
+            "target_found_after": True,
+            "expected_effect": {"available": True, "matched": True},
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(output_dir)},
+    }.items():
+        (output_dir / name).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return output_dir
+
+
+def _write_receiver_safe_mirror_evidence(path: Path) -> Path:
+    output_dir = path / "experiments" / "safe-pwm-mirror-aa-bb-cc-dd-ee-ff"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, payload in {
+        "live-list-before.json": {
+            "operation": "live-list-before",
+            "device_count": 1,
+            "motherboard_pwm": 127,
+            "devices": [_device_payload()],
+        },
+        "live-pwm-mirror.json": {
+            "operation": "live-pwm-mirror",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "motherboard_pwm": 127,
+            "pwm_values": [127, 127, 127, 127],
+            "packets_written": 4,
+        },
+        "live-list-after.json": {
+            "operation": "live-list-after",
+            "device_count": 1,
+            "motherboard_pwm": 127,
+            "devices": [_device_payload(pwm=[127, 127, 127, 127])],
+        },
+        "analyze-live-pwm-mirror.json": {
+            "operation": "analyze-log",
+            "source_operation": "live-pwm-mirror",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "likely_effective": True,
+            "target_found_after": True,
+            "expected_effect": {"available": True, "matched": True},
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(output_dir)},
+    }.items():
+        (output_dir / name).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return output_dir
+
+
 def _write_lianli_usb_sysfs_and_dev(sys_root: Path, dev_root: Path) -> None:
     for name, vid, pid, product, busnum, devnum in (
         ("1-1", "0416", "8040", "SLV3TX_V1.6", "001", "002"),
@@ -1034,6 +1103,91 @@ def test_probe_receiver_evidence_report_detects_completed_safe_pwm_directory(tmp
     assert observation_commands
     assert "--target aa:bb:cc:dd:ee:ff" in observation_commands[0]
     assert "--observed-pwm 120" in observation_commands[0]
+
+
+def test_probe_receiver_evidence_report_detects_completed_safe_sync_directory(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    _write_receiver_safe_sync_evidence(tmp_path)
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = next(item for item in payload["write_evidence_sets"] if item["write_operation"] == "live-pwm-sync")
+
+    assert payload["status"] == "write-evidence-needs-observation"
+    assert payload["write_evidence_complete_count"] == 1
+    assert write_set["status"] == "complete"
+    assert write_set["write_kind"] == "motherboard-pwm-sync"
+    assert write_set["write_file"] == "live-pwm-sync.json"
+    assert write_set["analysis_file"] == "analyze-live-pwm-sync.json"
+    assert write_set["control_proof_status"] == "machine-evidence-complete-needs-observation"
+    assert write_set["target"] == "aa:bb:cc:dd:ee:ff"
+    assert write_set["pwm_values"] == [6, 6, 6, 6]
+    assert write_set["machine_consistency"]["status"] == "consistent"
+    assert {item["relative_path"] for item in write_set["files"]} == {
+        "experiments/safe-sync-aa-bb-cc-dd-ee-ff/live-list-before.json",
+        "experiments/safe-sync-aa-bb-cc-dd-ee-ff/live-pwm-sync.json",
+        "experiments/safe-sync-aa-bb-cc-dd-ee-ff/live-list-after.json",
+        "experiments/safe-sync-aa-bb-cc-dd-ee-ff/analyze-live-pwm-sync.json",
+        "experiments/safe-sync-aa-bb-cc-dd-ee-ff/summary.json",
+    }
+    observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
+    assert observation_commands
+    assert "--target aa:bb:cc:dd:ee:ff" in observation_commands[0]
+    assert "--observed-pwm 6" in observation_commands[0]
+
+
+def test_probe_receiver_evidence_report_detects_completed_safe_mirror_directory(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    _write_receiver_safe_mirror_evidence(tmp_path)
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = next(item for item in payload["write_evidence_sets"] if item["write_operation"] == "live-pwm-mirror")
+
+    assert payload["status"] == "write-evidence-needs-observation"
+    assert payload["write_evidence_complete_count"] == 1
+    assert write_set["status"] == "complete"
+    assert write_set["write_kind"] == "motherboard-pwm-mirror"
+    assert write_set["write_file"] == "live-pwm-mirror.json"
+    assert write_set["analysis_file"] == "analyze-live-pwm-mirror.json"
+    assert write_set["target"] == "aa:bb:cc:dd:ee:ff"
+    assert write_set["pwm_values"] == [127, 127, 127, 127]
+    assert write_set["machine_consistency"]["status"] == "consistent"
+    observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
+    assert observation_commands
+    assert "--observed-pwm 127" in observation_commands[0]
+
+
+def test_receiver_evidence_write_set_prefers_mirror_prefix_over_direct_pwm(tmp_path):
+    from usb9_lcd.lianli.analysis import receiver_evidence_write_set
+
+    output_dir = tmp_path / "experiments" / "safe-pwm-mirror-aa-bb-cc-dd-ee-ff"
+
+    write_set = receiver_evidence_write_set(tmp_path, output_dir, {"recommended-command"})
+
+    assert write_set["status"] == "missing"
+    assert write_set["write_operation"] == "live-pwm-mirror"
+    assert write_set["write_file"] == "live-pwm-mirror.json"
+    assert any(item["relative_path"].endswith("analyze-live-pwm-mirror.json") for item in write_set["files"])
+
+
+def test_probe_receiver_evidence_report_flags_safe_sync_machine_pwm_mismatch(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_sync_evidence(tmp_path)
+    after_path = output_dir / "live-list-after.json"
+    after = json.loads(after_path.read_text(encoding="utf-8"))
+    after["devices"][0]["pwm_values"] = [100, 100, 100, 100]
+    after_path.write_text(json.dumps(after) + "\n", encoding="utf-8")
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = next(item for item in payload["write_evidence_sets"] if item["write_operation"] == "live-pwm-sync")
+
+    assert payload["status"] == "write-evidence-machine-conflict"
+    assert payload["write_evidence_machine_conflict_count"] == 1
+    assert write_set["control_proof_status"] == "machine-evidence-conflict"
+    assert write_set["machine_consistency"]["status"] == "conflict"
+    assert any(
+        check["name"] == "after-pwm-values" and check["status"] == "mismatch"
+        for check in write_set["machine_consistency"]["checks"]
+    )
 
 
 def test_probe_receiver_evidence_report_observation_command_keeps_pwm_tuple(tmp_path):

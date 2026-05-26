@@ -1082,11 +1082,14 @@ Risks:
   is recorded against the wrong fan group. Evidence reports now distinguish
   internally consistent complete machine logs that still need observation
   (`write-evidence-needs-observation`) from confirmed control evidence
-  (`write-evidence-confirmed`). Each safe PWM write set now includes
-  `machine_consistency`, checking that `live-pwm.json`, before/after snapshots,
-  and `analyze-live-pwm.json` agree on the target and expected PWM effect.
-  Conflicting machine logs become `write-evidence-machine-conflict`, so a
-  manual observation cannot promote a mixed log set to validated control.
+  (`write-evidence-confirmed`). Each safe fan write set now includes
+  `machine_consistency`, checking that the live write JSON, before/after
+  snapshots, and matching analysis JSON agree on the target and expected PWM
+  effect. The evidence report now recognizes direct PWM, motherboard PWM sync,
+  and motherboard PWM mirror experiment directories instead of assuming every
+  write is `live-pwm.json`. Conflicting machine logs become
+  `write-evidence-machine-conflict`, so a manual observation cannot promote a
+  mixed log set to validated control.
   Negative, malformed, or ambiguous observations now produce explicit
   conflict/invalid/unclear statuses instead of being treated as merely missing
   observation. Confirmed observations also have to match the `live-pwm.json`

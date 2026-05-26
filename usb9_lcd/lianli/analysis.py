@@ -32,6 +32,29 @@ RECEIVER_EVIDENCE_WRITE_FILE_NAMES = (
     "analyze-live-pwm.json",
     "summary.json",
 )
+RECEIVER_EVIDENCE_WRITE_SPECS = {
+    "live-pwm": {
+        "operation": "live-pwm",
+        "label": "direct-pwm",
+        "write_file": "live-pwm.json",
+        "analysis_file": "analyze-live-pwm.json",
+        "dir_prefixes": ("safe-pwm-",),
+    },
+    "live-pwm-sync": {
+        "operation": "live-pwm-sync",
+        "label": "motherboard-pwm-sync",
+        "write_file": "live-pwm-sync.json",
+        "analysis_file": "analyze-live-pwm-sync.json",
+        "dir_prefixes": ("safe-sync-", "safe-pwm-sync-"),
+    },
+    "live-pwm-mirror": {
+        "operation": "live-pwm-mirror",
+        "label": "motherboard-pwm-mirror",
+        "write_file": "live-pwm-mirror.json",
+        "analysis_file": "analyze-live-pwm-mirror.json",
+        "dir_prefixes": ("safe-pwm-mirror-",),
+    },
+}
 RECEIVER_EVIDENCE_FALLBACK_WRITE_DIR = "experiments/safe-pwm-001"
 RECEIVER_OBSERVATION_FILE_NAME = "observation.json"
 RECEIVER_OBSERVATION_EFFECTS = ("changed", "unchanged", "unclear")
@@ -272,16 +295,17 @@ def receiver_evidence_write_sets(root: Path, next_action: dict[str, Any]) -> lis
 
 
 def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str]) -> dict[str, Any]:
+    spec = _receiver_evidence_write_spec(output_dir)
     files = [
         receiver_evidence_file_item(root, output_dir / file_name)
-        for file_name in RECEIVER_EVIDENCE_WRITE_FILE_NAMES
+        for file_name in _receiver_evidence_write_file_names(spec)
     ]
     present = [item for item in files if item["exists"]]
     missing = [item for item in files if not item["exists"]]
-    live_pwm = _optional_json_object(output_dir / "live-pwm.json")
+    live_pwm = _optional_json_object(output_dir / str(spec["write_file"]))
     before_snapshot = _optional_json_object(output_dir / "live-list-before.json")
     after_snapshot = _optional_json_object(output_dir / "live-list-after.json")
-    analysis = _optional_json_object(output_dir / "analyze-live-pwm.json")
+    analysis = _optional_json_object(output_dir / str(spec["analysis_file"]))
     visual_observation = receiver_visual_observation(output_dir)
     observation_consistency = receiver_observation_consistency(live_pwm, visual_observation)
     machine_consistency = receiver_machine_write_consistency(live_pwm, analysis, before_snapshot, after_snapshot)
@@ -304,10 +328,14 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
         "sources": sorted(sources),
         "status": status,
         "control_proof_status": control_proof_status,
+        "write_operation": str(spec["operation"]),
+        "write_kind": str(spec["label"]),
+        "write_file": str(spec["write_file"]),
+        "analysis_file": str(spec["analysis_file"]),
         "present_count": len(present),
         "missing_count": len(missing),
         "target": str(live_pwm.get("target") or analysis.get("target") or ""),
-        "pwm_values": live_pwm.get("pwm_values") if isinstance(live_pwm.get("pwm_values"), list) else [],
+        "pwm_values": receiver_write_expected_pwm_values(live_pwm),
         "packets_written": live_pwm.get("packets_written"),
         "likely_effective": analysis.get("likely_effective"),
         "expected_effect": analysis.get("expected_effect") if isinstance(analysis.get("expected_effect"), dict) else {},
@@ -629,7 +657,7 @@ def receiver_observation_consistency(live_pwm: dict[str, Any], visual_observatio
     elif observed_target:
         target_status = "machine-target-missing"
 
-    machine_pwm = _int_list(live_pwm.get("pwm_values"))
+    machine_pwm = receiver_write_expected_pwm_values(live_pwm)
     observed_pwm_text = str(visual_observation.get("observed_pwm") or "").strip()
     observed_pwm = _parse_observed_pwm_values(observed_pwm_text)
     pwm_status = "not-provided"
@@ -658,6 +686,20 @@ def receiver_observation_consistency(live_pwm: dict[str, Any], visual_observatio
         "observed_pwm_values": observed_pwm or [],
         "notes": notes,
     }
+
+
+def receiver_write_expected_pwm_values(live_write: dict[str, Any]) -> list[int]:
+    operation = str(live_write.get("operation") or "")
+    if operation == "live-pwm-sync":
+        expected = _int_list(live_write.get("expected_pwm_values"))
+        if expected:
+            return expected
+        enabled = bool(live_write.get("enabled", True))
+        if enabled:
+            return [6, 6, 6, 6]
+        fallback_pwm = _int_value(live_write.get("fallback_pwm"), default=-1)
+        return [fallback_pwm] * 4 if fallback_pwm >= 0 else []
+    return _int_list(live_write.get("pwm_values"))
 
 
 def receiver_machine_write_consistency(
@@ -706,7 +748,7 @@ def receiver_machine_write_consistency(
         if status == "missing":
             notes.append(f"{name} snapshot does not contain live-pwm target.")
 
-    machine_pwm = _int_list(live_pwm.get("pwm_values"))
+    machine_pwm = receiver_write_expected_pwm_values(live_pwm)
     after_pwm = _int_list(after_target.get("pwm_values")) if isinstance(after_target, dict) else []
     if machine_pwm and after_pwm:
         status = "match" if after_pwm == machine_pwm else "mismatch"
@@ -833,12 +875,37 @@ def _add_write_evidence_dir(directories: dict[Path, set[str]], output_dir: Path,
 
 
 def _looks_like_safe_pwm_evidence_dir(path: Path) -> bool:
-    if not any((path / file_name).exists() for file_name in RECEIVER_EVIDENCE_WRITE_FILE_NAMES):
+    spec = _receiver_evidence_write_spec(path)
+    file_names = _receiver_evidence_write_file_names(spec)
+    if not any((path / file_name).exists() for file_name in file_names):
         return False
+    prefixes = tuple(str(prefix) for prefix in spec.get("dir_prefixes", ()))
+    return path.name.startswith(prefixes) or any((path / file_name).exists() for file_name in file_names[1:3])
+
+
+def _receiver_evidence_write_spec(output_dir: Path) -> dict[str, Any]:
+    for spec in RECEIVER_EVIDENCE_WRITE_SPECS.values():
+        if (output_dir / str(spec["write_file"])).exists() or (output_dir / str(spec["analysis_file"])).exists():
+            return spec
+    prefix_specs = sorted(
+        RECEIVER_EVIDENCE_WRITE_SPECS.values(),
+        key=lambda item: max((len(str(prefix)) for prefix in item.get("dir_prefixes", ())), default=0),
+        reverse=True,
+    )
+    for spec in prefix_specs:
+        prefixes = tuple(str(prefix) for prefix in spec.get("dir_prefixes", ()))
+        if output_dir.name.startswith(prefixes):
+            return spec
+    return RECEIVER_EVIDENCE_WRITE_SPECS["live-pwm"]
+
+
+def _receiver_evidence_write_file_names(spec: dict[str, Any]) -> tuple[str, ...]:
     return (
-        path.name.startswith("safe-pwm-")
-        or (path / "live-pwm.json").exists()
-        or (path / "analyze-live-pwm.json").exists()
+        "live-list-before.json",
+        str(spec["write_file"]),
+        "live-list-after.json",
+        str(spec["analysis_file"]),
+        "summary.json",
     )
 
 
@@ -850,16 +917,16 @@ def _receiver_evidence_recommended_output_dirs(next_action: dict[str, Any]) -> l
     for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
-        argv = candidate.get("safe_pwm_argv")
-        if not isinstance(argv, list):
-            continue
-        args = [str(item) for item in argv]
-        if "--output-dir" not in args:
-            continue
-        index = args.index("--output-dir")
-        if index + 1 >= len(args):
-            continue
-        output_dirs.append(Path(args[index + 1]))
+        for key, argv in candidate.items():
+            if not str(key).endswith("_argv") or not isinstance(argv, list):
+                continue
+            args = [str(item) for item in argv]
+            if "--output-dir" not in args:
+                continue
+            index = args.index("--output-dir")
+            if index + 1 >= len(args):
+                continue
+            output_dirs.append(Path(args[index + 1]))
     return output_dirs
 
 
