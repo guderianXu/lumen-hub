@@ -232,6 +232,161 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
     }
 
 
+def receiver_pairing_risk_report(path: Path) -> dict[str, Any]:
+    evidence = receiver_evidence_report(path)
+    next_action = (
+        evidence.get("receiver_control_next_action")
+        if isinstance(evidence.get("receiver_control_next_action"), dict)
+        else {}
+    )
+    expansion = (
+        next_action.get("safe_expansion_candidate")
+        if isinstance(next_action.get("safe_expansion_candidate"), dict)
+        else {}
+    )
+    checklist = receiver_pairing_risk_checklist(evidence, next_action, expansion)
+    blockers = [item for item in checklist if item["status"] == "blocker"]
+    warnings = [item for item in checklist if item["status"] == "warning"]
+    deferred_commands = _string_list(expansion.get("deferred_pairing_commands"))
+    if blockers:
+        status = "blocked"
+    elif warnings:
+        status = "needs-manual-review"
+    elif deferred_commands:
+        status = "ready-for-manual-pairing-review"
+    else:
+        status = "no-pairing-command"
+
+    return {
+        "operation": "receiver-pairing-risk-report",
+        "path": str(path),
+        "status": status,
+        "target": str(expansion.get("mac") or ""),
+        "evidence_status": str(evidence.get("status") or ""),
+        "next_action_status": str(next_action.get("status") or ""),
+        "receiver_identity_status": str(next_action.get("receiver_identity_status") or ""),
+        "confirmed_pwm_write_count": _int_value(next_action.get("confirmed_pwm_write_count"), default=0),
+        "confirmed_lighting_write_count": _int_value(
+            next_action.get("confirmed_lighting_write_count"),
+            default=0,
+        ),
+        "checklist": checklist,
+        "blockers": blockers,
+        "warnings": warnings,
+        "deferred_pairing_commands": deferred_commands,
+        "recommended_commands": receiver_pairing_risk_recommended_commands(path, status, next_action),
+        "safe_expansion_candidate": expansion,
+    }
+
+
+def receiver_pairing_risk_checklist(
+    evidence: dict[str, Any],
+    next_action: dict[str, Any],
+    expansion: dict[str, Any],
+) -> list[dict[str, Any]]:
+    required_missing = _int_value(evidence.get("required_missing_count"), default=0)
+    identity_status = str(next_action.get("receiver_identity_status") or "")
+    next_status = str(next_action.get("status") or "")
+    evidence_status = str(evidence.get("status") or "")
+    deferred_commands = _string_list(expansion.get("deferred_pairing_commands"))
+    completed_operations = set(_string_list(expansion.get("completed_operations")))
+    checks = [
+        _pairing_check(
+            "required-evidence-files",
+            required_missing == 0,
+            f"{required_missing} required receiver evidence file(s) are missing.",
+            value=required_missing,
+        ),
+        _pairing_check(
+            "receiver-identity-consistent",
+            identity_status == "consistent",
+            f"receiver identity status is {identity_status or 'unknown'}.",
+            value=identity_status,
+        ),
+        _pairing_check(
+            "no-write-conflicts",
+            _int_value(next_action.get("write_evidence_conflict_count"), default=0) == 0,
+            "guarded write evidence contains conflicts.",
+            value=_int_value(next_action.get("write_evidence_conflict_count"), default=0),
+        ),
+        _pairing_check(
+            "no-incomplete-write-sets",
+            _int_value(next_action.get("write_evidence_incomplete_count"), default=0) == 0,
+            "guarded write evidence contains incomplete machine logs.",
+            value=_int_value(next_action.get("write_evidence_incomplete_count"), default=0),
+        ),
+        _pairing_check(
+            "no-pending-observations",
+            _int_value(next_action.get("write_evidence_pending_observation_count"), default=0) == 0,
+            "guarded write evidence still needs observation records.",
+            value=_int_value(next_action.get("write_evidence_pending_observation_count"), default=0),
+        ),
+        _pairing_check(
+            "pwm-confirmed",
+            _int_value(next_action.get("confirmed_pwm_write_count"), default=0) >= 1,
+            "no visually confirmed PWM write evidence is present.",
+            value=_int_value(next_action.get("confirmed_pwm_write_count"), default=0),
+        ),
+        _pairing_check(
+            "static-rgb-confirmed",
+            "live-rgb" in completed_operations,
+            "static RGB write has not been visually confirmed.",
+            value="live-rgb" in completed_operations,
+        ),
+        _pairing_check(
+            "rainbow-confirmed",
+            "live-rainbow" in completed_operations,
+            "generated rainbow write has not been visually confirmed.",
+            value="live-rainbow" in completed_operations,
+        ),
+        _pairing_check(
+            "pairing-review-stage",
+            next_status == "ready-for-pairing-risk-review",
+            f"next action status is {next_status or 'unknown'}, not ready-for-pairing-risk-review.",
+            value=next_status,
+        ),
+        _pairing_check(
+            "pairing-command-deferred",
+            bool(deferred_commands),
+            "no deferred bind/unbind command is available for manual review.",
+            value=len(deferred_commands),
+        ),
+    ]
+    if evidence_status.startswith("write-evidence-") and evidence_status != "write-evidence-confirmed":
+        checks.append(
+            {
+                "name": "evidence-report-status",
+                "status": "warning",
+                "message": f"receiver-evidence-report status is {evidence_status}.",
+                "value": evidence_status,
+            }
+        )
+    return checks
+
+
+def _pairing_check(name: str, ok: bool, message: str, *, value: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": "ok" if ok else "blocker",
+        "message": "" if ok else message,
+        "value": value,
+    }
+
+
+def receiver_pairing_risk_recommended_commands(
+    path: Path,
+    status: str,
+    next_action: dict[str, Any],
+) -> list[str]:
+    commands = [_tool_command("receiver-evidence-report", str(path))]
+    if status == "blocked":
+        for command in _string_list(next_action.get("recommended_commands")):
+            commands.append(command)
+    else:
+        commands.append(_tool_command("summarize-experiments", str(path)))
+    return _unique_preserve_order(commands)
+
+
 def receiver_observation_record(
     path: Path,
     *,

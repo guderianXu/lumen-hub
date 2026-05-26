@@ -16,6 +16,7 @@
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
 - `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令；如果 receiver 身份证据冲突或不完整，会先要求重新采集整包验证日志。
 - `receiver_control_next_action` 会在安全 PWM 机器日志完整但缺少观察时要求先补 `receiver-observation`；只有 PWM 已经视觉/听感确认后，才会推荐下一步安全 RGB / rainbow 灯光实验。PWM 和两类灯光都确认后，状态会进入 bind/unbind 风险复核，而不会把配对命令作为首选推荐。
+- 已有 `receiver-pairing-risk-report`，用于在不写入 USB 的情况下审计 bind/unbind 前置证据、阻塞项、延后命令和人工复核状态。
 - GUI 的“汇总实验”会显示同一个下一步结论，并且只在 `receiver_control_next_action` 真正允许安全 PWM 时自动填入唯一候选 MAC。
 - 已有抓包驱动的安全写入门禁：`linux-control-write-gate`。
 - GUI 联力页已接入写入门禁；真实主窗口默认要求 write-gate 通过后才解锁写入。
@@ -38,6 +39,7 @@
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
 - [x] `receiver_control_next_action` 会在已确认 PWM 后给出下一阶段安全灯光实验建议；RGB 和 rainbow 都确认后进入 `ready-for-pairing-risk-review`，并把 bind/unbind 保留为延后验证命令。
+- [x] 新增 `receiver-pairing-risk-report`，用于在执行任何 bind/unbind 前输出可分享的风险复核 JSON。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并只在身份一致、写入门禁通过时自动填入唯一可用 MAC。
 
 ## 待完成
@@ -202,6 +204,19 @@ python tools/lianli_wireless_probe.py summarize-experiments .cache/lianli/hardwa
 里会列出 `deferred_pairing_commands`，但 bind/unbind 会改变接收器绑定状态，
 必须等 PWM 和灯光证据都归档后再单独评估，不能作为普通下一步自动执行。
 
+进入 `ready-for-pairing-risk-review` 后，先运行只读风险报告：
+
+```bash
+python tools/lianli_wireless_probe.py \
+  --save-json .cache/lianli/hardware/receiver-pairing-risk-report.json \
+  receiver-pairing-risk-report .cache/lianli/hardware
+```
+
+只有当该报告的 `status` 是 `ready-for-manual-pairing-review`，并且
+`blockers` 为空时，才允许人工打开 `deferred_pairing_commands` 逐条评估。
+这一步仍然不是自动执行许可；它只是证明 PWM、RGB、rainbow、身份一致性和
+write evidence 都已满足配对风险复核的最低门槛。
+
 ## 还没有做
 
 - 没有真实 L-Wireless 接收器枚举证据。
@@ -239,6 +254,7 @@ python tools/lianli_wireless_probe.py summarize-experiments .cache/lianli/hardwa
 - `receiver-validation-bundle.json`
 - `summary.json`
 - `receiver-evidence-report.json`
+- `receiver-pairing-risk-report.json`，仅当进入 `ready-for-pairing-risk-review` 后需要
 - `scan.json`
 - `readiness.json`
 - `live-list.json`

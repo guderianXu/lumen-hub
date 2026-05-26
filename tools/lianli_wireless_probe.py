@@ -12,6 +12,7 @@ from usb9_lcd.lianli.analysis import (
     diff_snapshot_files,
     receiver_evidence_report,
     receiver_observation_record,
+    receiver_pairing_risk_report,
     summarize_experiment_dir,
 )
 from usb9_lcd.lianli.artifact import (
@@ -177,6 +178,12 @@ def _build_parser() -> argparse.ArgumentParser:
     observation.add_argument("--note", action="append", default=[])
     observation.add_argument("--operator", default="")
     observation.add_argument("--observed-at", default="")
+
+    pairing_risk = subparsers.add_parser(
+        "receiver-pairing-risk-report",
+        help="Audit whether bind/unbind risk review prerequisites are satisfied without writing USB",
+    )
+    pairing_risk.add_argument("path", type=Path)
 
     artifact = subparsers.add_parser(
         "analyze-artifact",
@@ -1844,6 +1851,8 @@ def main(argv: list[str] | None = None) -> int:
             operator=args.operator,
             observed_at=args.observed_at,
         )
+    elif command == "receiver-pairing-risk-report":
+        payload = receiver_pairing_risk_report(args.path)
     elif command == "analyze-artifact":
         payload = analyze_artifact_file(args.path)
     elif command == "analyze-artifact-tree":

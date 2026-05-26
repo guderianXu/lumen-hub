@@ -1106,7 +1106,11 @@ Risks:
   next-action status becomes `ready-for-pairing-risk-review`; the primary
   recommendation remains regenerating `receiver-evidence-report`, while the
   state-changing bind/unbind command stays in the deferred pairing list for
-  explicit operator review.
+  explicit operator review. `receiver-pairing-risk-report <hardware-log-dir>`
+  is the no-write audit for that final step: it reuses the evidence report and
+  next-action payload, emits a checklist for identity consistency, completed
+  PWM/RGB/rainbow observations, pending/conflicting write evidence, and only
+  returns `ready-for-manual-pairing-review` when those blockers are clear.
   Negative, malformed, or ambiguous observations now produce explicit
   conflict/invalid/unclear statuses instead of being treated as merely missing
   observation. Confirmed observations also have to match the `live-pwm.json`

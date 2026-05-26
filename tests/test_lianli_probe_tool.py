@@ -1128,6 +1128,83 @@ def test_probe_summarize_experiments_reaches_pairing_review_after_confirmed_ligh
     ]
 
 
+def test_probe_receiver_pairing_risk_report_blocks_before_confirmed_lighting(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    pwm_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    _run_probe(
+        "--save-json",
+        str(pwm_dir / "observation.json"),
+        "receiver-observation",
+        str(pwm_dir),
+        "--effect",
+        "changed",
+        "--target",
+        "aa:bb:cc:dd:ee:ff",
+        "--observed-pwm",
+        "120",
+        "--note",
+        "fan speed visibly changed after guarded PWM write",
+    )
+
+    payload = _run_probe("receiver-pairing-risk-report", str(tmp_path))
+    blockers = {item["name"]: item for item in payload["blockers"]}
+
+    assert payload["operation"] == "receiver-pairing-risk-report"
+    assert payload["status"] == "blocked"
+    assert payload["next_action_status"] == "ready-for-safe-lighting-validation"
+    assert payload["confirmed_pwm_write_count"] == 1
+    assert payload["confirmed_lighting_write_count"] == 0
+    assert blockers["static-rgb-confirmed"]["status"] == "blocker"
+    assert blockers["rainbow-confirmed"]["status"] == "blocker"
+    assert blockers["pairing-review-stage"]["value"] == "ready-for-safe-lighting-validation"
+    assert "safe-rgb-experiment" in " ".join(payload["recommended_commands"])
+
+
+def test_probe_receiver_pairing_risk_report_allows_manual_review_after_lighting(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    pwm_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    rgb_dir = _write_receiver_safe_rgb_evidence(tmp_path)
+    rainbow_dir = _write_receiver_safe_rainbow_evidence(tmp_path)
+    for output_dir, note in (
+        (pwm_dir, "fan speed visibly changed after guarded PWM write"),
+        (rgb_dir, "lighting visibly changed after guarded wireless lighting write"),
+        (rainbow_dir, "lighting visibly changed after guarded wireless lighting write"),
+    ):
+        args = [
+            "--save-json",
+            str(output_dir / "observation.json"),
+            "receiver-observation",
+            str(output_dir),
+            "--effect",
+            "changed",
+            "--target",
+            "aa:bb:cc:dd:ee:ff",
+            "--note",
+            note,
+        ]
+        if output_dir == pwm_dir:
+            args.extend(["--observed-pwm", "120"])
+        _run_probe(*args)
+
+    payload = _run_probe("receiver-pairing-risk-report", str(tmp_path))
+    checklist = {item["name"]: item for item in payload["checklist"]}
+
+    assert payload["status"] == "ready-for-manual-pairing-review"
+    assert payload["target"] == "aa:bb:cc:dd:ee:ff"
+    assert payload["evidence_status"] == "write-evidence-confirmed"
+    assert payload["next_action_status"] == "ready-for-pairing-risk-review"
+    assert payload["blockers"] == []
+    assert checklist["pwm-confirmed"]["status"] == "ok"
+    assert checklist["static-rgb-confirmed"]["status"] == "ok"
+    assert checklist["rainbow-confirmed"]["status"] == "ok"
+    assert checklist["pairing-command-deferred"]["value"] == 1
+    assert "safe-unbind-experiment --mac aa:bb:cc:dd:ee:ff --channel 8" in payload["deferred_pairing_commands"][0]
+    assert payload["recommended_commands"] == [
+        f"python tools/lianli_wireless_probe.py receiver-evidence-report {tmp_path}",
+        f"python tools/lianli_wireless_probe.py summarize-experiments {tmp_path}",
+    ]
+
+
 def test_probe_summarize_experiments_blocks_safe_pwm_on_identity_conflict(tmp_path):
     _write_receiver_evidence_required_payloads(tmp_path)
     readonly_live_list = tmp_path / "readonly" / "live-list.json"
