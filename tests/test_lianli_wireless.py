@@ -3046,6 +3046,21 @@ def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
     assert tasks["direct-fan-speed"]["interface_capture_actions"][0]["hint"] == "fan-controller-settings"
     assert "Apply two fixed manual fan speeds" in tasks["direct-fan-speed"]["interface_capture_actions"][0]["ui_actions"][2]
     assert tasks["direct-fan-speed"]["capture_note_template"]["interface_capture_actions"][0]["label"] == "Apply fan-controller speed settings"
+    assert tasks["direct-fan-speed"]["capture_note_template"]["interface_actions_completed"][0] == {
+        "hint": "fan-controller-settings",
+        "label": "Apply fan-controller speed settings",
+        "source": "target-version",
+        "step": 1,
+        "action": "Open the target wireless fan group controller settings.",
+        "done": False,
+        "operator_observation": "",
+        "observation_prompts": [
+            "Record the exact percent or RPM values used and whether all fans changed together.",
+            "Record any UI apply/saved status after each change.",
+        ],
+        "capture_note": "Maps to official JS controller settings keys such as ALV2Controller- / SLV2Controller-.",
+    }
+    assert "--artifact-dir" in tasks["direct-fan-speed"]["capture_note_command"]
     assert tasks["lighting-static-and-off"]["interface_focus"]["matched_hints"] == ["lighting-effect-settings"]
     assert "lighting effect settings" in tasks["lighting-static-and-off"]["interface_capture_actions"][0]["ui_actions"][0]
     assert tasks["rf-rebind"]["base_priority"] == 90
@@ -3064,6 +3079,26 @@ def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
     assert direct_gap["interface_focus"]["matched_hints"] == ["fan-controller-settings"]
     assert direct_gap["interface_capture_actions"][0]["observations"][0].startswith("Record the exact percent")
     assert "--artifact-dir" in gap_report["recommended_commands"][0]
+
+    note = windows_capture_note(
+        "direct-fan-speed",
+        capture_base=base,
+        artifact_dir=artifact_dir,
+        receiver_mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=132,
+        pwm_values="77,88,99,111",
+        mark_actions_done=True,
+    )
+
+    assert note["artifact_capture_context_status"] == "target-found"
+    assert note["interface_focus"]["matched_hints"] == ["fan-controller-settings"]
+    assert len(note["interface_actions_completed"]) == 3
+    assert all(item["done"] for item in note["interface_actions_completed"])
 
 
 def test_windows_capture_note_generates_filled_sidecar_template():
@@ -3312,6 +3347,51 @@ def test_capture_set_report_summarizes_capture_note_operator_confirmation(tmp_pa
     assert operator_summary["status_counts"] == {"needs-action-confirmation": 1, "missing": 6}
     assert gap_report["capture_note_operator_status"] == "needs-action-confirmation"
     assert gap_report["capture_note_operator_summary"]["status"] == "needs-action-confirmation"
+
+
+def test_capture_set_report_requires_interface_action_confirmation(tmp_path):
+    base = "lianli-v2117"
+    note = windows_capture_note(
+        "direct-fan-speed",
+        capture_base=base,
+        receiver_mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=132,
+        pwm_values="77,88,99,111",
+        mark_actions_done=True,
+    )
+    note["interface_actions_completed"] = [
+        {
+            "hint": "fan-controller-settings",
+            "label": "Apply fan-controller speed settings",
+            "source": "target-version",
+            "step": 1,
+            "action": "Open the target wireless fan group controller settings.",
+            "done": False,
+            "operator_observation": "",
+        }
+    ]
+    note["status"] = "ready"
+    (tmp_path / note["capture_note_file"]).write_text(json.dumps(note), encoding="utf-8")
+
+    report = capture_set_report(tmp_path, capture_base=base)
+    gap_report = capture_gap_report(tmp_path, capture_base=base)
+    note_payload = {scenario["id"]: scenario for scenario in report["scenarios"]}["direct-fan-speed"]["capture_note"]
+    operator_summary = report["capture_note_operator_summary"]
+
+    assert note_payload["operator_status"] == "needs-action-confirmation"
+    assert note_payload["windows_actions_all_done"] is True
+    assert note_payload["interface_action_count"] == 1
+    assert note_payload["interface_actions_done_count"] == 0
+    assert note_payload["interface_actions_all_done"] is False
+    assert operator_summary["status"] == "needs-action-confirmation"
+    assert operator_summary["scenarios"][0]["interface_action_count"] == 1
+    assert operator_summary["scenarios"][0]["interface_actions_done_count"] == 0
+    assert gap_report["capture_note_operator_status"] == "needs-action-confirmation"
 
 
 def test_capture_set_report_feeds_static_rgb_observed_parameters_to_packet_preview(tmp_path):

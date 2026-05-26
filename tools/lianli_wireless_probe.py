@@ -650,6 +650,11 @@ def _build_parser() -> argparse.ArgumentParser:
     windows_note.add_argument("--version", default="2.1.17", help="L-Connect version under test")
     windows_note.add_argument("--capture-base", help="Output capture filename prefix")
     windows_note.add_argument("--capture-file", help="Override the planned capture filename")
+    windows_note.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Optional directory containing artifact/changelog evidence used to add interface action checks",
+    )
     windows_note.add_argument("--captured-at", default="")
     windows_note.add_argument("--operator", default="")
     windows_note.add_argument("--environment", default="windows-vm-usb-passthrough")
@@ -2006,6 +2011,7 @@ def main(argv: list[str] | None = None) -> int:
             version=args.version,
             capture_base=args.capture_base,
             capture_file=args.capture_file,
+            artifact_dir=args.artifact_dir,
             captured_at=args.captured_at,
             operator=args.operator,
             environment=args.environment,

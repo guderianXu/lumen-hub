@@ -1033,7 +1033,10 @@ Risks:
   analyzed L-Connect asset version contains the JS entry points. Those same
   hints now expand into `interface_capture_actions`, a scenario-specific Windows
   UI action and observation checklist that is also copied into generated
-  capture-note templates.
+  capture-note templates. `windows-capture-note --artifact-dir` now expands
+  those same hints into `interface_actions_completed` checklist rows, and
+  capture-set/operator summaries warn when the official-interface actions were
+  not explicitly confirmed beside the USBPcap file.
   High-entropy data still gets warnings where isolated 4-byte VID/PID hits may
   be accidental.
 - `usb9_lcd.lianli.changelog`: official L-Connect 3 changelog analyzer. It

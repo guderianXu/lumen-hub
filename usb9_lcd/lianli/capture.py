@@ -1307,7 +1307,13 @@ def windows_capture_runbook(
     scenario_gaps = _capture_gap_scenario_items(scenario_reports, artifact_context=artifact_context)
     operation_gaps = _capture_gap_operation_items(matrix if isinstance(matrix, list) else [])
     next_gap = scenario_gaps[0] if scenario_gaps else {}
-    tasks = _windows_capture_runbook_tasks(root, plan, scenario_reports, artifact_context=artifact_context)
+    tasks = _windows_capture_runbook_tasks(
+        root,
+        plan,
+        scenario_reports,
+        artifact_context=artifact_context,
+        artifact_dir=artifact_dir,
+    )
     next_task = next((task for task in tasks if task["capture_file"] == next_gap.get("capture_file")), {})
     status = _capture_gap_status(capture_report, scenario_gaps, operation_gaps)
     return {
@@ -1374,6 +1380,7 @@ def windows_capture_note(
     version: str = "2.1.17",
     capture_base: str | None = None,
     capture_file: str | None = None,
+    artifact_dir: Path | None = None,
     captured_at: str = "",
     operator: str = "",
     environment: str = "windows-vm-usb-passthrough",
@@ -1399,7 +1406,8 @@ def windows_capture_note(
     mark_actions_done: bool = False,
 ) -> dict[str, Any]:
     base = capture_base or f"l-connect-v{version}"
-    scenarios = _windows_capture_scenarios(base)
+    artifact_context = _capture_artifact_context(version, artifact_dir)
+    scenarios = _windows_capture_plan_scenarios(base, artifact_context=artifact_context)
     scenario = next((item for item in scenarios if str(item.get("id") or "") == scenario_id), None)
     if scenario is None:
         return {
@@ -1423,6 +1431,9 @@ def windows_capture_note(
         mark_actions_done=mark_actions_done,
     )
     note["capture_base"] = base
+    note["artifact_capture_context_status"] = str(artifact_context.get("status") or "")
+    if artifact_dir is not None:
+        note["artifact_dir"] = str(artifact_dir.expanduser())
     note["captured_at"] = captured_at
     note["operator"] = operator
     note["environment"] = environment
@@ -1453,6 +1464,11 @@ def windows_capture_note(
         note["windows_actions_completed"] = [
             {**item, "done": True}
             for item in note["windows_actions_completed"]
+            if isinstance(item, dict)
+        ]
+        note["interface_actions_completed"] = [
+            {**item, "done": True}
+            for item in note["interface_actions_completed"]
             if isinstance(item, dict)
         ]
     note["observations"] = [str(item) for item in (observations or [])]
@@ -5590,6 +5606,9 @@ def _capture_set_capture_note_operator_summary(scenario_reports: list[dict[str, 
                 "windows_action_count": int(note.get("windows_action_count") or 0),
                 "windows_actions_done_count": int(note.get("windows_actions_done_count") or 0),
                 "windows_actions_all_done": bool(note.get("windows_actions_all_done")),
+                "interface_action_count": int(note.get("interface_action_count") or 0),
+                "interface_actions_done_count": int(note.get("interface_actions_done_count") or 0),
+                "interface_actions_all_done": bool(note.get("interface_actions_all_done")),
                 "target_context_missing_fields": _ordered_strings_from_list(note.get("target_context_missing_fields")),
                 "path": str(note.get("path") or ""),
             }
@@ -10599,6 +10618,7 @@ def _windows_capture_runbook_tasks(
     scenario_reports: list[dict[str, Any]],
     *,
     artifact_context: dict[str, Any] | None = None,
+    artifact_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     report_by_id = {
         str(report.get("id") or ""): report
@@ -10644,7 +10664,12 @@ def _windows_capture_runbook_tasks(
                 "capture_note_file": _windows_capture_note_file(capture_file),
                 "capture_note_path": str(_windows_capture_note_path(root, capture_file)),
                 "capture_note_template": _windows_capture_note_template(plan, scenario, capture_file),
-                "capture_note_command": _windows_capture_note_command(root, scenario_id, capture_file),
+                "capture_note_command": _windows_capture_note_command(
+                    root,
+                    scenario_id,
+                    capture_file,
+                    artifact_dir=artifact_dir,
+                ),
                 "goal": str(scenario.get("goal") or report.get("goal") or ""),
                 "windows_actions": _ordered_strings_from_list(scenario.get("windows_actions")),
                 "expected_evidence": _ordered_strings_from_list(scenario.get("expected_evidence")),
@@ -10771,7 +10796,13 @@ def _windows_capture_runbook_recommended_commands(
     return _unique_preserve_order(commands)
 
 
-def _windows_capture_note_command(root: Path, scenario_id: str, capture_file: str) -> str:
+def _windows_capture_note_command(
+    root: Path,
+    scenario_id: str,
+    capture_file: str,
+    *,
+    artifact_dir: Path | None = None,
+) -> str:
     return _tool_command(
         "--save-json",
         str(_windows_capture_note_path(root, capture_file)),
@@ -10779,6 +10810,7 @@ def _windows_capture_note_command(root: Path, scenario_id: str, capture_file: st
         scenario_id,
         "--capture-base",
         _capture_set_base_from_capture_file(capture_file),
+        *_artifact_dir_command_args(artifact_dir),
         "--receiver-mac",
         "<receiver-mac>",
         "--master-mac",
@@ -10918,9 +10950,39 @@ def _windows_capture_note_template(
         ],
         "interface_focus": interface_focus,
         "interface_capture_actions": interface_actions,
+        "interface_actions_completed": _windows_capture_note_interface_actions_completed(interface_actions),
         "observations": [],
         "expected_evidence": _ordered_strings_from_list(scenario.get("expected_evidence")),
     }
+
+
+def _windows_capture_note_interface_actions_completed(
+    interface_actions: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    completed: list[dict[str, Any]] = []
+    for group in interface_actions:
+        if not isinstance(group, dict):
+            continue
+        hint = str(group.get("hint") or "")
+        label = str(group.get("label") or hint)
+        source = str(group.get("source") or "")
+        capture_note = str(group.get("capture_note") or "")
+        observation_prompts = _ordered_strings_from_list(group.get("observations"))
+        for step, action in enumerate(_ordered_strings_from_list(group.get("ui_actions")), start=1):
+            completed.append(
+                {
+                    "hint": hint,
+                    "label": label,
+                    "source": source,
+                    "step": step,
+                    "action": action,
+                    "done": False,
+                    "operator_observation": "",
+                    "observation_prompts": observation_prompts,
+                    "capture_note": capture_note,
+                }
+            )
+    return completed
 
 
 def _capture_set_scenario_note(root: Path, capture_file: str, scenario_id: str) -> dict[str, Any]:
@@ -10952,10 +11014,11 @@ def _capture_set_scenario_note(root: Path, capture_file: str, scenario_id: str) 
         }
     warnings = _capture_note_warnings(payload, scenario_id, capture_file)
     actions = _capture_note_actions(payload.get("windows_actions_completed"))
+    interface_actions = _capture_note_actions(payload.get("interface_actions_completed"))
     target_context = _capture_note_mapping(payload.get("target_context"))
     expected_parameters = _capture_note_parameter_mapping(payload.get("expected_parameters"))
     missing_target_fields = _capture_note_target_context_missing_fields(target_context)
-    operator_status = _capture_note_operator_status(payload, actions, missing_target_fields)
+    operator_status = _capture_note_operator_status(payload, actions, interface_actions, missing_target_fields)
     return {
         "status": "mismatch" if warnings else "ok",
         "operator_status": operator_status,
@@ -10976,6 +11039,13 @@ def _capture_set_scenario_note(root: Path, capture_file: str, scenario_id: str) 
         "windows_action_count": len(actions),
         "windows_actions_done_count": sum(1 for action in actions if bool(action.get("done"))),
         "windows_actions_all_done": bool(actions) and all(bool(action.get("done")) for action in actions),
+        "interface_focus": _capture_note_mapping(payload.get("interface_focus")),
+        "interface_capture_actions": _capture_note_actions(payload.get("interface_capture_actions")),
+        "interface_actions_completed": interface_actions,
+        "interface_action_count": len(interface_actions),
+        "interface_actions_done_count": sum(1 for action in interface_actions if bool(action.get("done"))),
+        "interface_actions_all_done": bool(interface_actions)
+        and all(bool(action.get("done")) for action in interface_actions),
         "observations": _capture_note_observations(payload.get("observations")),
         "warnings": warnings,
     }
@@ -11014,11 +11084,14 @@ def _capture_note_warnings(payload: dict[str, Any], scenario_id: str, capture_fi
 def _capture_note_operator_status(
     payload: dict[str, Any],
     actions: list[dict[str, Any]],
+    interface_actions: list[dict[str, Any]],
     missing_target_fields: list[str],
 ) -> str:
     if missing_target_fields:
         return "needs-target-context"
     if not actions or any(not bool(action.get("done")) for action in actions):
+        return "needs-action-confirmation"
+    if interface_actions and any(not bool(action.get("done")) for action in interface_actions):
         return "needs-action-confirmation"
     declared_status = str(payload.get("status") or "")
     return declared_status or "ready"

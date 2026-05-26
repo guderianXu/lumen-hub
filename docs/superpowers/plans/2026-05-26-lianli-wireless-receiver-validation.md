@@ -59,6 +59,7 @@
 - [x] `extract-wireless-js` 已输出结构化 `ipc_events` 和 `settings_keys`，`artifact-evidence-matrix` 会汇总 `wireless_js_interface_versions`；这些入口线索只用于标注 Windows 抓包动作，不会单独升级为已确认 RF 协议证据。
 - [x] `extract-wireless-js` 已新增 `capture_hints`，把官方 JS 的 controller/settings/effect/discovery 入口映射到 baseline、PWM、sync、sort、灯光等 Windows 抓包场景；`windows-capture-runbook` 和 `capture-gap-report` 会在每个场景暴露 `interface_focus`。
 - [x] `windows-capture-runbook` / `capture-gap-report` / capture-note 模板已输出 `interface_capture_actions`，把 `interface_focus` 转成场景级 Windows UI 操作和观察记录清单，便于真实 USBPcap 抓包时按官方入口逐项执行。
+- [x] `windows-capture-note --artifact-dir` 已把 `interface_capture_actions` 展开为 `interface_actions_completed` 勾选项；`capture-set-report.capture_note_operator_summary` 会把未确认的官方界面入口动作计入 `needs-action-confirmation`，避免后续把没有按官方路径操作的抓包误当成可验证证据。
 
 ## 待完成
 

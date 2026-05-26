@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from usb9_lcd.lianli.artifact import extract_wireless_js_clues
 from usb9_lcd.lianli.wireless import RGB_FIRST_PAYLOAD_REPEAT_COUNT, WirelessDeviceInfo, WirelessSnapshot
 
 
@@ -3485,11 +3486,20 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
     assert changelog_gaps["sort-quick-sync"]["base_priority"] == 50
     assert changelog_gaps["sort-quick-sync"]["changelog_focus"]["matched"] is True
 
+    wireless_js = artifact_dir / "assets-v2.1.17-wireless.js"
+    wireless_js.write_text("pipe.writeSettings('ALV2Controller-', data);", encoding="utf-8")
+    (artifact_dir / "extract-wireless-js-v2.1.17.json").write_text(
+        json.dumps(extract_wireless_js_clues(wireless_js)),
+        encoding="utf-8",
+    )
+
     note_payload = _run_probe(
         "windows-capture-note",
         "direct-fan-speed",
         "--capture-base",
         base,
+        "--artifact-dir",
+        str(artifact_dir),
         "--receiver-mac",
         "aa:bb:cc:dd:ee:ff",
         "--master-mac",
@@ -3516,6 +3526,8 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
     assert note_payload["capture_note_file"] == f"{base}-01-direct-fan-speed.notes.json"
     assert note_payload["target_context"]["channel"] == 8
     assert note_payload["expected_parameters"]["pwm_values"] == "77,88,99,111"
+    assert note_payload["interface_actions_completed"][0]["hint"] == "fan-controller-settings"
+    assert all(item["done"] for item in note_payload["interface_actions_completed"])
     assert note_payload["observations"] == ["Applied 55% fan speed."]
     contract = payload["linux_interface_contract"]
     assert contract["transport"]["sender"]["confidence"] == "high"
