@@ -1401,6 +1401,13 @@ Risks:
   With no captures it prioritizes `lianli-v2117-00-baseline.pcapng`; with
   baseline/direct PWM already present it moves on to motherboard PWM sync before
   lighting, sort/quick-sync, and RF rebind.
+- `python tools/lianli_wireless_probe.py lianli-validation-gate --capture-dir <capture-dir> --hardware-dir <hardware-log-dir> --capture-base lianli-v2117`:
+  added as the top-level no-write readiness report. It composes
+  `capture-gap-report`, `receiver-evidence-report`, and
+  `receiver-pairing-risk-report` into one checklist with blockers, warnings,
+  stage status, and next commands. Use this after plugging in the receiver so
+  the operator does not have to compare separate Windows capture, Linux
+  hardware, and pairing-risk JSON files by hand.
 - `python tools/lianli_wireless_probe.py linux-interface-contract <capture-dir> --capture-base lianli-v2117 --experiment-dir <linux-log-dir>`:
   added and covered by direct/CLI tests; exports the stable
   `lianli-linux-interface-contract/v1` implementation contract directly. Use

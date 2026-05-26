@@ -76,7 +76,8 @@ def test_fan_host_layout_separates_dense_sections():
     page = FanControlHostPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
 
     assert [page.workspace_tabs.tabText(index) for index in range(page.workspace_tabs.count())] == [
-        "总览",
+        "仪表盘",
+        "曲线",
         "调速",
         "策略",
         "通道",
@@ -84,16 +85,12 @@ def test_fan_host_layout_separates_dense_sections():
         "压力测试",
         "历史",
     ]
-    assert page.overview_sections.count() == 3
-    assert [page.overview_sections.tabText(index) for index in range(page.overview_sections.count())] == [
-        "概览",
-        "曲线",
-        "通道卡",
-    ]
-    assert page.channel_detail_tabs.count() == 2
+    assert page.charts_tab.parentWidget() is not None
+    assert page.channel_detail_tabs.count() == 3
     assert [page.channel_detail_tabs.tabText(index) for index in range(page.channel_detail_tabs.count())] == [
         "标定",
         "全部通道",
+        "实时卡片",
     ]
     assert page.channel_selector_section.objectName() == "FanChannelEditorSection"
     assert page.channel_properties_section.objectName() == "FanChannelEditorSection"
@@ -108,7 +105,7 @@ def test_fan_host_layout_separates_dense_sections():
     assert page.fan_role_summary_label.isHidden()
     assert page.fan_role_speed_label.isHidden()
     assert page.fan_identity_overview_label.isHidden()
-    assert page.fan_identity_table.parentWidget() is not page.overview_sections.widget(0)
+    assert page.fan_identity_table.parentWidget() is not page.overview_tab
     assert page.workspace_tabs.minimumHeight() >= 520
     assert page.workspace_tabs.maximumHeight() == 16777215
 

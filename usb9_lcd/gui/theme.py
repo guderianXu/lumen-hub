@@ -71,6 +71,11 @@ def gui_stylesheet() -> str:
         border-radius: 8px;
     }
     QFrame#MetricCard:hover { border-color: #484d50; }
+    QFrame#FanCommandPanel {
+        background: #18191a;
+        border: 1px solid #34383b;
+        border-radius: 8px;
+    }
     QFrame#LightingTargetPanel,
     QFrame#LightingPresetPanel,
     QFrame#LightingActionPanel,
@@ -88,6 +93,11 @@ def gui_stylesheet() -> str:
         border-color: #484d50;
     }
     QFrame#FanDashboardPanel {
+        background: #18191a;
+        border: 1px solid #34383b;
+        border-radius: 8px;
+    }
+    QFrame#FanChartPanel {
         background: #18191a;
         border: 1px solid #34383b;
         border-radius: 8px;
@@ -123,7 +133,7 @@ def gui_stylesheet() -> str:
     }
     QTabWidget#FanWorkspaceTabs QTabBar::tab {
         padding: 9px 14px;
-        min-width: 70px;
+        min-width: 64px;
     }
     QTabWidget#FanWorkspaceTabs QTabBar::tab:selected {
         background: #24322e;

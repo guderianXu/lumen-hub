@@ -1908,7 +1908,8 @@ def test_fan_page_exposes_control_center_layout_before_loading():
     assert page.fan_table.columnCount() == 8
     assert page.fan_table.horizontalHeaderItem(3).text() == "关联传感器"
     assert [page.workspace_tabs.tabText(index) for index in range(page.workspace_tabs.count())] == [
-        "总览",
+        "仪表盘",
+        "曲线",
         "调速",
         "策略",
         "通道",

@@ -39,6 +39,7 @@ from usb9_lcd.lianli.changelog import (
     analyze_lconnect_changelog_text,
     load_lconnect_changelog_source,
 )
+from usb9_lcd.lianli.readiness import lianli_validation_gate
 from usb9_lcd.lianli.lcd import (
     LianLiWirelessLcdBackend,
     TL_WIRELESS_LCD_PID,
@@ -123,6 +124,7 @@ __all__ = [
     "linux_control_target_registry_report",
     "linux_control_write_gate_report",
     "linux_interface_contract_report",
+    "lianli_validation_gate",
     "summarize_capture_dir",
     "usb_capture_readiness",
     "protocol_signature_catalog",

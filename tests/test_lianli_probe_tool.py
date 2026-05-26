@@ -1293,6 +1293,55 @@ def test_probe_receiver_evidence_report_audits_saved_bundle(tmp_path):
     assert all(item["exists"] for item in payload["required_files"])
 
 
+def test_probe_lianli_validation_gate_blocks_before_capture_and_receiver_evidence(tmp_path):
+    payload = _run_probe(
+        "lianli-validation-gate",
+        "--capture-dir",
+        str(tmp_path / "captures"),
+        "--hardware-dir",
+        str(tmp_path / "hardware"),
+        "--capture-base",
+        "lianli-v2117",
+    )
+    checks = {item["name"]: item for item in payload["checklist"]}
+
+    assert payload["operation"] == "lianli-validation-gate"
+    assert payload["status"] == "needs-windows-baseline-capture"
+    assert payload["capture_status"] == "needs-all-windows-captures"
+    assert payload["receiver_evidence_status"] == "missing-evidence-directory"
+    assert payload["receiver_next_action_status"] == "needs-receiver-validation-bundle"
+    assert checks["windows-baseline-capture"]["status"] == "blocker"
+    assert checks["receiver-validation-bundle"]["status"] == "blocker"
+    assert checks["linux-safe-pwm-gate"]["status"] == "blocker"
+    assert any("receiver-validation-bundle" in command for command in payload["recommended_commands"])
+    assert payload["recommended_commands"][-1].startswith(
+        "python tools/lianli_wireless_probe.py lianli-validation-gate"
+    )
+
+
+def test_probe_lianli_validation_gate_keeps_receiver_status_when_captures_missing(tmp_path):
+    hardware_dir = tmp_path / "hardware"
+    _write_receiver_evidence_required_payloads(hardware_dir)
+
+    payload = _run_probe(
+        "lianli-validation-gate",
+        "--capture-dir",
+        str(tmp_path / "captures"),
+        "--hardware-dir",
+        str(hardware_dir),
+        "--capture-base",
+        "lianli-v2117",
+    )
+    checks = {item["name"]: item for item in payload["checklist"]}
+
+    assert payload["status"] == "needs-windows-baseline-capture"
+    assert payload["receiver_evidence_status"] == "ready-for-single-target-safe-pwm"
+    assert payload["receiver_next_action_status"] == "ready-for-single-target-safe-pwm"
+    assert checks["receiver-validation-bundle"]["status"] == "ok"
+    assert checks["receiver-identity-consistent"]["status"] == "ok"
+    assert checks["linux-safe-pwm-gate"]["status"] == "ok"
+
+
 def test_probe_receiver_evidence_report_flags_receiver_identity_conflict(tmp_path):
     _write_receiver_evidence_required_payloads(tmp_path)
     readonly_live_list = tmp_path / "readonly" / "live-list.json"

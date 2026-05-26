@@ -56,6 +56,7 @@ from usb9_lcd.lianli.lcd import (
     wireless_lcd_command_from_name,
     wireless_lcd_encryption_available,
 )
+from usb9_lcd.lianli.readiness import lianli_validation_gate
 from usb9_lcd.lianli.wireless import (
     LianLiWirelessBackend,
     LianLiWirelessError,
@@ -357,6 +358,24 @@ def _build_parser() -> argparse.ArgumentParser:
     capture_gap.add_argument("--rainbow-frames", type=int, default=3)
     capture_gap.add_argument("--interval-ms", type=int, default=40)
     capture_gap.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+
+    validation_gate = subparsers.add_parser(
+        "lianli-validation-gate",
+        help="Compose Windows capture gaps and receiver evidence into one no-write readiness gate",
+    )
+    validation_gate.add_argument("--capture-dir", type=Path, default=Path(".cache/lianli/captures"))
+    validation_gate.add_argument("--hardware-dir", type=Path, default=Path(".cache/lianli/hardware"))
+    validation_gate.add_argument("--version", default="2.1.17")
+    validation_gate.add_argument("--capture-base", default=None)
+    validation_gate.add_argument(
+        "--experiment-dir",
+        type=Path,
+        help="Attach summarize-experiments output from a Linux validation/experiment directory",
+    )
+    validation_gate.add_argument("--led-count", type=int, default=12)
+    validation_gate.add_argument("--rainbow-frames", type=int, default=3)
+    validation_gate.add_argument("--interval-ms", type=int, default=40)
+    validation_gate.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
 
     linux_contract = subparsers.add_parser(
         "linux-interface-contract",
@@ -1934,6 +1953,18 @@ def main(argv: list[str] | None = None) -> int:
     elif command == "capture-gap-report":
         payload = capture_gap_report(
             args.path,
+            version=args.version,
+            capture_base=args.capture_base,
+            experiment_dir=args.experiment_dir,
+            led_count=args.led_count,
+            rainbow_frames=args.rainbow_frames,
+            interval_ms=args.interval_ms,
+            effect_index=args.effect_index,
+        )
+    elif command == "lianli-validation-gate":
+        payload = lianli_validation_gate(
+            capture_dir=args.capture_dir,
+            hardware_dir=args.hardware_dir,
             version=args.version,
             capture_base=args.capture_base,
             experiment_dir=args.experiment_dir,
