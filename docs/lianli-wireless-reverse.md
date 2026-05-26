@@ -396,6 +396,8 @@ Practical interpretation:
     conflicts across sidecars, and exposes `common_target_args` for no-write
     `compare-capture` / dry-run commands. This is operator context only; it
     does not unlock guarded writes.
+    It also emits `capture_note_operator_summary`, which tracks whether the
+    Windows actions in each sidecar were marked complete.
     `capture-gap-report <capture-dir> --capture-base lianli-v2117` is the
     compact operator view of the same data: it sorts missing/partial scenarios
     by priority, names the next capture file to produce, lists proof gates such
@@ -1414,6 +1416,9 @@ Risks:
   `contextual_planned_linux_commands`: when a sidecar has a consistent target
   context, planned no-write `compare-capture` commands are emitted with
   receiver MAC, master MAC, channel, rx_type, device_type, and LED count filled.
+  It also carries `capture_note_operator_summary`; unconfirmed sidecar actions
+  remain visible in the compact gap report instead of being hidden in the full
+  capture-set JSON.
   With no captures it prioritizes `lianli-v2117-00-baseline.pcapng`; with
   baseline/direct PWM already present it moves on to motherboard PWM sync before
   lighting, sort/quick-sync, and RF rebind.
@@ -1442,7 +1447,8 @@ Risks:
   `--artifact-dir` is omitted, the gate still works from capture and hardware
   evidence only. A sidecar target conflict is reported as
   `capture-note-target-context` and makes the gate status
-  `needs-capture-note-context-fix`.
+  `needs-capture-note-context-fix`. Unconfirmed sidecar actions are reported as
+  a `capture-note-operator-status` warning.
 - `python tools/lianli_wireless_probe.py linux-interface-contract <capture-dir> --capture-base lianli-v2117 --experiment-dir <linux-log-dir>`:
   added and covered by direct/CLI tests; exports the stable
   `lianli-linux-interface-contract/v1` implementation contract directly. Use

@@ -50,6 +50,7 @@
 - [x] `capture-set-report.capture_note_context_summary` 会汇总所有 sidecar 的目标上下文，标记 receiver MAC/channel/rx_type 等字段冲突，并输出可复制到无写入 compare/dry-run 命令的 `common_target_args`。
 - [x] `capture-gap-report` 和 `lianli-validation-gate` 已消费同一份 sidecar 上下文；目标冲突会进入 `capture-note-target-context` blocker。
 - [x] `capture-gap-report` / `windows-capture-runbook` 会用 sidecar 目标上下文填充 planned no-write `compare-capture` 命令，同时保留 triage/protocol/timeline 分析命令。
+- [x] `capture-set-report.capture_note_operator_summary` 会统计 sidecar 的 Windows 动作确认状态；`lianli-validation-gate` 会把未确认动作显示为 `capture-note-operator-status` warning。
 - [x] 新增 `lianli-validation-gate`，用于把可选 `artifact-evidence-matrix`、`capture-gap-report`、`receiver-evidence-report` 和 `receiver-pairing-risk-report` 合并成一个 readiness JSON，优先暴露 blocker、warning 和下一步命令。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并只在身份一致、写入门禁通过时自动填入唯一可用 MAC。
 

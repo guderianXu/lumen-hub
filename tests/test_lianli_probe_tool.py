@@ -1365,6 +1365,52 @@ def test_probe_lianli_validation_gate_blocks_capture_note_target_conflict(tmp_pa
     assert checks["capture-note-target-context"]["detail"]["conflicts"][0]["field"] == "receiver_mac"
 
 
+def test_probe_lianli_validation_gate_warns_on_unconfirmed_capture_note(tmp_path):
+    capture_dir = tmp_path / "captures"
+    capture_dir.mkdir()
+    base = "lianli-v2117"
+    (capture_dir / f"{base}-01-direct-fan-speed.notes.json").write_text(
+        json.dumps(
+            {
+                "operation": "windows-capture-note",
+                "schema_version": "lianli-windows-capture-note/v1",
+                "status": "needs-action-confirmation",
+                "scenario_id": "direct-fan-speed",
+                "capture_file": f"{base}-01-direct-fan-speed.pcapng",
+                "target_context": {
+                    "receiver_mac": "aa:bb:cc:dd:ee:ff",
+                    "master_mac": "10:20:30:40:50:60",
+                    "channel": 8,
+                    "rx_type": 3,
+                    "device_type": 2,
+                    "fan_count": 3,
+                    "led_count": 132,
+                },
+                "windows_actions_completed": [{"action": "Apply 55%", "done": False}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = _run_probe(
+        "lianli-validation-gate",
+        "--capture-dir",
+        str(capture_dir),
+        "--hardware-dir",
+        str(tmp_path / "hardware"),
+        "--capture-base",
+        base,
+    )
+    checks = {item["name"]: item for item in payload["checklist"]}
+
+    assert payload["reports"]["capture_gap"]["capture_note_operator_status"] == "needs-action-confirmation"
+    assert checks["capture-note-operator-status"]["status"] == "warning"
+    assert checks["capture-note-operator-status"]["detail"]["status_counts"] == {
+        "missing": 6,
+        "needs-action-confirmation": 1,
+    }
+
+
 def test_probe_lianli_validation_gate_keeps_receiver_status_when_captures_missing(tmp_path):
     hardware_dir = tmp_path / "hardware"
     _write_receiver_evidence_required_payloads(hardware_dir)

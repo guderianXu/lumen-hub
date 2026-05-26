@@ -2982,6 +2982,7 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
     assert report["capture_note_status_counts"] == {"missing": 6, "ok": 1}
     assert report["capture_note_present_count"] == 1
     note_context = report["capture_note_context_summary"]
+    note_operator = report["capture_note_operator_summary"]
     assert note_context["status"] == "consistent-target-context"
     assert note_context["target_context_count"] == 1
     assert note_context["complete_target_context_count"] == 1
@@ -3006,6 +3007,10 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
         "--device-type",
         "2",
     ]
+    assert note_operator["status"] == "ready"
+    assert note_operator["ready_count"] == 1
+    assert note_operator["scenarios"][0]["windows_action_count"] == 1
+    assert note_operator["scenarios"][0]["windows_actions_done_count"] == 1
     assert scenarios["direct-fan-speed"]["found"] is False
     assert scenarios["direct-fan-speed"]["status"] == "missing-capture"
     assert any("aa:bb:cc:dd:ee:ff" in command and "<receiver-mac>" not in command for command in direct_contextual)
@@ -3016,6 +3021,8 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
         str(tmp_path / f"{base}-01-direct-fan-speed.pcapng"),
     )
     assert note["status"] == "ok"
+    assert note["operator_status"] == "ready"
+    assert note["windows_actions_all_done"] is True
     assert note["operator"] == "xjw"
     assert note["target_context"]["receiver_mac"] == "aa:bb:cc:dd:ee:ff"
     assert note["usbpcap_interfaces"] == ["0416:8040", "0416:8041"]
@@ -3070,6 +3077,37 @@ def test_capture_set_report_flags_capture_note_target_context_conflicts(tmp_path
     assert note_context["common_target_context"]["channel"] == "8"
     assert gap_report["capture_note_context_status"] == "target-context-conflict"
     assert gap_report["capture_note_context_summary"]["conflicts"] == note_context["conflicts"]
+
+
+def test_capture_set_report_summarizes_capture_note_operator_confirmation(tmp_path):
+    base = "lianli-v2117"
+    note = windows_capture_note(
+        "direct-fan-speed",
+        capture_base=base,
+        receiver_mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=132,
+        mark_actions_done=False,
+    )
+    (tmp_path / note["capture_note_file"]).write_text(json.dumps(note), encoding="utf-8")
+
+    report = capture_set_report(tmp_path, capture_base=base)
+    gap_report = capture_gap_report(tmp_path, capture_base=base)
+    note_payload = {scenario["id"]: scenario for scenario in report["scenarios"]}["direct-fan-speed"]["capture_note"]
+    operator_summary = report["capture_note_operator_summary"]
+
+    assert note_payload["operator_status"] == "needs-action-confirmation"
+    assert note_payload["windows_action_count"] == 4
+    assert note_payload["windows_actions_done_count"] == 0
+    assert note_payload["windows_actions_all_done"] is False
+    assert operator_summary["status"] == "needs-action-confirmation"
+    assert operator_summary["status_counts"] == {"needs-action-confirmation": 1, "missing": 6}
+    assert gap_report["capture_note_operator_status"] == "needs-action-confirmation"
+    assert gap_report["capture_note_operator_summary"]["status"] == "needs-action-confirmation"
 
 
 def test_capture_set_report_feeds_static_rgb_observed_parameters_to_packet_preview(tmp_path):

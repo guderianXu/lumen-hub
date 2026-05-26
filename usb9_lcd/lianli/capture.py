@@ -1121,6 +1121,7 @@ def capture_set_report(
     )
     cross_scenario_deltas = _capture_set_cross_scenario_deltas(scenario_reports)
     capture_note_context_summary = _capture_set_capture_note_context_summary(scenario_reports)
+    capture_note_operator_summary = _capture_set_capture_note_operator_summary(scenario_reports)
     return {
         "operation": "capture-set-report",
         "path": str(root),
@@ -1145,6 +1146,7 @@ def capture_set_report(
         "aggregate_rf_operations": dict(sorted(aggregate_operations.items())),
         "aggregate_matched_signatures": dict(sorted(aggregate_matched_signatures.items())),
         "capture_note_context_summary": capture_note_context_summary,
+        "capture_note_operator_summary": capture_note_operator_summary,
         "cross_scenario_deltas": cross_scenario_deltas,
         "linux_live_write_targets": live_write_targets,
         "hardware_validation": hardware_validation,
@@ -1197,6 +1199,11 @@ def capture_gap_report(
         if isinstance(capture_report.get("capture_note_context_summary"), dict)
         else {}
     )
+    capture_note_operator_summary = (
+        capture_report.get("capture_note_operator_summary")
+        if isinstance(capture_report.get("capture_note_operator_summary"), dict)
+        else {}
+    )
     return {
         "operation": "capture-gap-report",
         "path": str(path.expanduser()),
@@ -1219,6 +1226,8 @@ def capture_gap_report(
         "receiver_seen_count": int(capture_report.get("receiver_seen_count") or 0),
         "capture_note_context_status": str(capture_note_context_summary.get("status") or ""),
         "capture_note_context_summary": capture_note_context_summary,
+        "capture_note_operator_status": str(capture_note_operator_summary.get("status") or ""),
+        "capture_note_operator_summary": capture_note_operator_summary,
         "next_capture": next_capture,
         "scenario_gaps": scenario_gaps,
         "operation_gaps": operation_gaps,
@@ -5468,6 +5477,71 @@ def _capture_set_capture_note_context_summary(scenario_reports: list[dict[str, A
         "scenario_target_contexts": contexts,
         "notes": _capture_note_context_summary_notes(contexts, present_contexts, conflicts, common_args),
     }
+
+
+def _capture_set_capture_note_operator_summary(scenario_reports: list[dict[str, Any]]) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    status_counts: Counter[str] = Counter()
+    for report in scenario_reports:
+        if not isinstance(report, dict):
+            continue
+        note = report.get("capture_note")
+        if not isinstance(note, dict):
+            continue
+        note_status = str(note.get("status") or "missing")
+        if note_status not in {"ok", "mismatch"}:
+            status_counts[note_status] += 1
+            continue
+        operator_status = str(note.get("operator_status") or "")
+        status_counts[operator_status or "unknown"] += 1
+        items.append(
+            {
+                "scenario_id": str(report.get("id") or note.get("scenario_id") or ""),
+                "capture_file": str(report.get("capture_file") or note.get("capture_file") or ""),
+                "capture_note_status": note_status,
+                "operator_status": operator_status or "unknown",
+                "windows_action_count": int(note.get("windows_action_count") or 0),
+                "windows_actions_done_count": int(note.get("windows_actions_done_count") or 0),
+                "windows_actions_all_done": bool(note.get("windows_actions_all_done")),
+                "target_context_missing_fields": _ordered_strings_from_list(note.get("target_context_missing_fields")),
+                "path": str(note.get("path") or ""),
+            }
+        )
+    return {
+        "status": _capture_note_operator_summary_status(items),
+        "note_count": len(items),
+        "ready_count": sum(1 for item in items if item["operator_status"] == "ready"),
+        "status_counts": dict(sorted(status_counts.items())),
+        "scenarios": items,
+        "notes": _capture_note_operator_summary_notes(items),
+    }
+
+
+def _capture_note_operator_summary_status(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "no-capture-notes"
+    statuses = {str(item.get("operator_status") or "") for item in items}
+    if "needs-target-context" in statuses:
+        return "needs-target-context"
+    if "needs-action-confirmation" in statuses:
+        return "needs-action-confirmation"
+    if statuses == {"ready"}:
+        return "ready"
+    return "mixed"
+
+
+def _capture_note_operator_summary_notes(items: list[dict[str, Any]]) -> list[str]:
+    if not items:
+        return ["No usable Windows capture note sidecars were found."]
+    incomplete = [
+        item
+        for item in items
+        if str(item.get("operator_status") or "") != "ready"
+    ]
+    if not incomplete:
+        return ["All usable Windows capture notes are marked ready by the operator."]
+    scenario_ids = ", ".join(str(item.get("scenario_id") or "") for item in incomplete if item.get("scenario_id"))
+    return [f"Capture note operator confirmation is incomplete for: {scenario_ids}."]
 
 
 def _capture_note_context_item(report: dict[str, Any], note: dict[str, Any]) -> dict[str, Any]:
@@ -10209,8 +10283,13 @@ def _capture_set_scenario_note(root: Path, capture_file: str, scenario_id: str) 
             "error": "capture note JSON must contain an object",
         }
     warnings = _capture_note_warnings(payload, scenario_id, capture_file)
+    actions = _capture_note_actions(payload.get("windows_actions_completed"))
+    target_context = _capture_note_mapping(payload.get("target_context"))
+    missing_target_fields = _capture_note_target_context_missing_fields(target_context)
+    operator_status = _capture_note_operator_status(payload, actions, missing_target_fields)
     return {
         "status": "mismatch" if warnings else "ok",
+        "operator_status": operator_status,
         "path": str(note_path),
         "expected_path": str(expected_path),
         "schema_version": str(payload.get("schema_version") or ""),
@@ -10220,9 +10299,13 @@ def _capture_set_scenario_note(root: Path, capture_file: str, scenario_id: str) 
         "operator": str(payload.get("operator") or ""),
         "environment": str(payload.get("environment") or ""),
         "lconnect_version": str(payload.get("lconnect_version") or payload.get("version") or ""),
-        "target_context": _capture_note_mapping(payload.get("target_context")),
+        "target_context": target_context,
+        "target_context_missing_fields": missing_target_fields,
         "usbpcap_interfaces": _ordered_strings_from_list(payload.get("usbpcap_interfaces")),
-        "windows_actions_completed": _capture_note_actions(payload.get("windows_actions_completed")),
+        "windows_actions_completed": actions,
+        "windows_action_count": len(actions),
+        "windows_actions_done_count": sum(1 for action in actions if bool(action.get("done"))),
+        "windows_actions_all_done": bool(actions) and all(bool(action.get("done")) for action in actions),
         "observations": _capture_note_observations(payload.get("observations")),
         "warnings": warnings,
     }
@@ -10256,6 +10339,27 @@ def _capture_note_warnings(payload: dict[str, Any], scenario_id: str, capture_fi
     if str(payload.get("capture_file") or "") != capture_file:
         warnings.append("capture_file does not match planned capture file")
     return warnings
+
+
+def _capture_note_operator_status(
+    payload: dict[str, Any],
+    actions: list[dict[str, Any]],
+    missing_target_fields: list[str],
+) -> str:
+    if missing_target_fields:
+        return "needs-target-context"
+    if not actions or any(not bool(action.get("done")) for action in actions):
+        return "needs-action-confirmation"
+    declared_status = str(payload.get("status") or "")
+    return declared_status or "ready"
+
+
+def _capture_note_target_context_missing_fields(context: dict[str, Any]) -> list[str]:
+    return [
+        field
+        for field in _CAPTURE_NOTE_TARGET_CONTEXT_FIELDS
+        if _capture_note_context_value(context.get(field)) == ""
+    ]
 
 
 def _capture_note_mapping(value: Any) -> dict[str, Any]:

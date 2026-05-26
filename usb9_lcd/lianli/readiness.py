@@ -206,6 +206,7 @@ def _validation_checklist(
     checks = [
         *_artifact_checks(artifact, target_artifact),
         _capture_note_context_check(capture),
+        _capture_note_operator_check(capture),
         _check(
             "windows-baseline-capture",
             "ok"
@@ -252,6 +253,33 @@ def _validation_checklist(
         _pairing_check(pairing, next_status),
     ]
     return checks
+
+
+def _capture_note_operator_check(capture: dict[str, Any]) -> dict[str, Any]:
+    summary = capture.get("capture_note_operator_summary")
+    if not isinstance(summary, dict):
+        return _check(
+            "capture-note-operator-status",
+            "ok",
+            "No Windows capture note operator status has been recorded yet.",
+            value="not-evaluated",
+        )
+    status = str(summary.get("status") or "")
+    if status in {"needs-target-context", "needs-action-confirmation", "mixed"}:
+        return _check(
+            "capture-note-operator-status",
+            "warning",
+            "Some Windows capture sidecars are not marked ready; confirm actions and target context before trusting scenario evidence.",
+            value=status,
+            detail={"status_counts": summary.get("status_counts", {})},
+        )
+    return _check(
+        "capture-note-operator-status",
+        "ok",
+        "Windows capture sidecars are absent or marked ready by the operator.",
+        value=status or "unknown",
+        detail={"ready_count": _int_value(summary.get("ready_count"))},
+    )
 
 
 def _capture_note_context_check(capture: dict[str, Any]) -> dict[str, Any]:
