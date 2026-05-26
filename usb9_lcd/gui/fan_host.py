@@ -2103,7 +2103,8 @@ class FanControlHostPage(QWidget):
 
         self.workspace_tabs = QTabWidget()
         self.workspace_tabs.setObjectName("FanWorkspaceTabs")
-        self.workspace_tabs.setMaximumHeight(560)
+        self.workspace_tabs.setMinimumHeight(520)
+        self.workspace_tabs.setMaximumHeight(760)
         self.workspace_tabs.currentChanged.connect(self._workspace_tab_changed)
         self.overview_tab = QWidget()
         self.overview_layout = QVBoxLayout(self.overview_tab)
@@ -2178,18 +2179,33 @@ class FanControlHostPage(QWidget):
         self.visual_status_label.setObjectName("FieldHint")
         visual_layout.addWidget(visual_title, 0, 0)
         visual_layout.addWidget(self.visual_status_label, 0, 1, Qt.AlignmentFlag.AlignRight)
+        self.overview_sections = QTabWidget()
+        self.overview_sections.setObjectName("FanOverviewSections")
+        live_overview_page = QWidget()
+        live_overview_layout = QVBoxLayout(live_overview_page)
+        live_overview_layout.setContentsMargins(0, 0, 0, 0)
+        live_overview_layout.setSpacing(10)
+        charts_page = QWidget()
+        charts_layout = QGridLayout(charts_page)
+        charts_layout.setContentsMargins(0, 0, 0, 0)
+        charts_layout.setHorizontalSpacing(12)
+        charts_layout.setVerticalSpacing(12)
+        channel_cards_page = QWidget()
+        channel_cards_layout = QVBoxLayout(channel_cards_page)
+        channel_cards_layout.setContentsMargins(0, 0, 0, 0)
+        channel_cards_layout.setSpacing(10)
         self.fan_role_summary_label = QLabel("加载后会按 CPU 风扇、水泵/AIO、机箱风扇和未识别通道分组显示。")
         self.fan_role_summary_label.setObjectName("FanRoleSummary")
         self.fan_role_summary_label.setWordWrap(True)
-        visual_layout.addWidget(self.fan_role_summary_label, 1, 0, 1, 2)
+        live_overview_layout.addWidget(self.fan_role_summary_label)
         self.fan_role_speed_label = QLabel("加载后会直接列出 CPU_FAN、CPU_OPT、水泵和机箱风扇的实时转速。")
         self.fan_role_speed_label.setObjectName("FanSpeedSummary")
         self.fan_role_speed_label.setWordWrap(True)
-        visual_layout.addWidget(self.fan_role_speed_label, 2, 0, 1, 2)
+        live_overview_layout.addWidget(self.fan_role_speed_label)
         self.fan_identity_overview_label = QLabel("加载后显示每路物理接口、角色、转速和识别状态。")
         self.fan_identity_overview_label.setObjectName("FanIdentityOverview")
         self.fan_identity_overview_label.setWordWrap(True)
-        visual_layout.addWidget(self.fan_identity_overview_label, 3, 0, 1, 2)
+        live_overview_layout.addWidget(self.fan_identity_overview_label)
 
         identity_notice_row = QHBoxLayout()
         identity_notice_row.setSpacing(10)
@@ -2201,7 +2217,7 @@ class FanControlHostPage(QWidget):
         self.confirm_all_candidates_button.clicked.connect(self.confirm_all_candidate_channel_detections)
         identity_notice_row.addWidget(self.fan_identity_notice_label, 1)
         identity_notice_row.addWidget(self.confirm_all_candidates_button)
-        visual_layout.addLayout(identity_notice_row, 4, 0, 1, 2)
+        live_overview_layout.addLayout(identity_notice_row)
 
         self.fan_identity_table = QTableWidget(0, 5)
         self.fan_identity_table.setObjectName("FanIdentityTable")
@@ -2211,14 +2227,14 @@ class FanControlHostPage(QWidget):
         self.fan_identity_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.fan_identity_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.fan_identity_table.setAlternatingRowColors(True)
-        self.fan_identity_table.setMinimumHeight(96)
-        self.fan_identity_table.setMaximumHeight(138)
+        self.fan_identity_table.setMinimumHeight(150)
+        self.fan_identity_table.setMaximumHeight(220)
         self.fan_identity_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.fan_identity_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.fan_identity_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.fan_identity_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.fan_identity_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        visual_layout.addWidget(self.fan_identity_table, 5, 0, 1, 2)
+        live_overview_layout.addWidget(self.fan_identity_table)
 
         self.fan_role_metric_cards: dict[str, FanRoleMetricCard] = {}
         role_metrics = QWidget()
@@ -2227,12 +2243,13 @@ class FanControlHostPage(QWidget):
         role_metrics_layout.setContentsMargins(0, 0, 0, 0)
         role_metrics_layout.setHorizontalSpacing(10)
         role_metrics_layout.setVerticalSpacing(10)
-        for column, role in enumerate(("CPU 风扇", "水泵/AIO", "机箱风扇", "GPU 风扇")):
+        for index, role in enumerate(("CPU 风扇", "水泵/AIO", "机箱风扇", "GPU 风扇")):
             card = FanRoleMetricCard(role)
             self.fan_role_metric_cards[role] = card
-            role_metrics_layout.addWidget(card, 0, column)
+            row, column = divmod(index, 2)
+            role_metrics_layout.addWidget(card, row, column)
             role_metrics_layout.setColumnStretch(column, 1)
-        visual_layout.addWidget(role_metrics, 6, 0, 1, 2)
+        live_overview_layout.addWidget(role_metrics)
 
         self.fan_cards_container = QWidget()
         self.fan_cards_container.setObjectName("FanCardsContainer")
@@ -2244,23 +2261,23 @@ class FanControlHostPage(QWidget):
         self.fan_cards_empty_label.setObjectName("FieldHint")
         self.fan_cards_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.fan_cards_layout.addWidget(self.fan_cards_empty_label, 0, 0)
-        visual_layout.addWidget(self.fan_cards_container, 7, 0, 1, 2)
+        channel_cards_layout.addWidget(self.fan_cards_container, 1)
 
         self.rpm_chart = FanTrendChart("RPM 实时趋势", "RPM", default_max=1800)
         self.temperature_chart = FanTrendChart("温度趋势", "°C", default_max=90)
-        visual_layout.addWidget(self.rpm_chart, 8, 0)
-        visual_layout.addWidget(self.temperature_chart, 8, 1)
+        charts_layout.addWidget(self.rpm_chart, 0, 0)
+        charts_layout.addWidget(self.temperature_chart, 0, 1)
+        charts_layout.setColumnStretch(0, 1)
+        charts_layout.setColumnStretch(1, 1)
+        charts_layout.setRowStretch(0, 1)
+        self.overview_sections.addTab(live_overview_page, "概览")
+        self.overview_sections.addTab(charts_page, "曲线")
+        self.overview_sections.addTab(channel_cards_page, "通道卡")
+        visual_layout.addWidget(self.overview_sections, 1, 0, 1, 2)
         visual_layout.setColumnStretch(0, 1)
         visual_layout.setColumnStretch(1, 1)
         visual_layout.setRowStretch(0, 0)
-        visual_layout.setRowStretch(1, 0)
-        visual_layout.setRowStretch(2, 0)
-        visual_layout.setRowStretch(3, 0)
-        visual_layout.setRowStretch(4, 0)
-        visual_layout.setRowStretch(5, 0)
-        visual_layout.setRowStretch(6, 0)
-        visual_layout.setRowStretch(7, 0)
-        visual_layout.setRowStretch(8, 1)
+        visual_layout.setRowStretch(1, 1)
         self.overview_layout.addWidget(self.visual_panel)
         self.overview_layout.addStretch(1)
 
@@ -2312,12 +2329,22 @@ class FanControlHostPage(QWidget):
         self.copy_udev_rules_button.clicked.connect(self.copy_permanent_permission_rules)
         self.permission_detail_text = QTextEdit()
         self.permission_detail_text.setReadOnly(True)
-        self.permission_detail_text.setMinimumHeight(104)
-        self.permission_detail_text.setMaximumHeight(170)
+        self.permission_detail_text.setMinimumHeight(210)
         self.permission_wizard_text = QTextEdit()
         self.permission_wizard_text.setReadOnly(True)
-        self.permission_wizard_text.setMinimumHeight(96)
-        self.permission_wizard_text.setMaximumHeight(150)
+        self.permission_wizard_text.setMinimumHeight(210)
+        self.permission_info_tabs = QTabWidget()
+        self.permission_info_tabs.setObjectName("FanPermissionInfoTabs")
+        permission_detail_page = QWidget()
+        permission_detail_page_layout = QVBoxLayout(permission_detail_page)
+        permission_detail_page_layout.setContentsMargins(0, 0, 0, 0)
+        permission_detail_page_layout.addWidget(self.permission_detail_text)
+        permission_wizard_page = QWidget()
+        permission_wizard_page_layout = QVBoxLayout(permission_wizard_page)
+        permission_wizard_page_layout.setContentsMargins(0, 0, 0, 0)
+        permission_wizard_page_layout.addWidget(self.permission_wizard_text)
+        self.permission_info_tabs.addTab(permission_detail_page, "权限明细")
+        self.permission_info_tabs.addTab(permission_wizard_page, "诊断建议")
         permission_layout.addWidget(permission_title, 0, 0)
         permission_layout.addWidget(self.refresh_permissions_button, 0, 1)
         permission_layout.addWidget(self.grant_permissions_button, 0, 2)
@@ -2326,8 +2353,7 @@ class FanControlHostPage(QWidget):
         permission_layout.addWidget(self.copy_udev_rules_button, 1, 2)
         permission_layout.addWidget(self.repair_profile_permissions_button, 1, 3)
         permission_layout.addWidget(permission_hint, 2, 0, 1, 4)
-        permission_layout.addWidget(self.permission_detail_text, 3, 0, 1, 4)
-        permission_layout.addWidget(self.permission_wizard_text, 4, 0, 1, 4)
+        permission_layout.addWidget(self.permission_info_tabs, 3, 0, 1, 4)
         self.permission_layout.addWidget(permission_panel)
         self.permission_layout.addStretch(1)
         self._update_permission_summary()
@@ -2340,6 +2366,16 @@ class FanControlHostPage(QWidget):
         details_layout.setSpacing(8)
         details_title = QLabel("通道明细")
         details_title.setObjectName("SectionLabel")
+        self.channel_detail_tabs = QTabWidget()
+        self.channel_detail_tabs.setObjectName("FanChannelDetailTabs")
+        channel_calibration_tab = QWidget()
+        channel_calibration_layout = QVBoxLayout(channel_calibration_tab)
+        channel_calibration_layout.setContentsMargins(0, 0, 0, 0)
+        channel_calibration_layout.setSpacing(8)
+        channel_table_tab = QWidget()
+        channel_table_layout = QVBoxLayout(channel_table_tab)
+        channel_table_layout.setContentsMargins(0, 0, 0, 0)
+        channel_table_layout.setSpacing(8)
         identity_layout = QGridLayout()
         identity_layout.setHorizontalSpacing(10)
         identity_layout.setVerticalSpacing(8)
@@ -2408,15 +2444,18 @@ class FanControlHostPage(QWidget):
         self.fan_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for column in (1, 2, 3, 4, 5, 6, 7):
             self.fan_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
-        self.fan_table.setMinimumHeight(170)
-        self.fan_table.setMaximumHeight(280)
+        self.fan_table.setMinimumHeight(260)
         self.fan_table_hint = QLabel("加载只读监控后，这里会显示每个风扇的 RPM、PWM、来源和写入状态。")
         self.fan_table_hint.setObjectName("FieldHint")
         self.fan_table_hint.setWordWrap(True)
         details_layout.addWidget(details_title)
-        details_layout.addLayout(identity_layout)
-        details_layout.addWidget(self.fan_table_hint)
-        details_layout.addWidget(self.fan_table)
+        channel_calibration_layout.addLayout(identity_layout)
+        channel_calibration_layout.addStretch(1)
+        channel_table_layout.addWidget(self.fan_table_hint)
+        channel_table_layout.addWidget(self.fan_table, 1)
+        self.channel_detail_tabs.addTab(channel_calibration_tab, "标定")
+        self.channel_detail_tabs.addTab(channel_table_tab, "全部通道")
+        details_layout.addWidget(self.channel_detail_tabs, 1)
         self.details_layout.addWidget(details_panel, 1)
         self._refresh_channel_label_editor()
 
@@ -2667,21 +2706,21 @@ class FanControlHostPage(QWidget):
             return
         widget = self.workspace_tabs.widget(index)
         if widget is self.overview_tab:
-            height = 640
+            height = 760
         elif widget is self.strategy_tab:
-            height = 680 if self.strategy_tabs.currentWidget() is self.strategy_editor_tab else 205
+            height = 720 if self.strategy_tabs.currentWidget() is self.strategy_editor_tab else 260
         elif widget is self.maintenance_tab:
             active = self.maintenance_tabs.currentWidget()
             if active is self.control_tab or active is self.history_tab:
-                height = 560
+                height = 700
             elif active is self.details_tab:
-                height = 430
+                height = 620
             elif active is self.test_tab:
-                height = 330
+                height = 420
             else:
-                height = 430
+                height = 520
         else:
-            height = 230
+            height = 300
         self.workspace_tabs.setMaximumHeight(height)
 
     def _strategy_tab_changed(self, _index: int) -> None:

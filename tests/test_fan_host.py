@@ -67,6 +67,36 @@ def test_fan_host_display_mapping_keeps_backend_fields_and_classifies_roles(tmp_
     app.quit()
 
 
+def test_fan_host_layout_separates_dense_sections():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
+
+    assert page.overview_sections.count() == 3
+    assert [page.overview_sections.tabText(index) for index in range(page.overview_sections.count())] == [
+        "概览",
+        "曲线",
+        "通道卡",
+    ]
+    assert page.channel_detail_tabs.count() == 2
+    assert [page.channel_detail_tabs.tabText(index) for index in range(page.channel_detail_tabs.count())] == [
+        "标定",
+        "全部通道",
+    ]
+    assert page.permission_info_tabs.count() == 2
+    assert [page.permission_info_tabs.tabText(index) for index in range(page.permission_info_tabs.count())] == [
+        "权限明细",
+        "诊断建议",
+    ]
+    assert page.workspace_tabs.maximumHeight() >= 700
+
+    page.close()
+    app.quit()
+
+
 def test_fan_host_channel_override_changes_role_and_display_name(tmp_path: Path):
     from PySide6.QtWidgets import QApplication
 
