@@ -35,11 +35,13 @@ from usb9_lcd.gui.debug import log_event, log_exception
 from usb9_lcd.gui.gif_preview import decode_gif_preview_frames
 from usb9_lcd.gui.settings import GuiSettings, LightingUiSettings, save_settings
 from usb9_lcd.lianli.analysis import analyze_live_log, diff_snapshot_files, summarize_experiment_dir
+from usb9_lcd.lianli.capture import linux_control_write_gate_report
 from usb9_lcd.lianli.lcd import LianLiWirelessLcdBackend, create_pyusb_lcd_backend
 from usb9_lcd.lianli.wireless import (
     LianLiWirelessBackend,
     WirelessDeviceInfo,
     create_pyusb_backend,
+    infer_led_count,
     scan_known_usb_devices,
 )
 from usb9_lcd.lighting import LightingSettings, LightingTarget, OpenRgbLightingController, OpenRgbServerManager
@@ -56,6 +58,7 @@ LIGHTING_PALETTES: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 LIANLI_WRITE_CONFIRM_TOKEN = "WRITE-LIANLI"
+GIF_PREVIEW_MIN_FRAME_MS = 66
 
 
 def format_cpu_temperature(cpu: CpuTelemetry) -> str:
@@ -359,6 +362,7 @@ class MonitorPage(QWidget):
 
 class LianLiWirelessPage(QWidget):
     operation_finished = Signal(str, object)
+    status_changed = Signal(str)
 
     def __init__(
         self,
@@ -367,9 +371,15 @@ class LianLiWirelessPage(QWidget):
         validation_output_dir: Path = Path(".cache/lianli/gui-validation"),
         experiment_output_dir: Path = Path(".cache/lianli/gui-pwm-experiment"),
         sync_experiment_output_dir: Path = Path(".cache/lianli/gui-sync-experiment"),
+        mirror_experiment_output_dir: Path = Path(".cache/lianli/gui-pwm-mirror-experiment"),
         rgb_experiment_output_dir: Path = Path(".cache/lianli/gui-rgb-experiment"),
+        rainbow_experiment_output_dir: Path = Path(".cache/lianli/gui-rainbow-experiment"),
         bind_experiment_output_dir: Path = Path(".cache/lianli/gui-bind-experiment"),
         unbind_experiment_output_dir: Path = Path(".cache/lianli/gui-unbind-experiment"),
+        write_gate_capture_dir: Path = Path(".cache/lianli"),
+        write_gate_experiment_dir: Path | None = None,
+        require_write_gate: bool = False,
+        write_gate_report_factory: Callable[..., dict[str, object]] = linux_control_write_gate_report,
     ) -> None:
         super().__init__()
         self.backend_factory = backend_factory
@@ -377,9 +387,16 @@ class LianLiWirelessPage(QWidget):
         self.validation_output_dir = validation_output_dir
         self.experiment_output_dir = experiment_output_dir
         self.sync_experiment_output_dir = sync_experiment_output_dir
+        self.mirror_experiment_output_dir = mirror_experiment_output_dir
         self.rgb_experiment_output_dir = rgb_experiment_output_dir
+        self.rainbow_experiment_output_dir = rainbow_experiment_output_dir
         self.bind_experiment_output_dir = bind_experiment_output_dir
         self.unbind_experiment_output_dir = unbind_experiment_output_dir
+        self.write_gate_capture_dir = write_gate_capture_dir
+        self.write_gate_experiment_dir = write_gate_experiment_dir or experiment_output_dir
+        self.require_write_gate = require_write_gate
+        self.write_gate_report_factory = write_gate_report_factory
+        self._lianli_write_gate_payload: dict[str, object] | None = None
         self._operation_active = False
         self._closed = False
         self._threads: list[threading.Thread] = []
@@ -397,6 +414,7 @@ class LianLiWirelessPage(QWidget):
         layout.addWidget(subtitle)
 
         layout.addWidget(self._read_panel())
+        layout.addWidget(self._experiment_guide_panel())
 
         body = QHBoxLayout()
         body.setSpacing(16)
@@ -436,6 +454,8 @@ class LianLiWirelessPage(QWidget):
         self.diff_lianli_snapshots_button.clicked.connect(self.diff_lianli_snapshots)
         self.summarize_lianli_experiments_button = QPushButton("汇总实验")
         self.summarize_lianli_experiments_button.clicked.connect(self.summarize_lianli_experiments)
+        self.lianli_write_gate_button = QPushButton("写入门禁")
+        self.lianli_write_gate_button.clicked.connect(self.run_lianli_write_gate)
         layout.addWidget(title, 0, 0)
         layout.addWidget(self.lianli_status_label, 0, 1, 1, 4)
         for index, button in enumerate(
@@ -449,9 +469,32 @@ class LianLiWirelessPage(QWidget):
                 self.analyze_lianli_log_button,
                 self.diff_lianli_snapshots_button,
                 self.summarize_lianli_experiments_button,
+                self.lianli_write_gate_button,
             )
         ):
             layout.addWidget(button, 1 + index // 5, index % 5)
+        return panel
+
+    def _experiment_guide_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("MetricCard")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(6)
+        title = QLabel("实验流程")
+        title.setObjectName("SectionLabel")
+        guide = QLabel(
+            "1. 扫描 USB 并保存只读快照；2. 读取接收器和 Master；3. 只对单个 MAC 做安全实验；"
+            "4. 对比写入前后快照，确认有效后再长期使用。"
+        )
+        guide.setObjectName("FieldHint")
+        guide.setWordWrap(True)
+        self.lianli_next_action_label = QLabel("下一步：先完成只读验证、写入门禁和实验汇总")
+        self.lianli_next_action_label.setObjectName("FieldHint")
+        self.lianli_next_action_label.setWordWrap(True)
+        layout.addWidget(title)
+        layout.addWidget(guide)
+        layout.addWidget(self.lianli_next_action_label)
         return panel
 
     def _snapshot_panel(self) -> QFrame:
@@ -479,6 +522,10 @@ class LianLiWirelessPage(QWidget):
         hint.setObjectName("FieldHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
+        self.lianli_write_gate_label = QLabel("")
+        self.lianli_write_gate_label.setObjectName("FieldHint")
+        self.lianli_write_gate_label.setWordWrap(True)
+        layout.addWidget(self.lianli_write_gate_label)
 
         self.lianli_write_enable = QCheckBox("启用联力写入")
         self.lianli_write_enable.toggled.connect(self._update_write_controls)
@@ -503,6 +550,14 @@ class LianLiWirelessPage(QWidget):
         self.lianli_lcd_rotation = QComboBox()
         for degrees in (0, 90, 180, 270):
             self.lianli_lcd_rotation.addItem(f"{degrees}°", degrees)
+        self.lianli_rainbow_frame_count = QSpinBox()
+        self.lianli_rainbow_frame_count.setRange(1, 65535)
+        self.lianli_rainbow_frame_count.setValue(24)
+        self.lianli_rainbow_frame_count.setSuffix(" 帧")
+        self.lianli_rainbow_interval = QSpinBox()
+        self.lianli_rainbow_interval.setRange(0, 65535)
+        self.lianli_rainbow_interval.setValue(50)
+        self.lianli_rainbow_interval.setSuffix(" ms")
         layout.addWidget(self.lianli_write_enable)
         form = QGridLayout()
         form.setHorizontalSpacing(8)
@@ -521,6 +576,10 @@ class LianLiWirelessPage(QWidget):
         form.addWidget(self.lianli_lcd_brightness, 4, 1)
         form.addWidget(QLabel("LCD 旋转"), 4, 2)
         form.addWidget(self.lianli_lcd_rotation, 4, 3)
+        form.addWidget(QLabel("彩虹帧数"), 5, 0)
+        form.addWidget(self.lianli_rainbow_frame_count, 5, 1)
+        form.addWidget(QLabel("彩虹间隔"), 5, 2)
+        form.addWidget(self.lianli_rainbow_interval, 5, 3)
         layout.addLayout(form)
 
         self.lianli_pwm_button = QPushButton("发送 PWM")
@@ -531,10 +590,18 @@ class LianLiWirelessPage(QWidget):
         self.lianli_pwm_sync_button.clicked.connect(self.send_live_pwm_sync)
         self.lianli_safe_sync_button = QPushButton("安全 Sync 实验")
         self.lianli_safe_sync_button.clicked.connect(self.run_safe_sync_experiment)
+        self.lianli_pwm_mirror_button = QPushButton("镜像主板 PWM")
+        self.lianli_pwm_mirror_button.clicked.connect(self.send_live_pwm_mirror)
+        self.lianli_safe_mirror_button = QPushButton("安全 Mirror 实验")
+        self.lianli_safe_mirror_button.clicked.connect(self.run_safe_pwm_mirror_experiment)
         self.lianli_rgb_off_button = QPushButton("关闭无线灯光")
         self.lianli_rgb_off_button.clicked.connect(self.send_live_rgb_off)
         self.lianli_safe_rgb_button = QPushButton("安全 RGB 实验")
         self.lianli_safe_rgb_button.clicked.connect(self.run_safe_rgb_experiment)
+        self.lianli_rainbow_button = QPushButton("彩虹灯效")
+        self.lianli_rainbow_button.clicked.connect(self.send_live_rainbow)
+        self.lianli_safe_rainbow_button = QPushButton("安全 Rainbow 实验")
+        self.lianli_safe_rainbow_button.clicked.connect(self.run_safe_rainbow_experiment)
         self.lianli_safe_bind_button = QPushButton("安全 Bind 实验")
         self.lianli_safe_bind_button.clicked.connect(self.run_safe_bind_experiment)
         self.lianli_safe_unbind_button = QPushButton("安全 Unbind 实验")
@@ -551,8 +618,12 @@ class LianLiWirelessPage(QWidget):
             self.lianli_safe_pwm_button,
             self.lianli_pwm_sync_button,
             self.lianli_safe_sync_button,
+            self.lianli_pwm_mirror_button,
+            self.lianli_safe_mirror_button,
             self.lianli_rgb_off_button,
             self.lianli_safe_rgb_button,
+            self.lianli_rainbow_button,
+            self.lianli_safe_rainbow_button,
             self.lianli_safe_bind_button,
             self.lianli_safe_unbind_button,
             self.lianli_lcd_info_button,
@@ -567,7 +638,7 @@ class LianLiWirelessPage(QWidget):
     def scan_local_devices(self) -> None:
         payload = self._scan_usb_payload()
         self.lianli_snapshot_text.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2))
-        self.lianli_status_label.setText(f"USB 扫描完成：{payload['device_count']} 个已知设备")
+        self._set_lianli_status(f"USB 扫描完成：{payload['device_count']} 个已知设备")
 
     def refresh_live_devices(self) -> None:
         self._run_lianli_operation("正在读取接收器...", self._live_devices_payload)
@@ -581,10 +652,13 @@ class LianLiWirelessPage(QWidget):
     def run_readonly_validation(self) -> None:
         self._run_lianli_operation("正在执行只读验证...", self._readonly_validation_payload)
 
+    def run_lianli_write_gate(self) -> None:
+        self._run_lianli_operation("正在检查写入门禁...", self._write_gate_payload)
+
     def save_lianli_snapshot(self) -> None:
         text = self.lianli_snapshot_text.toPlainText().strip()
         if not text:
-            self.lianli_status_label.setText("没有可保存的联力快照")
+            self._set_lianli_status("没有可保存的联力快照")
             return
         default_path = str(Path(".cache/lianli/gui-snapshot.json"))
         path, _selected_filter = QFileDialog.getSaveFileName(
@@ -601,9 +675,9 @@ class LianLiWirelessPage(QWidget):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(text + "\n", encoding="utf-8")
         except Exception as error:  # noqa: BLE001
-            self.lianli_status_label.setText(f"保存失败：{error}")
+            self._set_lianli_status(f"保存失败：{error}")
             return
-        self.lianli_status_label.setText(f"已保存：{destination}")
+        self._set_lianli_status(f"已保存：{destination}")
 
     def analyze_lianli_log(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
@@ -662,7 +736,7 @@ class LianLiWirelessPage(QWidget):
 
     def run_safe_pwm_experiment(self) -> None:
         if not self._write_unlocked():
-            self.lianli_status_label.setText("写入未启用或确认令牌不正确")
+            self.lianli_status_label.setText(self._write_blocked_text())
             return
         mac = self.lianli_mac_input.text().strip()
         if not mac:
@@ -690,7 +764,7 @@ class LianLiWirelessPage(QWidget):
 
     def run_safe_sync_experiment(self) -> None:
         if not self._write_unlocked():
-            self.lianli_status_label.setText("写入未启用或确认令牌不正确")
+            self.lianli_status_label.setText(self._write_blocked_text())
             return
         mac = self.lianli_mac_input.text().strip()
         if not mac:
@@ -715,15 +789,140 @@ class LianLiWirelessPage(QWidget):
             writer=lambda backend, target: backend.send_motherboard_pwm_sync(target),
         )
 
+    def send_live_pwm_mirror(self) -> None:
+        if not self._write_unlocked():
+            self.lianli_status_label.setText(self._write_blocked_text())
+            return
+        mac = self.lianli_mac_input.text().strip()
+        if not mac:
+            self.lianli_status_label.setText("请填写目标 MAC")
+            return
+
+        def operation() -> dict[str, object]:
+            backend = self.backend_factory()
+            before = backend.list_devices()
+            motherboard_pwm = self._safe_snapshot_motherboard_pwm(before.motherboard_pwm)
+            target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
+            if target is None:
+                raise ValueError(f"未找到接收器 MAC：{mac}")
+            packets_written = backend.send_motherboard_pwm_mirror(target, motherboard_pwm)
+            after = backend.list_devices()
+            return {
+                "operation": "live-pwm-mirror",
+                "target": target.mac,
+                "motherboard_pwm": motherboard_pwm,
+                "pwm_values": [motherboard_pwm] * 4,
+                "packets_written": packets_written,
+                "before": _wireless_device_payload(target),
+                "after": {
+                    "device_count": after.device_count,
+                    "motherboard_pwm": after.motherboard_pwm,
+                    "devices": [_wireless_device_payload(device) for device in after.devices],
+                },
+            }
+
+        self._run_lianli_operation("正在镜像主板 PWM...", operation)
+
+    def run_safe_pwm_mirror_experiment(self) -> None:
+        if not self._write_unlocked():
+            self.lianli_status_label.setText(self._write_blocked_text())
+            return
+        mac = self.lianli_mac_input.text().strip()
+        if not mac:
+            self.lianli_status_label.setText("请填写目标 MAC")
+            return
+
+        def operation() -> dict[str, object]:
+            backend = self.backend_factory()
+            output_dir = self.mirror_experiment_output_dir
+            output_dir.mkdir(parents=True, exist_ok=True)
+            before = backend.list_devices()
+            motherboard_pwm = self._safe_snapshot_motherboard_pwm(before.motherboard_pwm)
+            pwm_values = [motherboard_pwm] * 4
+            before_payload = {
+                "operation": "live-list-before",
+                "device_count": before.device_count,
+                "motherboard_pwm": before.motherboard_pwm,
+                "devices": [_wireless_device_payload(device) for device in before.devices],
+            }
+            before_path = output_dir / "live-list-before.json"
+            before_path.write_text(json.dumps(before_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
+            if target is None:
+                raise ValueError(f"未找到接收器 MAC：{mac}")
+            packets_written = backend.send_motherboard_pwm_mirror(target, motherboard_pwm)
+
+            after = backend.list_devices()
+            after_payload = {
+                "operation": "live-list-after",
+                "device_count": after.device_count,
+                "motherboard_pwm": after.motherboard_pwm,
+                "devices": [_wireless_device_payload(device) for device in after.devices],
+            }
+            after_path = output_dir / "live-list-after.json"
+            after_path.write_text(json.dumps(after_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            write_payload = {
+                "operation": "live-pwm-mirror",
+                "target": target.mac,
+                "motherboard_pwm": motherboard_pwm,
+                "pwm_values": pwm_values,
+                "packets_written": packets_written,
+                "before": _wireless_device_payload(target),
+                "after": after_payload,
+            }
+            write_path = output_dir / "live-pwm-mirror.json"
+            write_path.write_text(json.dumps(write_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            analysis_payload = analyze_live_log(write_path)
+            analysis_path = output_dir / "analyze-live-pwm-mirror.json"
+            analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            summary_payload = summarize_experiment_dir(output_dir)
+            summary_path = output_dir / "summary.json"
+            summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return {
+                "operation": "gui-safe-pwm-mirror-experiment",
+                "target": target.mac,
+                "motherboard_pwm": motherboard_pwm,
+                "pwm_values": pwm_values,
+                "output_dir": str(output_dir),
+                "packets_written": packets_written,
+                "likely_effective": analysis_payload["likely_effective"],
+                "steps": [
+                    {"name": "before", "path": str(before_path)},
+                    {"name": "write", "path": str(write_path)},
+                    {"name": "after", "path": str(after_path)},
+                    {"name": "analysis", "path": str(analysis_path)},
+                    {"name": "summary", "path": str(summary_path)},
+                ],
+                "analysis": analysis_payload,
+                "summary": summary_payload,
+            }
+
+        self._run_lianli_operation("正在执行安全 Mirror 实验...", operation)
+
     def send_live_rgb_off(self) -> None:
         self._run_guarded_write(
             "正在关闭无线灯光...",
             lambda backend, target: backend.send_static_rgb(target, (0, 0, 0)),
         )
 
+    def send_live_rainbow(self) -> None:
+        frame_count = self.lianli_rainbow_frame_count.value()
+        interval_ms = self.lianli_rainbow_interval.value()
+        self._run_guarded_write(
+            "正在发送彩虹灯效...",
+            lambda backend, target: backend.send_rainbow_rgb(
+                target,
+                frame_count=frame_count,
+                interval_ms=interval_ms,
+            ),
+        )
+
     def run_safe_rgb_experiment(self) -> None:
         if not self._write_unlocked():
-            self.lianli_status_label.setText("写入未启用或确认令牌不正确")
+            self.lianli_status_label.setText(self._write_blocked_text())
             return
         mac = self.lianli_mac_input.text().strip()
         if not mac:
@@ -750,9 +949,60 @@ class LianLiWirelessPage(QWidget):
             analysis_enricher=mark_visual_confirmation,
         )
 
+    def run_safe_rainbow_experiment(self) -> None:
+        if not self._write_unlocked():
+            self.lianli_status_label.setText(self._write_blocked_text())
+            return
+        mac = self.lianli_mac_input.text().strip()
+        if not mac:
+            self.lianli_status_label.setText("请填写目标 MAC")
+            return
+        frame_count = self.lianli_rainbow_frame_count.value()
+        interval_ms = self.lianli_rainbow_interval.value()
+
+        def mark_visual_confirmation(analysis_payload: dict[str, object]) -> dict[str, object]:
+            required = not bool(analysis_payload["snapshot_changed"])
+            analysis_payload["visual_confirmation_required"] = required
+            return {"visual_confirmation_required": required}
+
+        def send_rainbow(
+            backend: LianLiWirelessBackend,
+            target: WirelessDeviceInfo,
+        ) -> tuple[int, dict[str, object], dict[str, object]]:
+            led_count = infer_led_count(target)
+            packets_written = backend.send_rainbow_rgb(
+                target,
+                frame_count=frame_count,
+                interval_ms=interval_ms,
+            )
+            dynamic_fields = {"led_count": led_count}
+            return packets_written, dynamic_fields, dynamic_fields
+
+        self._run_safe_receiver_experiment(
+            busy_message="正在执行安全 Rainbow 实验...",
+            mac=mac,
+            output_dir=self.rainbow_experiment_output_dir,
+            result_operation="gui-safe-rainbow-experiment",
+            write_operation="live-rainbow",
+            write_filename="live-rainbow.json",
+            analysis_filename="analyze-live-rainbow.json",
+            write_fields={
+                "frame_count": frame_count,
+                "interval_ms": interval_ms,
+                "effect_index": 1,
+            },
+            result_fields={
+                "frame_count": frame_count,
+                "interval_ms": interval_ms,
+                "effect_index": 1,
+            },
+            writer=send_rainbow,
+            analysis_enricher=mark_visual_confirmation,
+        )
+
     def run_safe_bind_experiment(self) -> None:
         if not self._write_unlocked():
-            self.lianli_status_label.setText("写入未启用或确认令牌不正确")
+            self.lianli_status_label.setText(self._write_blocked_text())
             return
         mac = self.lianli_mac_input.text().strip()
         if not mac:
@@ -803,7 +1053,7 @@ class LianLiWirelessPage(QWidget):
 
     def run_safe_unbind_experiment(self) -> None:
         if not self._write_unlocked():
-            self.lianli_status_label.setText("写入未启用或确认令牌不正确")
+            self.lianli_status_label.setText(self._write_blocked_text())
             return
         mac = self.lianli_mac_input.text().strip()
         if not mac:
@@ -835,7 +1085,7 @@ class LianLiWirelessPage(QWidget):
 
     def send_live_lcd_control(self) -> None:
         if not self._write_unlocked():
-            self.lianli_status_label.setText("写入未启用或确认令牌不正确")
+            self.lianli_status_label.setText(self._write_blocked_text())
             return
         brightness = self.lianli_lcd_brightness.value()
         rotation = int(self.lianli_lcd_rotation.currentData())
@@ -868,6 +1118,7 @@ class LianLiWirelessPage(QWidget):
         return {
             "operation": "live-list",
             "device_count": snapshot.device_count,
+            "motherboard_pwm": snapshot.motherboard_pwm,
             "devices": [_wireless_device_payload(device) for device in snapshot.devices],
         }
 
@@ -941,6 +1192,12 @@ class LianLiWirelessPage(QWidget):
             "steps": steps,
         }
 
+    def _write_gate_payload(self) -> dict[str, object]:
+        return self.write_gate_report_factory(
+            self.write_gate_capture_dir,
+            experiment_dir=self.write_gate_experiment_dir,
+        )
+
     def _run_safe_receiver_experiment(
         self,
         *,
@@ -966,6 +1223,7 @@ class LianLiWirelessPage(QWidget):
             before_payload = {
                 "operation": "live-list-before",
                 "device_count": before.device_count,
+                "motherboard_pwm": before.motherboard_pwm,
                 "devices": [_wireless_device_payload(device) for device in before.devices],
             }
             before_path = output_dir / "live-list-before.json"
@@ -985,6 +1243,7 @@ class LianLiWirelessPage(QWidget):
             after_payload = {
                 "operation": "live-list-after",
                 "device_count": after.device_count,
+                "motherboard_pwm": after.motherboard_pwm,
                 "devices": [_wireless_device_payload(device) for device in after.devices],
             }
             after_path = output_dir / "live-list-after.json"
@@ -999,6 +1258,7 @@ class LianLiWirelessPage(QWidget):
                 "before": _wireless_device_payload(target),
                 "after": {
                     "device_count": after.device_count,
+                    "motherboard_pwm": after.motherboard_pwm,
                     "devices": [_wireless_device_payload(device) for device in after.devices],
                 },
             }
@@ -1040,7 +1300,7 @@ class LianLiWirelessPage(QWidget):
         writer: Callable[[LianLiWirelessBackend, WirelessDeviceInfo], int],
     ) -> None:
         if not self._write_unlocked():
-            self.lianli_status_label.setText("写入未启用或确认令牌不正确")
+            self.lianli_status_label.setText(self._write_blocked_text())
             return
         mac = self.lianli_mac_input.text().strip()
         if not mac:
@@ -1062,15 +1322,24 @@ class LianLiWirelessPage(QWidget):
                 "before": _wireless_device_payload(target),
                 "after": {
                     "device_count": after.device_count,
+                    "motherboard_pwm": after.motherboard_pwm,
                     "devices": [_wireless_device_payload(device) for device in after.devices],
                 },
             }
 
         self._run_lianli_operation(busy_message, operation)
 
+    def _safe_snapshot_motherboard_pwm(self, value: int | None) -> int:
+        if value is None:
+            raise ValueError("接收器快照没有有效的主板 PWM 值")
+        minimum = self.lianli_pwm_value.minimum()
+        if value < minimum:
+            raise ValueError(f"主板 PWM {value} 低于安全下限 {minimum}")
+        return max(0, min(255, int(value)))
+
     def _run_lianli_operation(self, busy_message: str, operation: Callable[[], dict[str, object]]) -> None:
         if self._operation_active:
-            self.lianli_status_label.setText("联力操作仍在进行")
+            self._set_lianli_status("联力操作仍在进行")
             return
         self._set_lianli_busy(True, busy_message)
 
@@ -1090,10 +1359,57 @@ class LianLiWirelessPage(QWidget):
     def _operation_finished(self, message: str, result: object) -> None:
         self._set_lianli_busy(False, "")
         if isinstance(result, Exception):
-            self.lianli_status_label.setText(f"{message}：{result}")
+            self._set_lianli_status(f"{message}：{result}")
             return
+        if isinstance(result, dict) and result.get("operation") == "linux-control-write-gate":
+            self.apply_lianli_write_gate(result)
+            message = self._write_gate_status_text(result)
+        if isinstance(result, dict) and result.get("operation") == "summarize-experiments":
+            message = self._apply_receiver_next_action(result)
         self.lianli_status_label.setText(message)
         self.lianli_snapshot_text.setPlainText(json.dumps(result, ensure_ascii=False, indent=2))
+        self.status_changed.emit(self.home_status_text())
+
+    def _apply_receiver_next_action(self, payload: dict[str, object]) -> str:
+        action = payload.get("receiver_control_next_action")
+        if not isinstance(action, dict):
+            text = "下一步：汇总完成，但没有接收器控制建议"
+            self.lianli_next_action_label.setText(text)
+            return "实验汇总完成"
+        text = self._receiver_next_action_text(action)
+        self.lianli_next_action_label.setText(text)
+        ready_candidates = [
+            candidate
+            for candidate in action.get("candidates", [])
+            if isinstance(candidate, dict) and candidate.get("status") == "ready"
+        ] if isinstance(action.get("candidates"), list) else []
+        if len(ready_candidates) == 1 and not self.lianli_mac_input.text().strip():
+            mac = str(ready_candidates[0].get("mac") or "").strip()
+            if mac:
+                self.lianli_mac_input.setText(mac)
+        return text
+
+    def _receiver_next_action_text(self, action: dict[str, object]) -> str:
+        status = str(action.get("status") or "unknown")
+        candidates = action.get("candidates")
+        ready_macs = [
+            str(candidate.get("mac") or "")
+            for candidate in candidates
+            if isinstance(candidate, dict) and candidate.get("status") == "ready" and candidate.get("mac")
+        ] if isinstance(candidates, list) else []
+        messages = {
+            "ready-for-single-target-safe-pwm": "下一步：写入门禁已通过，可对一个已绑定 MAC 运行安全 PWM",
+            "write-validation-already-observed": "下一步：已经有安全写入实验记录，先复盘结果再继续扩展",
+            "validation-errors": "下一步：验证日志有错误，先查看 validation_errors",
+            "needs-bound-target": "下一步：门禁已通过，但 live-list 没有可写的已绑定 MAC",
+            "needs-receiver-validation-bundle": "下一步：先运行 receiver-validation-bundle",
+            "needs-live-list": "下一步：先刷新 live-list 接收器快照",
+            "needs-write-gate": "下一步：写入门禁未通过，继续补抓包/packet compare",
+        }
+        text = messages.get(status, f"下一步：{status}")
+        if ready_macs:
+            text += "：" + ", ".join(ready_macs[:3])
+        return text
 
     def _set_lianli_busy(self, active: bool, message: str) -> None:
         self._operation_active = active
@@ -1107,17 +1423,64 @@ class LianLiWirelessPage(QWidget):
             self.analyze_lianli_log_button,
             self.diff_lianli_snapshots_button,
             self.summarize_lianli_experiments_button,
+            self.lianli_write_gate_button,
         ):
             button.setEnabled(not active)
         self._update_write_controls()
         if message:
-            self.lianli_status_label.setText(message)
+            self._set_lianli_status(message)
+
+    def home_status_text(self) -> str:
+        text = self.lianli_status_label.text().strip() or "未连接"
+        snapshot = self.lianli_snapshot_text.toPlainText().strip()
+        if snapshot:
+            try:
+                payload = json.loads(snapshot)
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict):
+                count = payload.get("device_count")
+                operation = payload.get("operation")
+                if isinstance(count, int):
+                    if operation == "scan-usb":
+                        return "未连接" if count == 0 else f"USB {count} 设备"
+                    if operation == "live-list":
+                        return f"接收器 {count} 个"
+        if text.startswith("USB 扫描完成"):
+            return text.removeprefix("USB 扫描完成：")
+        if text == "默认只读":
+            return "未连接"
+        return text
+
+    def _set_lianli_status(self, text: str) -> None:
+        self.lianli_status_label.setText(text)
+        self.status_changed.emit(self.home_status_text())
+
+    def apply_lianli_write_gate(self, payload: dict[str, object]) -> None:
+        self._lianli_write_gate_payload = dict(payload)
+        self._update_write_controls()
 
     def _write_unlocked(self) -> bool:
         return (
             self.lianli_write_enable.isChecked()
             and self.lianli_confirm_input.text().strip() == LIANLI_WRITE_CONFIRM_TOKEN
+            and self._write_gate_unlocked()
         )
+
+    def _write_gate_unlocked(self) -> bool:
+        if not self.require_write_gate:
+            return True
+        return bool(
+            self._lianli_write_gate_payload
+            and self._lianli_write_gate_payload.get("allows_any_guarded_write")
+        )
+
+    def _write_blocked_text(self) -> str:
+        if not self.lianli_write_enable.isChecked() or self.lianli_confirm_input.text().strip() != LIANLI_WRITE_CONFIRM_TOKEN:
+            return "写入未启用或确认令牌不正确"
+        if self.require_write_gate and not self._write_gate_unlocked():
+            return "写入门禁未通过：请先点击“写入门禁”，完成官方抓包对比后再写入"
+        return "写入未启用或确认令牌不正确"
 
     def _update_write_controls(self) -> None:
         enabled = (not self._operation_active) and self._write_unlocked()
@@ -1126,8 +1489,12 @@ class LianLiWirelessPage(QWidget):
             self.lianli_safe_pwm_button,
             self.lianli_pwm_sync_button,
             self.lianli_safe_sync_button,
+            self.lianli_pwm_mirror_button,
+            self.lianli_safe_mirror_button,
             self.lianli_rgb_off_button,
             self.lianli_safe_rgb_button,
+            self.lianli_rainbow_button,
+            self.lianli_safe_rainbow_button,
             self.lianli_safe_bind_button,
             self.lianli_safe_unbind_button,
             self.lianli_lcd_control_button,
@@ -1135,10 +1502,47 @@ class LianLiWirelessPage(QWidget):
             button.setEnabled(enabled)
         if hasattr(self, "lianli_lcd_info_button"):
             self.lianli_lcd_info_button.setEnabled(not self._operation_active)
+        if hasattr(self, "lianli_write_gate_label"):
+            self.lianli_write_gate_label.setText(self._write_gate_label_text())
+
+    def _write_gate_label_text(self) -> str:
+        if not self.require_write_gate:
+            return "写入门禁：当前实例未强制；真实 GUI 会要求门禁通过后再写入。"
+        payload = self._lianli_write_gate_payload
+        if not payload:
+            return (
+                "写入门禁：未检查。需要先完成官方抓包、packet preview/compare，"
+                "再点击“写入门禁”；未通过前写入按钮保持锁定。"
+            )
+        return self._write_gate_status_text(payload)
+
+    def _write_gate_status_text(self, payload: dict[str, object]) -> str:
+        status = str(payload.get("status") or "unknown")
+        ready = int(payload.get("ready_action_count") or 0)
+        blocked = int(payload.get("blocked_action_count") or 0)
+        next_command = str(payload.get("next_command") or "")
+        status_text = {
+            "write-enabled": f"写入门禁通过 [{status}]：{ready} 个安全实验已允许写入",
+            "needs-packet-compare": f"写入门禁未通过 [{status}]：需要先运行 packet preview/compare",
+            "refresh-live-snapshot": f"写入门禁未通过 [{status}]：需要刷新 live-list 快照后重新对比",
+            "needs-recompare-after-refresh": f"写入门禁未通过 [{status}]：需要用刷新后的快照重新 packet compare",
+            "incomplete-packet-compare": f"写入门禁未通过 [{status}]：仍有抓包对比未通过",
+            "packet-compare-failed": f"写入门禁未通过 [{status}]：packet compare 失败",
+            "invalid-packet-compare-schema": f"写入门禁未通过 [{status}]：对比产物 schema 已过期",
+            "blocked-by-preflight": f"写入门禁阻塞 [{status}]：硬件、权限或抓包证据不足",
+            "needs-capture-evidence": f"写入门禁未通过 [{status}]：需要先补官方 L-Connect 抓包证据",
+        }.get(status, f"写入门禁状态 [{status}]：ready {ready} / blocked {blocked}")
+        if blocked and status == "write-enabled":
+            status_text += f"，另有 {blocked} 个动作仍阻塞"
+        if next_command and status != "write-enabled":
+            status_text += f"；下一步：{next_command}"
+        return status_text
+
 
 
 class LightingPage(QWidget):
     operation_finished = Signal(str, object)
+    status_changed = Signal(str)
 
     def __init__(
         self,
@@ -1190,10 +1594,10 @@ class LightingPage(QWidget):
         layout.addWidget(subtitle)
 
         layout.addWidget(self._connection_panel())
-        layout.addWidget(self._zone_panel())
         self.lighting_workspace_tabs = self._lighting_workspace()
         layout.addWidget(self.lighting_workspace_tabs)
         self._restore_lighting_settings(self.settings.lighting)
+        self.status_changed.emit(self.home_status_text())
 
         if auto_connect:
             QTimer.singleShot(0, self.connect_openrgb)
@@ -1238,7 +1642,8 @@ class LightingPage(QWidget):
         tabs = QTabWidget()
         tabs.setObjectName("LightingWorkspaceTabs")
         tabs.addTab(self._quick_lighting_tab(), "快速应用")
-        tabs.addTab(self._scene_panel(), "多区域场景")
+        tabs.addTab(self._zone_panel(), "区域")
+        tabs.addTab(self._scene_panel(), "场景")
         tabs.addTab(self._lighting_sync_panel(), "联动")
         return tabs
 
@@ -1934,6 +2339,7 @@ class LightingPage(QWidget):
         self._set_lighting_busy(False, "")
         if error is not None:
             self.openrgb_status_label.setText(f"操作失败：{error}")
+            self.status_changed.emit(self.home_status_text())
             return
         if message.startswith(("已连接", "已刷新", "场景已应用", "所有灯光已关闭")):
             self._set_targets(self.targets)
@@ -1944,6 +2350,7 @@ class LightingPage(QWidget):
             self._argb_wizard_targets = []
             self._argb_wizard_restore = []
         self.openrgb_status_label.setText(message)
+        self.status_changed.emit(self.home_status_text())
 
     def _set_lighting_busy(self, active: bool, message: str) -> None:
         self._lighting_operation_active = active
@@ -1969,6 +2376,29 @@ class LightingPage(QWidget):
             widget.setEnabled(not active)
         if active:
             self.openrgb_status_label.setText(message)
+        self.status_changed.emit(self.home_status_text())
+
+    def home_status_text(self) -> str:
+        if self._lighting_operation_active:
+            return "执行中"
+        connected = bool(getattr(self.controller, "connected", False))
+        if not connected and not self.targets:
+            return "默认关闭"
+        target_count = len(self.targets)
+        effect = self._selected_effect()
+        brightness = self.brightness_slider.value() if hasattr(self, "brightness_slider") else 0
+        if effect == "off" or brightness <= 0:
+            state = "关闭"
+        else:
+            state = f"{self._effect_label(effect)} {brightness}%"
+        prefix = f"已连接 {target_count}" if connected else f"未连接 {target_count}"
+        return f"{prefix}\n{state}"
+
+    def _effect_label(self, effect: str) -> str:
+        for label, value in self.effect_map.items():
+            if value == effect:
+                return label
+        return effect
 
     def _apply_lighting_sync_for_tests(self, settings: LightingSettings) -> None:
         try:
@@ -2468,7 +2898,10 @@ class AssetLibraryPage(QWidget):
             if not (pixmap := self._raw_preview_pixmap(frame)).isNull()
         ]
         self._gif_preview_frames = [pixmap for pixmap, _duration_ms in decoded_frames]
-        self._gif_preview_durations = [duration_ms for _pixmap, duration_ms in decoded_frames]
+        self._gif_preview_durations = [
+            max(GIF_PREVIEW_MIN_FRAME_MS, duration_ms)
+            for _pixmap, duration_ms in decoded_frames
+        ]
         if not self._gif_preview_frames:
             log_event("gif_preview_decode_no_frames", path=str(path))
             self.asset_preview.setText("GIF 预览解码失败")
@@ -2476,7 +2909,7 @@ class AssetLibraryPage(QWidget):
             return
 
         self._gif_preview_index = 0
-        self.asset_preview_caption.setText(f"{path.name} | GIF 解码预览")
+        self.asset_preview_caption.setText(f"{path.name} | GIF 解码预览 · {len(self._gif_preview_frames)} 帧")
         self._show_next_gif_preview_frame()
         if len(self._gif_preview_frames) > 1:
             self.gif_preview_timer.setInterval(self._gif_preview_durations[0])

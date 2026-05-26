@@ -25,7 +25,7 @@ def decode_gif_preview_frames(
     path: Path,
     cache_root: Path = Path(".cache/usb9-lcd/gif-preview"),
     *,
-    max_frames: int = 120,
+    max_frames: int = 90,
     width: int = 280,
     height: int = 220,
     timeout: float = 10.0,

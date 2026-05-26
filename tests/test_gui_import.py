@@ -10,6 +10,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PIL import Image
+import pytest
 
 from usb9_lcd.drivers.base import (
     Capability,
@@ -314,6 +315,11 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     assert "GPU" in window.gpu_temp_value.text()
     assert "54°C" in window.home_page.cpu_value.text()
     assert "61°C" in window.home_page.gpu_value.text()
+    assert window.home_page.mode_value.text() == "日常"
+    assert window.home_page.fan_value.text() == "未加载"
+    assert window.home_page.lighting_value.text() == "默认关闭"
+    assert window.home_page.lianli_value.text() == "未连接" or window.home_page.lianli_value.text().startswith("USB ")
+    assert window.home_page.event_labels[0].text() == "控制中心已就绪"
     assert window.lighting_page.brightness_slider.value() == 0
     assert window.device_summary_label.text() == "未发现设备"
 
@@ -341,6 +347,57 @@ def test_control_center_navigation_buttons_change_pages():
     lighting_button.click()
 
     assert window.navigation.currentRow() == 3
+
+    window.close()
+    app.quit()
+
+
+def test_control_center_mode_buttons_update_dashboard_events():
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+
+    game_button = next(
+        button
+        for button in window.home_page.findChildren(QPushButton)
+        if button.property("modeAction") == "游戏"
+    )
+    game_button.click()
+
+    assert window.home_page.mode_value.text() == "游戏"
+    assert window.home_page.event_labels[0].text() == "切换到游戏模式"
+    assert game_button.isChecked()
+
+    window.close()
+    app.quit()
+
+
+def test_home_dashboard_tracks_subsystem_status_signals():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+
+    window.fan_page.status_changed.emit("2 通道\n1 有转速 · 只读监控")
+    window.lighting_page.status_changed.emit("已连接 3\n关闭")
+    window.lianli_page.status_changed.emit("接收器 1 个")
+
+    assert window.home_page.fan_value.text() == "2 通道\n1 有转速 · 只读监控"
+    assert window.home_page.lighting_value.text() == "已连接 3\n关闭"
+    assert window.home_page.lianli_value.text() == "接收器 1 个"
 
     window.close()
     app.quit()
@@ -382,6 +439,7 @@ def test_main_window_sleep_all_off_blanks_lcds_and_turns_off_openrgb():
     assert controller.applied[0].target_id == "device:0"
     assert controller.applied[0].effect == "off"
     assert controller.applied[0].brightness_percent == 0
+    assert window.home_page.mode_value.text() == "睡眠"
     assert "睡眠全关已执行" in window.statusBar().currentMessage()
 
     window.close()
@@ -531,6 +589,91 @@ def test_lianli_wireless_page_reads_snapshot_and_unlocks_writes():
     assert _process_events_until(app, lambda: bool(backend.sent_pwm))
     assert backend.sent_pwm[0][0].mac == "aa:bb:cc:dd:ee:ff"
     assert backend.sent_pwm[0][1] == [120]
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_requires_write_gate_when_configured():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LIANLI_WRITE_CONFIRM_TOKEN, LianLiWirelessPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: None, require_write_gate=True)
+
+    page.lianli_write_enable.setChecked(True)
+    page.lianli_confirm_input.setText(LIANLI_WRITE_CONFIRM_TOKEN)
+
+    assert not page.lianli_pwm_button.isEnabled()
+    assert "写入门禁：未检查" in page.lianli_write_gate_label.text()
+    page.send_live_pwm()
+    assert "写入门禁未通过" in page.lianli_status_label.text()
+
+    page.apply_lianli_write_gate(
+        {
+            "operation": "linux-control-write-gate",
+            "status": "needs-packet-compare",
+            "allows_any_guarded_write": False,
+            "ready_action_count": 0,
+            "blocked_action_count": 1,
+            "blocked_action_ids": ["safe-experiment:live-pwm"],
+            "next_command": "python tools/lianli_wireless_probe.py linux-control-packet-compare",
+        }
+    )
+    assert not page.lianli_pwm_button.isEnabled()
+    assert "needs-packet-compare" in page.lianli_write_gate_label.text()
+
+    page.apply_lianli_write_gate(
+        {
+            "operation": "linux-control-write-gate",
+            "status": "write-enabled",
+            "allows_any_guarded_write": True,
+            "ready_action_count": 1,
+            "blocked_action_count": 0,
+            "ready_action_ids": ["safe-experiment:live-pwm"],
+        }
+    )
+    assert page.lianli_pwm_button.isEnabled()
+    assert "write-enabled" in page.lianli_write_gate_label.text()
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_runs_write_gate_report(tmp_path: Path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    calls: list[tuple[Path, Path]] = []
+
+    def fake_write_gate(path, *, experiment_dir):  # noqa: ANN001
+        calls.append((path, experiment_dir))
+        return {
+            "operation": "linux-control-write-gate",
+            "status": "write-enabled",
+            "allows_any_guarded_write": True,
+            "ready_action_count": 1,
+            "blocked_action_count": 0,
+        }
+
+    capture_dir = tmp_path / "captures"
+    experiment_dir = tmp_path / "experiment"
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(
+        backend_factory=lambda: None,
+        require_write_gate=True,
+        write_gate_capture_dir=capture_dir,
+        write_gate_experiment_dir=experiment_dir,
+        write_gate_report_factory=fake_write_gate,
+    )
+
+    page.run_lianli_write_gate()
+
+    assert _process_events_until(app, lambda: '"operation": "linux-control-write-gate"' in page.lianli_snapshot_text.toPlainText())
+    assert calls == [(capture_dir, experiment_dir)]
+    assert "write-enabled" in page.lianli_write_gate_label.text()
 
     page.close()
     app.quit()
@@ -819,6 +962,79 @@ def test_lianli_wireless_page_runs_safe_rgb_experiment(tmp_path: Path):
     app.quit()
 
 
+def test_lianli_wireless_page_runs_safe_rainbow_experiment(tmp_path: Path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LIANLI_WRITE_CONFIRM_TOKEN, LianLiWirelessPage
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.sent_rainbow: list[tuple[str, int, int]] = []
+
+        def list_devices(self):
+            return WirelessSnapshot(raw=b"snapshot", devices=[device])
+
+        def send_rainbow_rgb(self, target, *, frame_count, interval_ms):
+            self.sent_rainbow.append((target.mac, frame_count, interval_ms))
+            return 44
+
+    device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(
+        backend_factory=lambda: backend,
+        rainbow_experiment_output_dir=tmp_path,
+    )
+
+    assert not page.lianli_safe_rainbow_button.isEnabled()
+    page.run_safe_rainbow_experiment()
+    assert not backend.sent_rainbow
+    assert "写入未启用" in page.lianli_status_label.text()
+
+    page.lianli_write_enable.setChecked(True)
+    page.lianli_confirm_input.setText(LIANLI_WRITE_CONFIRM_TOKEN)
+    page.lianli_mac_input.setText("aa:bb:cc:dd:ee:ff")
+    page.lianli_rainbow_frame_count.setValue(3)
+    page.lianli_rainbow_interval.setValue(40)
+    page.run_safe_rainbow_experiment()
+
+    assert _process_events_until(
+        app,
+        lambda: '"operation": "gui-safe-rainbow-experiment"' in page.lianli_snapshot_text.toPlainText(),
+    )
+    assert backend.sent_rainbow == [("aa:bb:cc:dd:ee:ff", 3, 40)]
+    for name in (
+        "live-list-before.json",
+        "live-rainbow.json",
+        "live-list-after.json",
+        "analyze-live-rainbow.json",
+        "summary.json",
+    ):
+        assert (tmp_path / name).exists()
+    payload = json.loads(page.lianli_snapshot_text.toPlainText())
+    assert payload["likely_effective"] is False
+    assert payload["visual_confirmation_required"] is True
+    assert payload["frame_count"] == 3
+    assert payload["interval_ms"] == 40
+    assert payload["led_count"] == 132
+    assert payload["summary"]["operation_stats"]["live-rainbow"]["unchanged_count"] == 1
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_runs_safe_sync_experiment(tmp_path: Path):
     from PySide6.QtWidgets import QApplication
 
@@ -898,6 +1114,163 @@ def test_lianli_wireless_page_runs_safe_sync_experiment(tmp_path: Path):
     assert payload["expected_pwm_values"] == [6, 6, 6, 6]
     assert payload["likely_effective"] is True
     assert payload["summary"]["operation_stats"]["live-pwm-sync"]["changed_count"] == 1
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_runs_live_pwm_mirror():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LIANLI_WRITE_CONFIRM_TOKEN, LianLiWirelessPage
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.list_count = 0
+            self.sent_mirror: list[tuple[str, int]] = []
+
+        def list_devices(self):
+            self.list_count += 1
+            if self.list_count == 1:
+                return WirelessSnapshot(raw=bytes.fromhex("10000a0a"), devices=[before_device])
+            return WirelessSnapshot(raw=bytes.fromhex("10000a0a"), devices=[after_device])
+
+        def send_motherboard_pwm_mirror(self, target, motherboard_pwm):
+            self.sent_mirror.append((target.mac, motherboard_pwm))
+            return 4
+
+    before_device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    after_device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(127, 127, 127, 127),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=8,
+        raw=bytes(42),
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend)
+
+    assert not page.lianli_pwm_mirror_button.isEnabled()
+    page.send_live_pwm_mirror()
+    assert not backend.sent_mirror
+    assert "写入未启用" in page.lianli_status_label.text()
+
+    page.lianli_write_enable.setChecked(True)
+    page.lianli_confirm_input.setText(LIANLI_WRITE_CONFIRM_TOKEN)
+    page.lianli_mac_input.setText("aa:bb:cc:dd:ee:ff")
+    page.send_live_pwm_mirror()
+
+    assert _process_events_until(
+        app,
+        lambda: '"operation": "live-pwm-mirror"' in page.lianli_snapshot_text.toPlainText(),
+    )
+    assert backend.sent_mirror == [("aa:bb:cc:dd:ee:ff", 127)]
+    payload = json.loads(page.lianli_snapshot_text.toPlainText())
+    assert payload["motherboard_pwm"] == 127
+    assert payload["pwm_values"] == [127, 127, 127, 127]
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_runs_safe_pwm_mirror_experiment(tmp_path: Path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LIANLI_WRITE_CONFIRM_TOKEN, LianLiWirelessPage
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.list_count = 0
+            self.sent_mirror: list[tuple[str, int]] = []
+
+        def list_devices(self):
+            self.list_count += 1
+            if self.list_count == 1:
+                return WirelessSnapshot(raw=bytes.fromhex("10000a0a"), devices=[before_device])
+            return WirelessSnapshot(raw=bytes.fromhex("10000a0a"), devices=[after_device])
+
+        def send_motherboard_pwm_mirror(self, target, motherboard_pwm):
+            self.sent_mirror.append((target.mac, motherboard_pwm))
+            return 4
+
+    before_device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    after_device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(127, 127, 127, 127),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=8,
+        raw=bytes(42),
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(
+        backend_factory=lambda: backend,
+        mirror_experiment_output_dir=tmp_path,
+    )
+
+    assert not page.lianli_safe_mirror_button.isEnabled()
+    page.run_safe_pwm_mirror_experiment()
+    assert not backend.sent_mirror
+    assert "写入未启用" in page.lianli_status_label.text()
+
+    page.lianli_write_enable.setChecked(True)
+    page.lianli_confirm_input.setText(LIANLI_WRITE_CONFIRM_TOKEN)
+    page.lianli_mac_input.setText("aa:bb:cc:dd:ee:ff")
+    page.run_safe_pwm_mirror_experiment()
+
+    assert _process_events_until(
+        app,
+        lambda: '"operation": "gui-safe-pwm-mirror-experiment"' in page.lianli_snapshot_text.toPlainText(),
+    )
+    assert backend.sent_mirror == [("aa:bb:cc:dd:ee:ff", 127)]
+    for name in (
+        "live-list-before.json",
+        "live-pwm-mirror.json",
+        "live-list-after.json",
+        "analyze-live-pwm-mirror.json",
+        "summary.json",
+    ):
+        assert (tmp_path / name).exists()
+    payload = json.loads(page.lianli_snapshot_text.toPlainText())
+    assert payload["motherboard_pwm"] == 127
+    assert payload["pwm_values"] == [127, 127, 127, 127]
+    assert payload["likely_effective"] is True
+    assert payload["summary"]["operation_stats"]["live-pwm-mirror"]["changed_count"] == 1
 
     page.close()
     app.quit()
@@ -1238,6 +1611,59 @@ def test_lianli_wireless_page_summarizes_experiment_directory(monkeypatch, tmp_p
     app.quit()
 
 
+def test_lianli_wireless_page_surfaces_receiver_next_action(monkeypatch, tmp_path: Path):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.pages as pages
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    (tmp_path / "receiver-validation-bundle.json").write_text(
+        json.dumps(
+            {
+                "operation": "receiver-validation-bundle",
+                "output_dir": str(tmp_path),
+                "capture_dir": str(tmp_path / "captures"),
+                "experiment_dir": str(tmp_path / "experiments"),
+                "step_count": 7,
+                "ok_count": 7,
+                "error_count": 0,
+                "ready_for_guarded_write": True,
+                "write_gate_status": "write-enabled",
+                "steps": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "live-list.json").write_text(
+        json.dumps(
+            {
+                "operation": "live-list",
+                "device_count": 1,
+                "devices": [_lianli_device_payload()],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        pages.QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(tmp_path),
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: None)
+
+    page.summarize_lianli_experiments()
+
+    assert _process_events_until(app, lambda: "receiver_control_next_action" in page.lianli_snapshot_text.toPlainText())
+    assert "写入门禁已通过" in page.lianli_next_action_label.text()
+    assert "aa:bb:cc:dd:ee:ff" in page.lianli_next_action_label.text()
+    assert page.lianli_mac_input.text() == "aa:bb:cc:dd:ee:ff"
+
+    page.close()
+    app.quit()
+
+
 def _lianli_device_payload(
     *,
     pwm: list[int] | None = None,
@@ -1277,6 +1703,117 @@ def test_fan_page_is_lazy_loaded_on_main_window_startup():
     app.quit()
 
 
+def test_main_window_keeps_fan_page_lazy_when_auto_refresh_is_enabled():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=True,
+    )
+
+    assert window.fan_page.monitor is None
+    assert not window.fan_page._loaded
+
+    window.close()
+    app.quit()
+
+
+def test_main_window_fan_navigation_loads_readonly_without_driver_probe(monkeypatch):
+    from PySide6.QtCore import Signal
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    import usb9_lcd.gui.main_window as main_window
+    from usb9_lcd.gui.main_window import MainWindow
+
+    seen = {}
+
+    class FakeFanPage(QWidget):
+        status_changed = Signal(str)
+
+        def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            super().__init__()
+            self.monitor = None
+
+        def home_status_text(self):
+            return "未加载"
+
+        def reload_fan_control(self, *, interactive_driver_probe=False):  # noqa: ANN001
+            self.load_fan_control(interactive_driver_probe=interactive_driver_probe)
+
+        def load_fan_control(self, *, interactive_driver_probe=False):  # noqa: ANN001
+            seen["interactive_driver_probe"] = interactive_driver_probe
+
+        def release(self):
+            return
+
+    monkeypatch.setattr(main_window, "FanControlHostPage", FakeFanPage)
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+
+    window.navigation.setCurrentRow(window.page_indexes["fan"])
+
+    assert seen["interactive_driver_probe"] is False
+
+    window.close()
+    app.quit()
+
+
+def test_main_window_home_fan_shortcut_uses_interactive_driver_probe(monkeypatch):
+    from PySide6.QtCore import Signal
+    from PySide6.QtWidgets import QApplication, QPushButton, QWidget
+
+    import usb9_lcd.gui.main_window as main_window
+    from usb9_lcd.gui.main_window import MainWindow
+
+    seen = {}
+
+    class FakeFanPage(QWidget):
+        status_changed = Signal(str)
+
+        def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            super().__init__()
+            self.monitor = None
+
+        def home_status_text(self):
+            return "未加载"
+
+        def reload_fan_control(self, *, interactive_driver_probe=False):  # noqa: ANN001
+            seen["interactive_driver_probe"] = interactive_driver_probe
+
+        def load_fan_control(self, *, interactive_driver_probe=False):  # noqa: ANN001
+            seen["navigation_interactive_driver_probe"] = interactive_driver_probe
+
+        def release(self):
+            return
+
+    monkeypatch.setattr(main_window, "FanControlHostPage", FakeFanPage)
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+
+    buttons = window.home_page.findChildren(QPushButton)
+    fan_button = next(button for button in buttons if button.property("moduleAction") == "扫描风扇")
+    fan_button.click()
+
+    assert seen["interactive_driver_probe"] is True
+
+    window.close()
+    app.quit()
+
+
 def test_fan_page_exposes_control_center_layout_before_loading():
     from PySide6.QtWidgets import QApplication, QTableWidget
 
@@ -1288,15 +1825,19 @@ def test_fan_page_exposes_control_center_layout_before_loading():
     assert page.control_state_value.text() == "未加载"
     assert page.fan_count_value.text() == "--"
     assert page.sensor_count_value.text() == "--"
-    assert page.load_button.text() == "加载只读监控"
+    assert page.load_button.text() == "加载/扫描风扇"
     assert page.enable_control_button.text() == "启用 PWM 控制"
     assert not page.enable_control_button.isEnabled()
     assert isinstance(page.fan_table, QTableWidget)
-    assert page.fan_table.columnCount() == 5
+    assert page.fan_table.columnCount() == 8
+    assert page.fan_table.horizontalHeaderItem(3).text() == "关联传感器"
     assert [page.workspace_tabs.tabText(index) for index in range(page.workspace_tabs.count())] == [
-        "概览",
-        "调速",
+        "总览",
         "策略",
+        "维护",
+    ]
+    assert [page.maintenance_tabs.tabText(index) for index in range(page.maintenance_tabs.count())] == [
+        "调速",
         "权限",
         "明细",
         "历史",
@@ -1304,6 +1845,7 @@ def test_fan_page_exposes_control_center_layout_before_loading():
     ]
     assert [page.strategy_tabs.tabText(index) for index in range(page.strategy_tabs.count())] == ["选择策略", "编辑曲线"]
     assert page.workspace_tabs.currentWidget() is page.overview_tab
+    assert "长期方案" in page.permission_wizard_text.toPlainText()
 
     page.close()
     app.quit()
@@ -1347,11 +1889,108 @@ def test_fan_page_updates_summary_strategy_and_channel_table():
 
     assert page.profile_combo.count() == 3
     assert page.active_profile_value.text() == "标准模式"
-    assert page.fan_count_value.text() == "2"
+    assert page.fan_count_value.text() == "2 通道\nCPU 风扇 1 · GPU 风扇 1"
     assert page.sensor_count_value.text() == "3"
-    assert page.fan_table.item(0, 1).text() == "1380 RPM"
-    assert page.fan_table.item(0, 2).text() == "75% (192)"
-    assert page.fan_table.item(1, 3).text() == "NVIDIA"
+    assert page.fan_table.item(0, 1).text() == "--"
+    assert page.fan_table.item(0, 3).text() == "--"
+    assert page.fan_table.item(0, 4).text() == "1380 RPM"
+    assert page.fan_table.item(0, 5).text() == "75% (192)"
+    assert page.fan_table.item(1, 6).text() == "NVIDIA"
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_apply_profile_repairs_unwritable_active_file(tmp_path: Path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    class FakeProfile:
+        def __init__(self, name):
+            self.name = name
+
+    class FakeProfileManager:
+        def __init__(self):
+            self.config_dir = tmp_path
+            self._active_path = tmp_path / ".active"
+            self._active_path.write_text("silent", encoding="utf-8")
+            self._active_path.chmod(0o444)
+
+        def list_names(self):
+            return ["silent", "performance"]
+
+        def get_active(self):
+            return FakeProfile(self._active_path.read_text(encoding="utf-8").strip())
+
+        def set_active(self, name):
+            self._active_path.write_text(name, encoding="utf-8")
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage()
+    page._profile_manager = FakeProfileManager()
+
+    page._refresh_profile_options()
+    page.profile_combo.setCurrentText("performance")
+    page.apply_selected_profile()
+
+    assert page._profile_manager._active_path.read_text(encoding="utf-8") == "performance"
+    assert page.active_profile_value.text() == "performance"
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_apply_profile_repairs_set_active_permission_error(tmp_path: Path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    class FakeProfile:
+        def __init__(self, name):
+            self.name = name
+
+    class FakeProfileManager:
+        def __init__(self):
+            self.config_dir = tmp_path
+            self._active_path = tmp_path / ".active"
+            self._active_path.write_text("silent", encoding="utf-8")
+            self.set_active_calls = 0
+
+        def list_names(self):
+            return ["silent", "performance"]
+
+        def get_active(self):
+            return FakeProfile(self._active_path.read_text(encoding="utf-8").strip())
+
+        def set_active(self, name):
+            self.set_active_calls += 1
+            if self.set_active_calls == 1:
+                raise PermissionError("denied")
+            self._active_path.write_text(name, encoding="utf-8")
+
+    repaired = {}
+
+    def fake_repair(config_dir, *, interactive=True):  # noqa: ANN001
+        repaired["call"] = (config_dir, interactive)
+        return True, "ok"
+
+    monkeypatch.setattr(fan_host, "_repair_profile_config_permissions", fake_repair)
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
+    page._profile_manager = FakeProfileManager()
+
+    page._refresh_profile_options()
+    page.profile_combo.setCurrentText("performance")
+    page.apply_selected_profile()
+
+    assert page._profile_manager.set_active_calls == 2
+    assert repaired["call"] == (tmp_path, True)
+    assert page._profile_manager._active_path.read_text(encoding="utf-8") == "performance"
+    assert page.active_profile_value.text() == "performance"
+    assert "策略配置权限已修复" in page.status_label.text()
 
     page.close()
     app.quit()
@@ -1382,10 +2021,140 @@ def test_fan_page_visual_dashboard_updates_cards_and_charts():
 
     assert "1/2 个通道有转速" in page.visual_status_label.text()
     assert page._fan_cards["CPU Fan"].rpm_value.text() == "1380 RPM"
-    assert page._fan_cards["CPU Fan"].pwm_value.text() == "PWM 75% (192)"
+    assert page._fan_cards["CPU Fan"].pwm_value.text() == "PWM 输出 75% (192)"
     assert page.rpm_chart._series["CPU Fan"][-1] == 1380
     assert "Case Fan" not in page.rpm_chart._series
     assert page.temperature_chart._series["CPU Tctl"][-1] == 61.5
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_classifies_mainboard_fan_roles_from_hwmon_labels(tmp_path: Path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    hwmon = tmp_path / "hwmon0"
+    hwmon.mkdir()
+    (hwmon / "name").write_text("nct6798", encoding="utf-8")
+    for index, label in (
+        (1, "CPU Fan"),
+        (2, "AIO Pump"),
+        (3, "Chassis Fan 1"),
+    ):
+        (hwmon / f"pwm{index}").write_text("128", encoding="utf-8")
+        (hwmon / f"fan{index}_input").write_text(str(900 + index), encoding="utf-8")
+        (hwmon / f"fan{index}_label").write_text(label, encoding="utf-8")
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
+    raw_fans = [
+        type("Fan", (), {"name": "主板 PWM1", "pwm_path": str(hwmon / "pwm1"), "rpm_input": str(hwmon / "fan1_input")})(),
+        type("Fan", (), {"name": "主板 PWM2", "pwm_path": str(hwmon / "pwm2"), "rpm_input": str(hwmon / "fan2_input")})(),
+        type("Fan", (), {"name": "主板 PWM3", "pwm_path": str(hwmon / "pwm3"), "rpm_input": str(hwmon / "fan3_input")})(),
+    ]
+
+    page._fans = page._display_fans_from_monitor(raw_fans, [])
+    page._loaded = True
+    page._refresh_summary()
+    page._refresh_fan_table()
+
+    names = [page.fan_table.item(row, 0).text() for row in range(page.fan_table.rowCount())]
+    assert names == [
+        "CPU_FAN · PWM1/FAN1",
+        "AIO_PUMP · PWM2/FAN2",
+        "CHA_FAN1 · PWM3/FAN3",
+    ]
+    assert page.fan_table.item(0, 1).text() == "CPU 风扇"
+    assert page.fan_table.item(1, 1).text() == "水泵/AIO"
+    assert page.fan_table.item(2, 1).text() == "机箱风扇"
+    assert page.fan_table.item(0, 2).text() == "CPU_FAN · PWM1/FAN1"
+    assert page.fan_table.item(0, 3).text() == "--"
+    assert "nct6798" in page.fan_table.item(0, 6).text()
+    assert "label: CPU Fan" in page.fan_table.item(0, 0).toolTip()
+    assert "AIO Pump" in page.permission_detail_text.toPlainText()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_maps_display_fan_names_back_to_backend_channels(tmp_path: Path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    class FakeSignal:
+        def __init__(self):
+            self.handlers = []
+
+        def connect(self, handler):
+            self.handlers.append(handler)
+
+        def emit(self, *args):
+            for handler in list(self.handlers):
+                handler(*args)
+
+    class FakeSlider:
+        def __init__(self):
+            self.pwm_changed = FakeSignal()
+            self.auto_toggled = FakeSignal()
+
+    class FakeFanControl:
+        def __init__(self, display_name):
+            self._sliders = {display_name: FakeSlider()}
+            self.control_states = []
+
+        def set_control_enabled(self, enabled):
+            self.control_states.append(enabled)
+
+    class FakeMonitor:
+        control_enabled = True
+
+        def __init__(self):
+            self.control_state_changed = FakeSignal()
+            self.manual_calls = []
+            self.auto_calls = []
+
+        def set_fan_manual(self, name, pwm):
+            self.manual_calls.append((name, pwm))
+
+        def set_fan_auto(self, name):
+            self.auto_calls.append(name)
+
+    hwmon = tmp_path / "hwmon0"
+    hwmon.mkdir()
+    (hwmon / "name").write_text("nct6798", encoding="utf-8")
+    (hwmon / "pwm1").write_text("128", encoding="utf-8")
+    (hwmon / "fan1_input").write_text("1200", encoding="utf-8")
+    (hwmon / "fan1_label").write_text("CPU Fan", encoding="utf-8")
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
+    raw_fan = type(
+        "Fan",
+        (),
+        {"name": "主板 PWM1", "pwm_path": str(hwmon / "pwm1"), "rpm_input": str(hwmon / "fan1_input")},
+    )()
+    page._fans = page._display_fans_from_monitor([raw_fan], [])
+    display_name = page._fans[0].name
+    page.monitor = FakeMonitor()
+    page._refresh_fan_table()
+
+    fan_control = FakeFanControl(display_name)
+    page._connect_display_fan_control(fan_control, page.monitor)
+    fan_control._sliders[display_name].pwm_changed.emit(display_name, 180)
+    fan_control._sliders[display_name].auto_toggled.emit(display_name, True)
+    page._update_fan_rpm("主板 PWM1", 1210)
+    page._update_fan_pwm("主板 PWM1", 180)
+
+    assert page.monitor.manual_calls == [("主板 PWM1", 180)]
+    assert page.monitor.auto_calls == ["主板 PWM1"]
+    assert page._latest_rpm[display_name] == 1210
+    assert page.fan_table.item(0, 1).text() == "CPU 风扇"
+    assert page.fan_table.item(0, 3).text() == "--"
+    assert page.fan_table.item(0, 4).text() == "1210 RPM"
+    assert page.fan_table.item(0, 5).text() == "71% (180)"
 
     page.close()
     app.quit()
@@ -1516,6 +2285,262 @@ def test_embedded_profile_editor_uses_compact_profile_selector():
     app.quit()
 
 
+def test_embedded_profile_editor_repairs_unwritable_active_profile(tmp_path: Path, monkeypatch):
+    from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+
+    from usb9_lcd.gui.fan_host import EmbeddedProfileEditor
+
+    class FakeCurve:
+        def __init__(self, points):
+            self.points = list(points)
+
+    class FakeProfile:
+        def __init__(self, name):
+            self.name = name
+            self.curves = {
+                "CPU": [(30, 25), (70, 80)],
+                "GPU": [(35, 25), (75, 75)],
+            }
+
+    class FakeManager:
+        def __init__(self):
+            self.config_dir = tmp_path
+            self._active_path = tmp_path / ".active"
+            self.profiles = {
+                "silent": FakeProfile("silent"),
+                "performance": FakeProfile("performance"),
+            }
+
+        def _path(self, name):
+            return self.config_dir / f"{name}.json"
+
+        def list_names(self):
+            return list(self.profiles)
+
+        def load(self, name):
+            return self.profiles.get(name)
+
+        def get_active(self):
+            return self.profiles.get(self._active_path.read_text(encoding="utf-8").strip())
+
+        def save(self, profile):
+            self.profiles[profile.name] = profile
+
+        def set_active(self, name):
+            self._active_path.write_text(name, encoding="utf-8")
+
+    class FakeCurveEditor(QWidget):
+        def __init__(self):
+            super().__init__()
+            self._curve = FakeCurve([])
+
+        def set_curve(self, curve):
+            self._curve = curve
+
+        def get_curve(self):
+            return self._curve
+
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+
+    app = QApplication.instance() or QApplication([])
+    manager = FakeManager()
+    manager._active_path.write_text("silent", encoding="utf-8")
+    manager._active_path.chmod(0o444)
+    editor = EmbeddedProfileEditor(manager, FakeCurveEditor, FakeCurve, FakeProfile)
+
+    editor._profile_combo.setCurrentText("performance")
+    editor._activate_profile()
+
+    assert manager._active_path.read_text(encoding="utf-8") == "performance"
+    assert editor._profile_state_label.text() == "当前启用：performance"
+
+    editor.close()
+    app.quit()
+
+
+def test_embedded_profile_editor_repairs_set_active_permission_error(tmp_path: Path, monkeypatch):
+    from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import EmbeddedProfileEditor
+
+    class FakeCurve:
+        def __init__(self, points):
+            self.points = list(points)
+
+    class FakeProfile:
+        def __init__(self, name):
+            self.name = name
+            self.curves = {
+                "CPU": [(30, 25), (70, 80)],
+                "GPU": [(35, 25), (75, 75)],
+            }
+
+    class FakeManager:
+        def __init__(self):
+            self.config_dir = tmp_path
+            self._active_path = tmp_path / ".active"
+            self.profiles = {
+                "silent": FakeProfile("silent"),
+                "performance": FakeProfile("performance"),
+            }
+            self.set_active_calls = 0
+
+        def _path(self, name):
+            return self.config_dir / f"{name}.json"
+
+        def list_names(self):
+            return list(self.profiles)
+
+        def load(self, name):
+            return self.profiles.get(name)
+
+        def get_active(self):
+            if not self._active_path.exists():
+                return None
+            return self.profiles.get(self._active_path.read_text(encoding="utf-8").strip())
+
+        def save(self, profile):
+            self.profiles[profile.name] = profile
+
+        def set_active(self, name):
+            self.set_active_calls += 1
+            if self.set_active_calls == 1:
+                raise PermissionError("denied")
+            self._active_path.write_text(name, encoding="utf-8")
+
+    class FakeCurveEditor(QWidget):
+        def __init__(self):
+            super().__init__()
+            self._curve = FakeCurve([])
+
+        def set_curve(self, curve):
+            self._curve = curve
+
+        def get_curve(self):
+            return self._curve
+
+    repaired = {}
+
+    def fake_repair(config_dir, *, interactive=True):  # noqa: ANN001
+        repaired["call"] = (config_dir, interactive)
+        return True, "ok"
+
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(fan_host, "_repair_profile_config_permissions", fake_repair)
+
+    app = QApplication.instance() or QApplication([])
+    manager = FakeManager()
+    editor = EmbeddedProfileEditor(manager, FakeCurveEditor, FakeCurve, FakeProfile)
+
+    editor._profile_combo.setCurrentText("performance")
+    editor._activate_profile()
+
+    assert manager.set_active_calls == 2
+    assert repaired["call"] == (tmp_path, True)
+    assert manager._active_path.read_text(encoding="utf-8") == "performance"
+    assert editor._profile_state_label.text() == "当前启用：performance"
+
+    editor.close()
+    app.quit()
+
+
+def test_embedded_profile_editor_stops_before_unwritable_profile_dir(tmp_path: Path, monkeypatch):
+    from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+
+    from usb9_lcd.gui.fan_host import EmbeddedProfileEditor
+
+    class FakeCurve:
+        def __init__(self, points):
+            self.points = list(points)
+
+    class FakeProfile:
+        def __init__(self, name):
+            self.name = name
+            self.curves = {
+                "CPU": [(30, 25), (70, 80)],
+                "GPU": [(35, 25), (75, 75)],
+            }
+
+    class FakeManager:
+        def __init__(self):
+            self.config_dir = tmp_path
+            self._active_path = tmp_path / ".active"
+            self.set_active_called = False
+            self.profiles = {
+                "silent": FakeProfile("silent"),
+                "performance": FakeProfile("performance"),
+            }
+
+        def _path(self, name):
+            return self.config_dir / f"{name}.json"
+
+        def list_names(self):
+            return list(self.profiles)
+
+        def load(self, name):
+            return self.profiles.get(name)
+
+        def get_active(self):
+            return self.profiles["silent"]
+
+        def save(self, profile):
+            self.profiles[profile.name] = profile
+
+        def set_active(self, name):
+            self.set_active_called = True
+
+    class FakeCurveEditor(QWidget):
+        def __init__(self):
+            super().__init__()
+            self._curve = FakeCurve([])
+
+        def set_curve(self, curve):
+            self._curve = curve
+
+        def get_curve(self):
+            return self._curve
+
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: warnings.append(args))
+
+    app = QApplication.instance() or QApplication([])
+    manager = FakeManager()
+    editor = EmbeddedProfileEditor(manager, FakeCurveEditor, FakeCurve, FakeProfile)
+
+    tmp_path.chmod(0o555)
+    if os.access(tmp_path, os.W_OK):
+        tmp_path.chmod(0o755)
+        pytest.skip("当前用户仍可写 chmod 0555 目录，无法模拟普通用户权限不足")
+    try:
+        editor._profile_combo.setCurrentText("performance")
+        editor._activate_profile()
+    finally:
+        tmp_path.chmod(0o755)
+
+    assert not manager.set_active_called
+    assert warnings
+    assert "策略配置文件权限不足" in editor._profile_state_label.text()
+
+    editor.close()
+    app.quit()
+
+
+def test_profile_permission_repair_command_restores_owner_and_user_write(monkeypatch, tmp_path: Path):
+    import usb9_lcd.gui.fan_host as fan_host
+
+    monkeypatch.setattr(fan_host.os, "getuid", lambda: 1234)
+    monkeypatch.setattr(fan_host.os, "getgid", lambda: 5678)
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+
+    command = fan_host._profile_config_repair_commands(tmp_path)
+
+    assert f"chown -R 1234:5678 -- {tmp_path}" in command
+    assert f"find {tmp_path} -type d -exec chmod u+rwx {{}} +" in command
+    assert f"find {tmp_path} -type f -exec chmod u+rw {{}} +" in command
+
+
 def test_fan_page_permission_panel_generates_temp_fix_commands(monkeypatch):
     from PySide6.QtWidgets import QApplication
 
@@ -1570,6 +2595,9 @@ def test_fan_page_blocks_pwm_enable_when_system_auth_fails(monkeypatch):
             self.control_enabled = enabled
 
     class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return False
+
         def _import_modules(self):  # noqa: ANN001
             return {}
 
@@ -1628,6 +2656,9 @@ def test_fan_page_enable_pwm_requests_system_auth_and_continues(monkeypatch):
             self.control_enabled = enabled
 
     class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return False
+
         def _import_modules(self):  # noqa: ANN001
             return {}
 
@@ -1684,6 +2715,9 @@ def test_fan_page_auto_grants_pwm_permissions_on_load(monkeypatch):
             self.control_enabled = control_enabled
 
     class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return False
+
         def _import_modules(self):  # noqa: ANN001
             return {}
 
@@ -1702,7 +2736,11 @@ def test_fan_page_auto_grants_pwm_permissions_on_load(monkeypatch):
             return True, "ok"
 
     app = QApplication.instance() or QApplication([])
-    page = FakeFanPage(auto_probe_hwmon_drivers=False, auto_enable_pwm_control=False)
+    page = FakeFanPage(
+        auto_grant_pwm_permissions=True,
+        auto_probe_hwmon_drivers=False,
+        auto_enable_pwm_control=False,
+    )
 
     page.load_fan_control()
 
@@ -1710,6 +2748,54 @@ def test_fan_page_auto_grants_pwm_permissions_on_load(monkeypatch):
     assert seen["interactive"] is False
     assert "PWM 权限已授权" in page.status_label.text()
     assert not page.copy_permission_commands_button.isEnabled()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_does_not_auto_grant_pwm_permissions_by_default(monkeypatch):
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    grant_calls = []
+    monkeypatch.setattr(fan_host.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(fan_host.os.path, "exists", lambda path: str(path) == "/tmp/hwmon/pwm1")
+    monkeypatch.setattr(fan_host.os, "access", lambda path, mode: False)
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def start(self, control_enabled=True):  # noqa: ANN001
+            self.control_enabled = control_enabled
+
+    class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return False
+
+        def _import_modules(self):  # noqa: ANN001
+            return {}
+
+        def _build_embedded_ui(self, modules):  # noqa: ANN001
+            self.monitor = FakeMonitor()
+            self.monitor.start(control_enabled=False)
+            self._fans = [type("Fan", (), {"name": "CPU Fan", "pwm_path": "/tmp/hwmon/pwm1"})()]
+            self._tabs = QWidget()
+            self._refresh_summary()
+
+        def _run_permission_grant(self, commands, *, interactive=True):  # noqa: ANN001
+            grant_calls.append((commands, interactive))
+            return True, "ok"
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage(auto_probe_hwmon_drivers=False, auto_enable_pwm_control=False)
+
+    page.load_fan_control()
+
+    assert page.permission_value.text() == "需 sudo/udev"
+    assert grant_calls == []
+    assert "只读模式" in page.status_label.text()
 
     page.close()
     app.quit()
@@ -1884,6 +2970,9 @@ def test_fan_page_reports_missing_hwmon_fan_channels(monkeypatch):
             return
 
     class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return False
+
         def _import_modules(self):  # noqa: ANN001
             return {}
 
@@ -1905,9 +2994,398 @@ def test_fan_page_reports_missing_hwmon_fan_channels(monkeypatch):
     page.load_fan_control()
 
     assert page.control_state_value.text() == "未发现风扇"
-    assert not page.enable_control_button.isEnabled()
+    assert page.enable_control_button.isEnabled()
+    assert page.enable_control_button.text() == "授权加载主板 PWM"
+    assert page.load_button.isEnabled()
+    assert page.load_button.text() == "授权扫描主板风扇"
+    assert page.driver_probe_button.isEnabled()
     assert "没有发现 fan/pwm 通道" in page.status_label.text()
     assert "没有 fan*_input 或 pwm*" in page.fan_table_hint.text()
+    assert "没有 fan*_input 或 pwm*" in page.permission_detail_text.toPlainText()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_reload_recovers_after_missing_hwmon_channels():
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def __init__(self):
+            self.stopped = False
+
+        def start(self, control_enabled=True):  # noqa: ANN001
+            self.control_enabled = control_enabled
+
+        def stop(self):
+            self.stopped = True
+
+    class FakeFanPage(FanControlHostPage):
+        def __init__(self):
+            self.build_count = 0
+            self.stopped_monitors = []
+            super().__init__(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
+
+        def _import_modules(self):  # noqa: ANN001
+            return {}
+
+        def _build_embedded_ui(self, modules):  # noqa: ANN001
+            self.build_count += 1
+            monitor = FakeMonitor()
+            monitor.start(control_enabled=False)
+            self.monitor = monitor
+            self._sensors = []
+            self._fans = (
+                []
+                if self.build_count == 1
+                else [type("Fan", (), {"name": "主板 PWM1", "pwm_path": "/tmp/hwmon/pwm1"})()]
+            )
+            self._tabs = QWidget()
+            self._refresh_summary()
+            self._refresh_fan_table()
+
+        def release(self):
+            monitor = self.monitor
+            super().release()
+            if monitor is not None:
+                self.stopped_monitors.append(monitor)
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage()
+
+    page.load_fan_control()
+    assert page.fan_count_value.text() == "0 通道"
+    assert page.load_button.text() == "重新扫描风扇"
+
+    page.reload_fan_control()
+
+    assert page.build_count == 2
+    assert page.stopped_monitors and page.stopped_monitors[0].stopped is True
+    assert page.fan_count_value.text() == "1 通道\n未识别 1"
+    assert page.load_button.text() == "重新扫描风扇"
+    assert page.load_button.isEnabled()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_uses_nvidia_smi_readonly_fallback(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    monkeypatch.setattr(fan_host.shutil, "which", lambda name: "/usr/bin/nvidia-smi" if name == "nvidia-smi" else None)
+    monkeypatch.setattr(FanControlHostPage, "_system_has_fan_pwm_files", lambda self: False)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "0, NVIDIA GeForce RTX 5080, 35, 0\n"
+        stderr = ""
+
+    monkeypatch.setattr(fan_host.subprocess, "run", lambda *args, **kwargs: FakeResult())
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def stop(self):
+            return
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
+    page.monitor = FakeMonitor()
+    page._loaded = True
+
+    page._start_nvidia_smi_fallback_if_needed()
+    page._refresh_summary()
+    page._refresh_fan_table()
+
+    assert page.fan_count_value.text() == "1 通道\nGPU 风扇 1"
+    assert page.fan_table.item(0, 1).text() == "GPU 风扇"
+    assert page.fan_table.item(0, 3).text() == "--"
+    assert page.fan_table.item(0, 4).text() == "0%"
+    assert page.fan_table.item(0, 6).text() == "NVIDIA 只读"
+    assert page.fan_table.item(0, 7).text() == "已连接，只读"
+    assert page.temperature_chart._series["GPU0 温度"][-1] == 35
+    assert page.enable_control_button.isEnabled()
+    assert page.enable_control_button.text() == "授权加载主板 PWM"
+
+    page.release()
+    page.close()
+    app.quit()
+
+
+def test_fan_page_distinguishes_readonly_fallback_from_mainboard_pwm_loading():
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, ReadOnlyFanChannel
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def start(self, control_enabled=True):  # noqa: ANN001
+            self.control_enabled = control_enabled
+
+        def stop(self):
+            return
+
+    class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return False
+
+        def _import_modules(self):  # noqa: ANN001
+            return {}
+
+        def _build_embedded_ui(self, modules):  # noqa: ANN001
+            self.monitor = FakeMonitor()
+            self.monitor.start(control_enabled=False)
+            self._driver_probe_message = "自动加载已跳过：当前会话没有免密 sudo"
+            self._fans = [
+                ReadOnlyFanChannel(
+                    name="GPU0 风扇",
+                    pwm_path="readonly:nvidia-smi:0:fan",
+                    rpm_input="nvidia-smi:0:fan",
+                    rpm_unit="%",
+                )
+            ]
+            self._tabs = QWidget()
+            self._refresh_summary()
+            self._refresh_fan_table()
+
+        def _fan_discovery_diagnostics(self) -> str:
+            return "主板风扇诊断：没有 fan*_input 或 pwm* 文件。"
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
+
+    page.load_fan_control()
+    page._update_fan_rpm("GPU0 风扇", 42)
+
+    assert "主板 fan/pwm 没有暴露" in page.status_label.text()
+    assert page.home_status_text() == "主板未暴露\n1/1 只读通道"
+    assert page.load_button.text() == "授权扫描主板风扇"
+    assert page.load_button.isEnabled()
+    assert page.enable_control_button.isEnabled()
+    assert page.enable_control_button.text() == "授权加载主板 PWM"
+    assert "主板 PWM 文件：未暴露" in page.permission_wizard_text.toPlainText()
+    assert "主板风扇诊断" in page.permission_detail_text.toPlainText()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_pwm_action_requests_driver_probe_when_mainboard_hidden():
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, ReadOnlyFanChannel
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def start(self, control_enabled=True):  # noqa: ANN001
+            self.control_enabled = control_enabled
+
+        def set_control_enabled(self, enabled):  # noqa: ANN001
+            self.control_enabled = enabled
+
+        def stop(self):
+            return
+
+    class FakeFanPage(FanControlHostPage):
+        def __init__(self):
+            self.driver_loaded = False
+            self.probe_interactive = None
+            super().__init__(
+                auto_grant_pwm_permissions=False,
+                auto_probe_hwmon_drivers=False,
+                auto_enable_pwm_control=False,
+            )
+
+        def _system_has_fan_pwm_files(self):
+            return self.driver_loaded
+
+        def _load_fan_hwmon_drivers(self, *, interactive=False):  # noqa: ANN001
+            self.probe_interactive = interactive
+            self.driver_loaded = True
+            return True, "ok"
+
+        def _import_modules(self):  # noqa: ANN001
+            return {}
+
+        def _build_embedded_ui(self, modules):  # noqa: ANN001
+            self.monitor = FakeMonitor()
+            self.monitor.start(control_enabled=False)
+            self._fans = (
+                [type("Fan", (), {"name": "主板 PWM1", "pwm_path": "/tmp/hwmon/pwm1"})()]
+                if self.driver_loaded
+                else [
+                    ReadOnlyFanChannel(
+                        name="GPU0 风扇",
+                        pwm_path="readonly:nvidia-smi:0:fan",
+                        rpm_input="nvidia-smi:0:fan",
+                        rpm_unit="%",
+                    )
+                ]
+            )
+            self._tabs = QWidget()
+            self._refresh_summary()
+            self._refresh_fan_table()
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage()
+
+    page.load_fan_control()
+    assert page.enable_control_button.text() == "授权加载主板 PWM"
+
+    page.enable_control_button.click()
+
+    assert page.probe_interactive is True
+    assert page.fan_count_value.text() == "1 通道\n未识别 1"
+    assert page.fan_table.item(0, 0).text() == "主板 PWM1"
+    assert page.enable_control_button.text() == "启用 PWM 控制"
+    assert page.enable_control_button.isEnabled()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_load_button_requests_driver_probe_when_mainboard_hidden():
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, ReadOnlyFanChannel
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def start(self, control_enabled=True):  # noqa: ANN001
+            self.control_enabled = control_enabled
+
+        def stop(self):
+            return
+
+    class FakeFanPage(FanControlHostPage):
+        def __init__(self):
+            self.driver_loaded = False
+            self.probe_interactive = None
+            super().__init__(
+                auto_grant_pwm_permissions=False,
+                auto_probe_hwmon_drivers=False,
+                auto_enable_pwm_control=False,
+            )
+
+        def _system_has_fan_pwm_files(self):
+            return self.driver_loaded
+
+        def _load_fan_hwmon_drivers(self, *, interactive=False):  # noqa: ANN001
+            self.probe_interactive = interactive
+            self.driver_loaded = True
+            return True, "ok"
+
+        def _import_modules(self):  # noqa: ANN001
+            return {}
+
+        def _build_embedded_ui(self, modules):  # noqa: ANN001
+            self.monitor = FakeMonitor()
+            self.monitor.start(control_enabled=False)
+            self._fans = (
+                [type("Fan", (), {"name": "主板 PWM1", "pwm_path": "/tmp/hwmon/pwm1"})()]
+                if self.driver_loaded
+                else [
+                    ReadOnlyFanChannel(
+                        name="GPU0 风扇",
+                        pwm_path="readonly:nvidia-smi:0:fan",
+                        rpm_input="nvidia-smi:0:fan",
+                        rpm_unit="%",
+                    )
+                ]
+            )
+            self._tabs = QWidget()
+            self._refresh_summary()
+            self._refresh_fan_table()
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage()
+
+    page.load_fan_control()
+    assert page.load_button.text() == "授权扫描主板风扇"
+
+    page.load_button.click()
+
+    assert page.probe_interactive is True
+    assert page.fan_count_value.text() == "1 通道\n未识别 1"
+    assert page.fan_table.item(0, 0).text() == "主板 PWM1"
+    assert page.load_button.text() == "重新扫描风扇"
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_loads_readonly_rpm_sensors_as_channels():
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def start(self, control_enabled=True):  # noqa: ANN001
+            self.control_enabled = control_enabled
+
+        def stop(self):
+            return
+
+    class FakeFanPage(FanControlHostPage):
+        def _import_modules(self):  # noqa: ANN001
+            return {}
+
+        def _build_embedded_ui(self, modules):  # noqa: ANN001
+            self.monitor = FakeMonitor()
+            self.monitor.start(control_enabled=False)
+            self._sensors = [
+                type(
+                    "Sensor",
+                    (),
+                    {
+                        "name": "主板 风扇#1",
+                        "unit": "RPM",
+                        "internal_id": "/sys/class/hwmon/hwmon0/fan1_input",
+                    },
+                )(),
+                type(
+                    "Sensor",
+                    (),
+                    {
+                        "name": "CPU Tctl",
+                        "unit": "°C",
+                        "internal_id": "/sys/class/hwmon/hwmon1/temp1_input",
+                    },
+                )(),
+            ]
+            self._fans = self._display_fans_from_monitor([], self._sensors)
+            self._tabs = QWidget()
+            self._refresh_summary()
+            self._refresh_fan_table()
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage(auto_probe_hwmon_drivers=False)
+
+    page.load_fan_control()
+    page._update_sensor_value("主板 风扇#1", 1234)
+
+    assert page.fan_count_value.text() == "1 通道\n未识别 1"
+    assert page.fan_table.item(0, 0).text() == "主板 风扇#1 · FAN1"
+    assert page.fan_table.item(0, 1).text() == "未识别风扇"
+    assert page.fan_table.item(0, 3).text() == "--"
+    assert page.fan_table.item(0, 4).text() == "1234 RPM"
+    assert page.fan_table.item(0, 5).text() == "只读转速"
+    assert page.fan_table.item(0, 6).text() == "RPM 只读"
+    assert not page.enable_control_button.isEnabled()
+    assert "只有只读风扇通道" in page.status_label.text()
+    assert "1/1 个通道有转速" in page.visual_status_label.text()
 
     page.close()
     app.quit()
@@ -1934,8 +3412,9 @@ def test_fan_page_probes_hwmon_driver_before_loading(monkeypatch):
             self.check_count += 1
             return self.check_count > 1
 
-        def _run_privileged_shell(self, commands, *, timeout):  # noqa: ANN001
+        def _run_privileged_shell(self, commands, *, timeout, interactive=False):  # noqa: ANN001
             self.probe_commands = commands
+            self.probe_interactive = interactive
             return True, "ok"
 
         def _import_modules(self):  # noqa: ANN001
@@ -1951,11 +3430,190 @@ def test_fan_page_probes_hwmon_driver_before_loading(monkeypatch):
     app = QApplication.instance() or QApplication([])
     page = FakeFanPage()
 
-    page.load_fan_control()
+    page.load_fan_control(interactive_driver_probe=True)
 
     assert "nct6775" in page.probe_commands
+    assert page.probe_interactive is True
     assert page._driver_probe_message == "ok"
-    assert page.fan_count_value.text() == "1"
+    assert page.fan_count_value.text() == "1 通道\n未识别 1"
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_interactive_driver_probe_adds_nct6683_force_fallback():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
+
+    interactive_shell = page._fan_hwmon_probe_shell(include_forced_probes=True)
+    automatic_shell = page._fan_hwmon_probe_shell(include_forced_probes=False)
+
+    assert "nct6683 force=1" in interactive_shell
+    assert "新主板 NCT6683/NCT6687" in interactive_shell
+    assert "nct6683 force=1" not in automatic_shell
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_auto_load_uses_noninteractive_driver_probe():
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    seen: dict[str, object] = {}
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def start(self, control_enabled=True):  # noqa: ANN001
+            self.control_enabled = control_enabled
+
+        def stop(self):
+            return
+
+    class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return False
+
+        def _noninteractive_driver_probe_ready(self):
+            return True, "sudo 免密可用"
+
+        def _run_privileged_shell(self, commands, *, timeout, interactive=False):  # noqa: ANN001
+            seen["commands"] = commands
+            seen["interactive"] = interactive
+            return True, "nct6683=已加载"
+
+        def _import_modules(self):  # noqa: ANN001
+            return {}
+
+        def _build_embedded_ui(self, modules):  # noqa: ANN001
+            self.monitor = FakeMonitor()
+            self.monitor.start(control_enabled=False)
+            self._fans = []
+            self._tabs = QWidget()
+            self._refresh_summary()
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage(auto_grant_pwm_permissions=False, auto_enable_pwm_control=False, auto_load=True)
+
+    assert _process_events_until(app, lambda: page.monitor is not None)
+    assert seen["interactive"] is False
+    assert "nct6683" in seen["commands"]
+    assert "仍未暴露 fan/pwm" in page._driver_probe_message
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_auto_load_skips_driver_probe_without_passwordless_sudo():
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    seen = {"probe_called": False}
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def start(self, control_enabled=True):  # noqa: ANN001
+            self.control_enabled = control_enabled
+
+        def stop(self):
+            return
+
+    class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return False
+
+        def _noninteractive_driver_probe_ready(self):
+            return False, "自动加载已跳过：当前会话没有免密 sudo；请点击“授权加载主板驱动”触发系统授权。"
+
+        def _load_fan_hwmon_drivers(self, *, interactive=False):  # noqa: ANN001
+            seen["probe_called"] = True
+            return True, "unexpected"
+
+        def _import_modules(self):  # noqa: ANN001
+            return {}
+
+        def _build_embedded_ui(self, modules):  # noqa: ANN001
+            self.monitor = FakeMonitor()
+            self.monitor.start(control_enabled=False)
+            self._sensors = []
+            self._fans = []
+            self._tabs = QWidget()
+            self._refresh_summary()
+            self._refresh_fan_table()
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage(auto_grant_pwm_permissions=False, auto_enable_pwm_control=False)
+
+    page.load_fan_control(interactive_driver_probe=False)
+
+    assert seen["probe_called"] is False
+    assert "自动加载已跳过" in page._driver_probe_message
+    assert "授权加载主板驱动" in page.status_label.text()
+    assert page.home_status_text() == "需要驱动授权"
+
+    page.close()
+    app.quit()
+
+
+def test_fan_page_manual_hwmon_driver_probe_uses_system_auth_and_reloads():
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    seen = {}
+
+    class FakeMonitor:
+        control_enabled = False
+
+        def start(self, control_enabled=True):  # noqa: ANN001
+            self.control_enabled = control_enabled
+
+        def stop(self):
+            return
+
+    class FakeFanPage(FanControlHostPage):
+        def __init__(self):
+            self.driver_loaded = False
+            super().__init__(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=True, auto_enable_pwm_control=False)
+
+        def _load_fan_hwmon_drivers(self, *, interactive=False):  # noqa: ANN001
+            seen["interactive"] = interactive
+            self.driver_loaded = True
+            return True, "ok"
+
+        def _import_modules(self):  # noqa: ANN001
+            return {}
+
+        def _build_embedded_ui(self, modules):  # noqa: ANN001
+            self.monitor = FakeMonitor()
+            self.monitor.start(control_enabled=False)
+            self._sensors = []
+            self._fans = (
+                [type("Fan", (), {"name": "主板 PWM1", "pwm_path": "/tmp/hwmon/pwm1"})()]
+                if self.driver_loaded
+                else []
+            )
+            self._tabs = QWidget()
+            self._refresh_summary()
+            self._refresh_fan_table()
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage()
+
+    page.request_hwmon_driver_probe()
+
+    assert seen["interactive"] is True
+    assert page.fan_count_value.text() == "1 通道\n未识别 1"
+    assert page.load_button.text() == "重新扫描风扇"
+    assert page.load_button.isEnabled()
 
     page.close()
     app.quit()
@@ -2117,10 +3775,11 @@ def test_lighting_page_structure_separates_common_scene_and_sync_controls():
     app = QApplication.instance() or QApplication([])
     page = LightingPage(controller=FakeLightingController())
 
-    assert page.lighting_workspace_tabs.count() == 3
-    assert [page.lighting_workspace_tabs.tabText(index) for index in range(3)] == [
+    assert page.lighting_workspace_tabs.count() == 4
+    assert [page.lighting_workspace_tabs.tabText(index) for index in range(4)] == [
         "快速应用",
-        "多区域场景",
+        "区域",
+        "场景",
         "联动",
     ]
     assert page.lighting_target_combo.parentWidget().objectName() == "LightingTargetPanel"

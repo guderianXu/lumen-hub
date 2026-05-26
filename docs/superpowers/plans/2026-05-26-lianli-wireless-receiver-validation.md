@@ -1,0 +1,183 @@
+# 联力 L-Wireless 接收器实机验证计划
+
+> **For agentic workers:** 这份文件是接收器到货后的执行记录入口。先做只读证据采集，再根据 write-gate 结果决定是否进入单 MAC 安全写入实验。
+
+## 当前状态
+
+- 已完成 L-Connect 3 多版本静态分析、官方 changelog 排名、JS 资源 HID/无线线索提取。
+- 已有 CLI 逆向工具：`tools/lianli_wireless_probe.py`。
+- 已有只读 PyUSB 路径：`scan`、`live-list`、`live-master`、`live-lcd-info`、`validate-readonly`。
+- 已有接收器插上后的整包验证入口：`receiver-validation-bundle`。
+- `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
+- `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令。
+- GUI 的“汇总实验”会显示同一个下一步结论，并在唯一候选 MAC 可用时自动填入目标 MAC。
+- 已有抓包驱动的安全写入门禁：`linux-control-write-gate`。
+- GUI 联力页已接入写入门禁；真实主窗口默认要求 write-gate 通过后才解锁写入。
+- 目前仍没有真实 L-Wireless 接收器/风扇硬件验证结果，因此不能把 Linux 写入控制判定为完成。
+
+## 已完成
+
+- [x] 官方软件静态线索提取和多版本对比。
+- [x] Linux 只读枚举、Master 查询、LCD 信息读取入口。
+- [x] Windows USBPcap 抓包分析、packet preview/compare、写入门禁。
+- [x] GUI 联力页接入只读验证和写入门禁。
+- [x] 新增 `receiver-validation-bundle`，用于插上接收器后一次性保存只读、preflight、write-gate 证据。
+- [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
+- [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
+- [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并自动填入唯一可用 MAC。
+
+## 待完成
+
+- [ ] 插上真实 L-Wireless 接收器后保存整包验证日志。
+- [ ] 确认真实 receiver MAC、Master MAC、channel、rx_type、fan_count。
+- [ ] 根据真实 `write-gate.json` 判断是否允许安全写入。
+- [ ] 只对一个明确 MAC 做最小 PWM 写入实验。
+- [ ] 对比写入前后 snapshot、写入日志和肉眼观察到的风扇反馈。
+- [ ] 在有足够证据后再扩展 RGB / rainbow / bind / unbind。
+
+## 装上接收器后先做什么
+
+1. 只插接收器，先不要直接做写入实验。
+2. 运行 GUI：
+   ```bash
+   python -m usb9_lcd.gui.app
+   ```
+3. 在 GUI 的“联力无线”页依次点：
+   - 扫描 USB
+   - 读取接收器
+   - 读取 Master
+   - 只读验证
+   - 写入门禁
+4. 同时保留 CLI 证据，优先运行整包验证命令：
+   ```bash
+   python tools/lianli_wireless_probe.py \
+     --save-json .cache/lianli/hardware/receiver-validation-bundle.json \
+     receiver-validation-bundle \
+     --output-dir .cache/lianli/hardware \
+     --capture-dir .cache/lianli
+   ```
+5. 立刻复盘整包结果：
+   ```bash
+   python tools/lianli_wireless_probe.py summarize-experiments .cache/lianli/hardware
+   ```
+   重点看：
+   - `receiver_validation_bundles[0].status`
+   - `hardware_validation.status`
+   - `hardware_validation.write_gate_ready_count`
+   - `receiver_control_next_action.status`
+   - `receiver_control_next_action.candidates`
+   - `receiver_control_next_action.recommended_commands`
+6. 也可以在 GUI 里点“汇总实验”，选择 `.cache/lianli/hardware`，看实验流程里的“下一步”提示；如果只有一个可用 MAC，GUI 会自动填入目标 MAC。
+7. 如果需要分步排查，再运行底层命令：
+   ```bash
+   mkdir -p .cache/lianli/hardware
+   python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/scan.json scan
+   python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/readiness.json usb-capture-readiness
+   python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/live-list.json live-list
+   python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/live-master.json live-master
+   python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/validate-readonly.json validate-readonly --output-dir .cache/lianli/hardware/readonly
+   ```
+8. 如果权限不足，先运行：
+   ```bash
+   python tools/lianli_wireless_probe.py udev-rules
+   ```
+   按输出安装规则后重新插拔接收器，再重复只读验证。
+
+## 写入实验前必须满足
+
+- `live-list` 能稳定读到接收器和目标风扇 receiver。
+- 目标 MAC 已明确，不能对未知设备写入。
+- `linux-control-write-gate` 必须显示 `status = write-enabled`。
+- GUI 的“写入门禁”状态必须显示已通过。
+- `WRITE-LIANLI` token 只能用于单 MAC 的安全实验，不用于批量写入。
+
+门禁检查命令：
+
+```bash
+python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/write-gate.json \
+  linux-control-write-gate .cache/lianli \
+  --experiment-dir .cache/lianli/hardware/experiments
+```
+
+如果门禁不是 `write-enabled`，下一步通常是补官方 Windows USBPcap 抓包，或重新运行 packet preview/compare。
+
+## 第一轮允许尝试的写入
+
+只在 write-gate 通过后执行最小 PWM 实验：
+
+```bash
+python tools/lianli_wireless_probe.py safe-pwm-experiment \
+  --mac aa:bb:cc:dd:ee:ff \
+  --pwm 120 \
+  --output-dir .cache/lianli/hardware/experiments/safe-pwm-001 \
+  --confirm WRITE-LIANLI
+```
+
+把 `aa:bb:cc:dd:ee:ff` 换成 `live-list` 里读到的目标 receiver MAC。
+
+实验后必须保存：
+
+- before snapshot
+- write log
+- after snapshot
+- analyze-live-pwm.json
+- summary.json
+- 观察到的实际风扇变化
+
+## 还没有做
+
+- 没有真实 L-Wireless 接收器枚举证据。
+- 没有真实 receiver MAC、Master MAC、channel、rx_type、fan_count 的 Linux 读数。
+- 没有真实硬件的 `live-list` 前后变化验证。
+- 没有真实安全 PWM 写入成功/失败结果。
+- 没有真实无线灯光 RGB / rainbow 写入验证。
+- 没有真实 bind / unbind 验证。
+- 没有 Lian Li 四代无线风扇接收器的完整协议覆盖。
+- 没有把 Windows 官方 L-Connect 写入抓包覆盖到所有目标动作。
+
+## 暂时不要做
+
+- 不要跳过 write-gate 直接运行 `live-pwm`、`live-rgb`、`live-bind`、`live-unbind`。
+- 不要对多个 MAC 同时写入。
+- 不要在不确定 receiver 是否绑定的情况下做 bind/unbind。
+- 不要把静态 JS 里的 wired-controller HID 命令当作 L-Wireless RF 协议。
+- 不要把 GUI 显示的“可点击”当作协议已验证；最终证据必须来自实机读写日志和官方抓包对比。
+
+## 相关文件
+
+- `tools/lianli_wireless_probe.py`：CLI 入口。
+- `usb9_lcd/lianli/wireless.py`：Linux/PyUSB L-Wireless backend。
+- `usb9_lcd/lianli/capture.py`：抓包分析、packet preview/compare、write-gate。
+- `usb9_lcd/lianli/analysis.py`：实验日志分析。
+- `usb9_lcd/gui/pages.py`：GUI 联力页和写入门禁 UI。
+- `docs/lianli-wireless-reverse.md`：长期逆向记录。
+- `.cache/lianli/hardware/`：接收器实机验证日志建议目录。
+
+## 下一步完成标准
+
+接收器装上后，本阶段至少需要拿到：
+
+- `receiver-validation-bundle.json`
+- `scan.json`
+- `readiness.json`
+- `live-list.json`
+- `live-master.json`
+- `validate-readonly.json`
+- `readonly/scan.json`
+- `readonly/live-list.json`
+- `readonly/live-master.json`
+- `preflight.json`
+- `write-gate.json`
+- `summarize-experiments` 输出里 `receiver_validation_bundles[0].status`
+- `summarize-experiments` 输出里 `hardware_validation.status`
+- `summarize-experiments` 输出里 `receiver_control_next_action.status`
+
+如果 write-gate 通过，再追加：
+
+- `safe-pwm-001/live-list-before.json`
+- `safe-pwm-001/live-pwm.json`
+- `safe-pwm-001/live-list-after.json`
+- `safe-pwm-001/analyze-live-pwm.json`
+- `safe-pwm-001/summary.json`
+
+只有这些证据显示目标 MAC、packet compare、写入前后状态和实际风扇反馈一致，才能把 PWM 控制从“候选可行”升级为“实机验证可行”。

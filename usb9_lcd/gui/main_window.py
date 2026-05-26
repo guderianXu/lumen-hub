@@ -43,6 +43,7 @@ from usb9_lcd.drivers import AsusLcIiiDriver, DisplayDriver
 from usb9_lcd.drivers.base import DisplayDevice, PixelFormat
 from usb9_lcd.gui.debug import log_event, log_exception
 from usb9_lcd.gui.fan_host import FanControlHostPage
+from usb9_lcd.gui.home import ControlCenterPage
 from usb9_lcd.gui.pages import AssetLibraryPage, LianLiWirelessPage, LightingPage, MonitorPage
 from usb9_lcd.gui.preview import fit_preview_geometry
 from usb9_lcd.gui.settings import DEFAULT_SETTINGS_PATH, GuiSettings, load_settings, save_settings
@@ -169,175 +170,6 @@ class PreviewWidget(QFrame):
         return canvas
 
 
-class ControlCenterPage(QWidget):
-    def __init__(
-        self,
-        navigate: Callable[[str], None],
-        upload_monitor: Callable[[], None],
-        load_fan_control: Callable[[], None],
-        connect_lighting: Callable[[], None],
-    ) -> None:
-        super().__init__()
-        self._navigate = navigate
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 22, 24, 24)
-        layout.setSpacing(16)
-
-        header = QLabel("控制中心")
-        header.setObjectName("PageTitle")
-        subtitle = QLabel("设备状态、屏幕、风扇、灯效和常用操作集中在这里")
-        subtitle.setObjectName("PageSubtitle")
-        layout.addWidget(header)
-        layout.addWidget(subtitle)
-
-        overview = QGridLayout()
-        overview.setSpacing(12)
-        self.device_value = QLabel("未发现设备")
-        self.cpu_value = QLabel("CPU --")
-        self.gpu_value = QLabel("GPU --")
-        self.lighting_value = QLabel("OpenRGB")
-        overview.addWidget(self._status_card("LCD 设备", self.device_value), 0, 0)
-        overview.addWidget(self._status_card("CPU", self.cpu_value), 0, 1)
-        overview.addWidget(self._status_card("GPU", self.gpu_value), 0, 2)
-        overview.addWidget(self._status_card("灯效", self.lighting_value), 0, 3)
-        layout.addLayout(overview)
-
-        modules = QGridLayout()
-        modules.setSpacing(12)
-        modules.addWidget(
-            self._module_card(
-                "屏幕监控",
-                "上传监控画面、调整布局和调色板",
-                "打开监控",
-                lambda: navigate("monitor"),
-                "上传一次",
-                upload_monitor,
-            ),
-            0,
-            0,
-        )
-        modules.addWidget(
-            self._module_card(
-                "风扇控制",
-                "查看传感器、调速和曲线配置",
-                "打开风扇",
-                lambda: navigate("fan"),
-                "只读监控",
-                load_fan_control,
-            ),
-            0,
-            1,
-        )
-        modules.addWidget(
-            self._module_card(
-                "灯效控制",
-                "主板与 ARGB 区域、场景和联动",
-                "打开灯效",
-                lambda: navigate("lighting"),
-                "连接灯效",
-                connect_lighting,
-            ),
-            1,
-            0,
-        )
-        modules.addWidget(
-            self._module_card(
-                "屏幕内容",
-                "图片、GIF 素材和设备上传",
-                "打开上传",
-                lambda: navigate("upload"),
-                "素材库",
-                lambda: navigate("assets"),
-            ),
-            1,
-            1,
-        )
-        modules.addWidget(
-            self._module_card(
-                "联力无线",
-                "读取 L-Wireless 接收器、Master 和风扇状态",
-                "打开联力",
-                lambda: navigate("lianli"),
-                "读取状态",
-                lambda: navigate("lianli"),
-            ),
-            2,
-            0,
-        )
-        layout.addLayout(modules)
-        layout.addStretch(1)
-
-    def update_device(self, device: DisplayDevice | None) -> None:
-        if device is None:
-            self.device_value.setText("未发现设备")
-            return
-        writable = "可写" if device.connection.writable else "只读"
-        self.device_value.setText(f"{device.display_name}\n{device.width}x{device.height} · {writable}")
-
-    def update_telemetry(self, telemetry: SystemTelemetry | None) -> None:
-        if telemetry is None:
-            self.cpu_value.setText("CPU 不可用")
-            self.gpu_value.setText("GPU 不可用")
-            return
-        cpu = "--" if telemetry.cpu.package_temperature_c is None else f"{telemetry.cpu.package_temperature_c:.0f}°C"
-        cpu_load = "--" if telemetry.cpu.utilization_percent is None else f"{telemetry.cpu.utilization_percent}%"
-        gpu = "--" if telemetry.gpu.temperature_c is None else f"{telemetry.gpu.temperature_c:.0f}°C"
-        gpu_load = "--" if telemetry.gpu.utilization_percent is None else f"{telemetry.gpu.utilization_percent}%"
-        self.cpu_value.setText(f"{cpu}\n{cpu_load}")
-        self.gpu_value.setText(f"{gpu}\n{gpu_load}")
-
-    def _status_card(self, title: str, value: QLabel) -> QFrame:
-        card = QFrame()
-        card.setObjectName("MetricCard")
-        card.setMinimumHeight(104)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(14, 12, 14, 12)
-        card_layout.setSpacing(6)
-        title_label = QLabel(title)
-        title_label.setObjectName("SectionLabel")
-        value.setObjectName("HomeMetricValue")
-        value.setWordWrap(True)
-        card_layout.addWidget(title_label)
-        card_layout.addWidget(value, 1)
-        return card
-
-    def _module_card(
-        self,
-        title: str,
-        description: str,
-        primary_label: str,
-        primary_action: Callable[[], None],
-        secondary_label: str,
-        secondary_action: Callable[[], None],
-    ) -> QFrame:
-        card = QFrame()
-        card.setObjectName("MetricCard")
-        card.setMinimumHeight(148)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 14, 16, 14)
-        card_layout.setSpacing(10)
-        title_label = QLabel(title)
-        title_label.setObjectName("SectionLabel")
-        description_label = QLabel(description)
-        description_label.setObjectName("FieldHint")
-        description_label.setWordWrap(True)
-        button_row = QHBoxLayout()
-        primary = QPushButton(primary_label)
-        primary.setObjectName("PrimaryButton")
-        primary.setProperty("moduleAction", primary_label)
-        primary.clicked.connect(primary_action)
-        secondary = QPushButton(secondary_label)
-        secondary.setProperty("moduleAction", secondary_label)
-        secondary.clicked.connect(secondary_action)
-        button_row.addWidget(primary)
-        button_row.addWidget(secondary)
-        card_layout.addWidget(title_label)
-        card_layout.addWidget(description_label)
-        card_layout.addStretch(1)
-        card_layout.addLayout(button_row)
-        return card
-
-
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -439,8 +271,12 @@ class MainWindow(QMainWindow):
         )
         self.asset_list_text = self.asset_page.asset_list_text
         self.asset_links_text = self.asset_page.asset_links_text
-        self.fan_page = FanControlHostPage(auto_load=auto_refresh, auto_enable_pwm_control=True)
-        self.lianli_page = LianLiWirelessPage()
+        self.fan_page = FanControlHostPage(
+            auto_load=False,
+            auto_grant_pwm_permissions=False,
+            auto_enable_pwm_control=False,
+        )
+        self.lianli_page = LianLiWirelessPage(require_write_gate=True)
         self.page_indexes = {
             "home": 0,
             "monitor": 1,
@@ -455,9 +291,16 @@ class MainWindow(QMainWindow):
         self.home_page = ControlCenterPage(
             self._navigate_to_page,
             self.upload_monitoring_frame,
-            self.fan_page.load_fan_control,
+            lambda: self.fan_page.reload_fan_control(interactive_driver_probe=True),
             self.lighting_page.connect_openrgb,
+            self.sleep_all_off,
         )
+        self.fan_page.status_changed.connect(self.home_page.update_fan_status)
+        self.lighting_page.status_changed.connect(self.home_page.update_lighting_status)
+        self.lianli_page.status_changed.connect(self.home_page.update_lianli_status)
+        self.home_page.update_fan_status(self.fan_page.home_status_text())
+        self.home_page.update_lighting_status(self.lighting_page.home_status_text())
+        self.home_page.update_lianli_status(self.lianli_page.home_status_text())
         self.pages.addWidget(_scrollable_page(self.home_page))
         self.pages.addWidget(_scrollable_page(self.monitor_page))
         self.pages.addWidget(_scrollable_page(self.fan_page))
@@ -510,7 +353,7 @@ class MainWindow(QMainWindow):
     def _navigation_changed(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
         if index == self.page_indexes.get("fan"):
-            self.fan_page.load_fan_control()
+            self.fan_page.load_fan_control(interactive_driver_probe=False)
 
     def _apply_theme(self) -> None:
         self.setStyleSheet(gui_stylesheet())
@@ -1015,6 +858,7 @@ class MainWindow(QMainWindow):
             self.devices = []
             self.device_combo.clear()
             self.home_page.update_device(None)
+            self.home_page.add_event("设备发现失败")
             self._stop_animation_if_target_missing()
             message = self._friendly_error(error)
             self.device_status_label.setText(f"设备发现失败：{message}")
@@ -1031,6 +875,7 @@ class MainWindow(QMainWindow):
             log_event("refresh_devices_empty")
             self.device_summary_label.setText("未发现设备")
             self.home_page.update_device(None)
+            self.home_page.add_event("未发现 LCD 设备")
             self.device_status_label.setText(f"{self.driver.display_name}：未发现设备")
             self.device_details.setPlainText("未发现设备")
             self.preview.set_device(None)
@@ -1052,6 +897,7 @@ class MainWindow(QMainWindow):
         self.device_combo.setCurrentIndex(selected_index)
         self._selected_device_changed(selected_index)
         self.home_page.update_device(self.devices[selected_index])
+        self.home_page.add_event(f"发现 {len(self.devices)} 个 LCD 设备")
         log_event("refresh_devices_finished", count=len(self.devices), selected_index=selected_index)
         self.statusBar().showMessage(f"发现 {len(self.devices)} 个设备")
         self.run_diagnostics()
@@ -1137,15 +983,18 @@ class MainWindow(QMainWindow):
         except Exception as error:
             log_exception("upload_monitoring_frame_failed", error)
             self.statusBar().showMessage(f"监控画面上传失败：{self._friendly_error(error)}")
+            self.home_page.add_event("监控画面上传失败")
             self.monitor_page.upload_monitor_button.setEnabled(True)
             return
 
         self.monitor_page.upload_monitor_button.setEnabled(True)
         log_event("upload_monitoring_frame_finished", byte_count=len(frame))
+        self.home_page.add_event("监控画面已上传到 LCD")
         self.statusBar().showMessage(f"监控画面已上传：{device.width}x{device.height}，{len(frame)} 字节")
 
     def sleep_all_off(self) -> None:
         log_event("sleep_all_off_started")
+        self.home_page.set_mode_indicator("睡眠")
         self.stop_live_monitoring(message="")
         self.stop_animation(message="")
         devices = self._sleep_mode_devices()
@@ -1165,10 +1014,12 @@ class MainWindow(QMainWindow):
 
         self.lighting_page.turn_off_all_lighting()
         if errors:
+            self.home_page.add_event(f"睡眠全关部分失败：{errors[0]}")
             self.statusBar().showMessage(
                 f"睡眠全关部分失败：屏幕 {screen_count}/{len(devices)} 个已黑屏；{errors[0]}"
             )
             return
+        self.home_page.add_event("睡眠全关已执行")
         self.statusBar().showMessage(f"睡眠全关已执行：屏幕 {screen_count}/{len(devices)} 个已黑屏，灯光正在关闭")
 
     def _sleep_mode_devices(self) -> list[DisplayDevice]:

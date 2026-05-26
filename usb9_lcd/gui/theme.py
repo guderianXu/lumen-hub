@@ -102,9 +102,86 @@ def gui_stylesheet() -> str:
         border: 1px solid #34383b;
         border-radius: 8px;
     }
+    QFrame#FanRoleMetricCard {
+        background: #17191a;
+        border: 1px solid #34383b;
+        border-radius: 8px;
+    }
+    QScrollArea#FanControlScrollArea {
+        background: transparent;
+        border: 0;
+    }
+    QScrollArea#FanControlScrollArea > QWidget > QWidget {
+        background: transparent;
+    }
+    QWidget#FanControlContainer { background: transparent; }
+    QFrame#FanControlGroup {
+        background: #18191a;
+        border: 1px solid #33373a;
+        border-radius: 8px;
+    }
+    QFrame#FanControlRow {
+        background: #1e2021;
+        border: 1px solid #34383b;
+        border-radius: 7px;
+    }
+    QFrame#EmbeddedFanSlider {
+        background: transparent;
+        border: 0;
+    }
+    QLabel#FanControlChannelTitle {
+        color: #f2f3f0;
+        font-size: 15px;
+        font-weight: 900;
+    }
     QLabel#FanCardName { color: #f0f2ef; font-weight: 800; }
     QLabel#FanRpmValue { color: #f2f3f0; font-size: 20px; font-weight: 900; }
     QLabel#FanCardMeta { color: #969b9e; }
+    QLabel#FanRoleMetricTitle {
+        font-size: 12px;
+        font-weight: 900;
+    }
+    QLabel#FanRoleMetricValue {
+        color: #f2f3f0;
+        font-size: 17px;
+        font-weight: 900;
+    }
+    QLabel#FanRoleSummary {
+        background: #141617;
+        border: 1px solid #303438;
+        border-radius: 6px;
+        color: #cdd4d0;
+        padding: 8px 10px;
+    }
+    QLabel#FanSpeedSummary {
+        background: #101213;
+        border: 1px solid #2f3838;
+        border-radius: 6px;
+        color: #dfe5e1;
+        padding: 8px 10px;
+        font-weight: 700;
+    }
+    QLabel#FanIdentityNotice {
+        background: #141719;
+        border: 1px solid #3a4142;
+        border-radius: 6px;
+        color: #d9dedb;
+        padding: 8px 10px;
+    }
+    QLabel#FanRoleBadge {
+        background: transparent;
+        font-size: 12px;
+        font-weight: 800;
+    }
+    QLabel#FanIdentityBadge {
+        background: #232527;
+        border: 1px solid #41474a;
+        border-radius: 5px;
+        color: #d7dcd9;
+        padding: 2px 6px;
+        font-size: 12px;
+        font-weight: 800;
+    }
     QFrame#ScreenPreviewCard {
         background: #171819;
         border: 1px solid #313438;

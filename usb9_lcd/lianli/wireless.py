@@ -24,6 +24,7 @@ LED_DATA_CHUNK = 220
 FIRST_LED_PACKET_DATA_OFFSET = 34
 FIRST_LED_PACKET_DATA_MAX = RF_PAYLOAD_SIZE - FIRST_LED_PACKET_DATA_OFFSET
 DEFAULT_TINYUZ_DICT_SIZE = 4096
+RGB_FIRST_PAYLOAD_REPEAT_COUNT = 4
 
 KNOWN_USB_DEVICES = {
     (RF_SENDER_VID, RF_SENDER_PID): "L-Wireless RF sender / transmitter",
@@ -102,6 +103,10 @@ class WirelessSnapshot:
     def device_count(self) -> int:
         return len(self.devices)
 
+    @property
+    def motherboard_pwm(self) -> int | None:
+        return extract_motherboard_pwm(self.raw)
+
 
 class LianLiWirelessBackend:
     def __init__(
@@ -156,6 +161,20 @@ class LianLiWirelessBackend:
         sequence_index: int | None = None,
     ) -> list[bytes]:
         pwm_values = (6, 6, 6, 6) if enable else clamp_pwm_values([fallback_pwm] * 4)
+        return self.build_pwm_packets(
+            target,
+            pwm_values,
+            sequence_index=sequence_index,
+        )
+
+    def build_motherboard_pwm_mirror_packets(
+        self,
+        target: WirelessDeviceInfo,
+        motherboard_pwm: int,
+        *,
+        sequence_index: int | None = None,
+    ) -> list[bytes]:
+        pwm_values = clamp_pwm_values([motherboard_pwm] * 4)
         return self.build_pwm_packets(
             target,
             pwm_values,
@@ -235,6 +254,28 @@ class LianLiWirelessBackend:
                 )
         return len(packets)
 
+    def send_motherboard_pwm_mirror(
+        self,
+        target: WirelessDeviceInfo,
+        motherboard_pwm: int,
+        *,
+        sequence_index: int | None = None,
+    ) -> int:
+        if self.sender is None:
+            raise LianLiWirelessError("sender transport is not configured")
+        packets = self.build_motherboard_pwm_mirror_packets(
+            target,
+            motherboard_pwm,
+            sequence_index=sequence_index,
+        )
+        for packet in packets:
+            written = self.sender.write(packet)
+            if written != len(packet):
+                raise LianLiWirelessError(
+                    f"incomplete sender packet write ({written}/{len(packet)})"
+                )
+        return len(packets)
+
     def send_bind(
         self,
         target: WirelessDeviceInfo,
@@ -283,18 +324,48 @@ class LianLiWirelessBackend:
         *,
         interval_ms: int = 50,
         effect_index: int = 1,
+        led_count: int | None = None,
+        repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
     ) -> list[bytes]:
         payloads = build_static_rgb_payloads(
             target,
             color,
             interval_ms=interval_ms,
             effect_index=effect_index,
+            led_count=led_count,
         )
-        return [
-            packet
-            for payload in payloads
-            for packet in build_rf_chunks(target.channel, target.rx_type, payload)
-        ]
+        packets: list[bytes] = []
+        first_repeat = max(1, int(repeat_first_payload))
+        for index, payload in enumerate(payloads):
+            repeat = first_repeat if index == 0 else 1
+            for _ in range(repeat):
+                packets.extend(build_rf_chunks(target.channel, target.rx_type, payload))
+        return packets
+
+    def build_rainbow_rgb_packets(
+        self,
+        target: WirelessDeviceInfo,
+        *,
+        frame_count: int = 24,
+        interval_ms: int = 50,
+        effect_index: int = 1,
+        led_count: int | None = None,
+        repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
+    ) -> list[bytes]:
+        payloads = build_rainbow_rgb_payloads(
+            target,
+            frame_count=frame_count,
+            interval_ms=interval_ms,
+            effect_index=effect_index,
+            led_count=led_count,
+        )
+        packets: list[bytes] = []
+        first_repeat = max(1, int(repeat_first_payload))
+        for index, payload in enumerate(payloads):
+            repeat = first_repeat if index == 0 else 1
+            for _ in range(repeat):
+                packets.extend(build_rf_chunks(target.channel, target.rx_type, payload))
+        return packets
 
     def send_static_rgb(
         self,
@@ -303,6 +374,8 @@ class LianLiWirelessBackend:
         *,
         interval_ms: int = 50,
         effect_index: int = 1,
+        led_count: int | None = None,
+        repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
     ) -> int:
         if self.sender is None:
             raise LianLiWirelessError("sender transport is not configured")
@@ -311,6 +384,36 @@ class LianLiWirelessBackend:
             color,
             interval_ms=interval_ms,
             effect_index=effect_index,
+            led_count=led_count,
+            repeat_first_payload=repeat_first_payload,
+        )
+        for packet in packets:
+            written = self.sender.write(packet)
+            if written != len(packet):
+                raise LianLiWirelessError(
+                    f"incomplete sender packet write ({written}/{len(packet)})"
+                )
+        return len(packets)
+
+    def send_rainbow_rgb(
+        self,
+        target: WirelessDeviceInfo,
+        *,
+        frame_count: int = 24,
+        interval_ms: int = 50,
+        effect_index: int = 1,
+        led_count: int | None = None,
+        repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
+    ) -> int:
+        if self.sender is None:
+            raise LianLiWirelessError("sender transport is not configured")
+        packets = self.build_rainbow_rgb_packets(
+            target,
+            frame_count=frame_count,
+            interval_ms=interval_ms,
+            effect_index=effect_index,
+            led_count=led_count,
+            repeat_first_payload=repeat_first_payload,
         )
         for packet in packets:
             written = self.sender.write(packet)
@@ -500,6 +603,19 @@ def parse_wireless_snapshot(payload: bytes) -> list[WirelessDeviceInfo]:
     return devices
 
 
+def extract_motherboard_pwm(payload: bytes) -> int | None:
+    if len(payload) < 4 or payload[0] != RF_GET_DEV_CMD:
+        return None
+    indicator = payload[2]
+    value = payload[3]
+    if indicator >> 7:
+        return None
+    denominator = (indicator & 0x7F) + value
+    if denominator == 0:
+        return None
+    return max(0, min(255, int(255.0 * (value / denominator))))
+
+
 def build_pwm_payload(
     target: WirelessDeviceInfo,
     pwm_values: Iterable[int],
@@ -579,14 +695,70 @@ def build_static_rgb_payloads(
     if resolved_led_count <= 0:
         raise LianLiWirelessError("LED count must be positive")
     rgb = _rgb_bytes(color) * resolved_led_count
-    compressed = tinyuz_compress_literal(rgb)
+    return build_rgb_frame_payloads(
+        target,
+        rgb,
+        led_count=resolved_led_count,
+        frame_count=1,
+        interval_ms=interval_ms,
+        effect_index=effect_index,
+    )
+
+
+def build_rainbow_rgb_payloads(
+    target: WirelessDeviceInfo,
+    *,
+    frame_count: int = 24,
+    interval_ms: int = 50,
+    effect_index: int = 1,
+    led_count: int | None = None,
+) -> list[bytes]:
+    if not target.is_bound:
+        raise LianLiWirelessError("receiver is not bound to a master controller")
+    resolved_led_count = infer_led_count(target) if led_count is None else led_count
+    rgb = generate_rainbow_rgb_frames(resolved_led_count, frame_count=frame_count)
+    return build_rgb_frame_payloads(
+        target,
+        rgb,
+        led_count=resolved_led_count,
+        frame_count=frame_count,
+        interval_ms=interval_ms,
+        effect_index=effect_index,
+    )
+
+
+def build_rgb_frame_payloads(
+    target: WirelessDeviceInfo,
+    raw_rgb: bytes,
+    *,
+    led_count: int,
+    frame_count: int,
+    interval_ms: int = 50,
+    effect_index: int = 1,
+) -> list[bytes]:
+    if not target.is_bound:
+        raise LianLiWirelessError("receiver is not bound to a master controller")
+    resolved_led_count = int(led_count)
+    resolved_frame_count = int(frame_count)
+    if not 0 < resolved_led_count <= 255:
+        raise LianLiWirelessError("LED count must be in range 1-255")
+    if not 0 < resolved_frame_count <= 65535:
+        raise LianLiWirelessError("frame count must be in range 1-65535")
+    expected_len = resolved_led_count * resolved_frame_count * 3
+    if len(raw_rgb) != expected_len:
+        raise LianLiWirelessError(
+            f"RGB frame data length mismatch (expected {expected_len}, got {len(raw_rgb)})"
+        )
+    send_interval = int(interval_ms)
+    if not 0 <= send_interval <= 65535:
+        raise LianLiWirelessError("interval_ms must be in range 0-65535")
+    compressed = tinyuz_compress_literal(raw_rgb)
     data_packets = _ceil_div(len(compressed), LED_DATA_CHUNK)
     total_packets = 1 + data_packets
     if total_packets > 255:
         raise LianLiWirelessError("LED payload is too large to transmit")
 
     effect_bytes = int(effect_index).to_bytes(4, "big", signed=False)
-    send_interval = max(0, int(interval_ms))
     payloads: list[bytes] = []
     data_offset = 0
     for packet_index in range(total_packets):
@@ -602,7 +774,7 @@ def build_static_rgb_payloads(
             data_len = len(compressed)
             payload[20:24] = data_len.to_bytes(4, "big", signed=False)
             payload[24] = 0
-            payload[25:27] = (1).to_bytes(2, "big", signed=False)
+            payload[25:27] = resolved_frame_count.to_bytes(2, "big", signed=False)
             payload[27] = resolved_led_count & 0xFF
             payload[32:34] = send_interval.to_bytes(2, "big", signed=False)
             first_len = min(FIRST_LED_PACKET_DATA_MAX, len(compressed))
@@ -622,6 +794,28 @@ def build_static_rgb_payloads(
     return payloads
 
 
+def generate_rainbow_rgb_frames(
+    led_count: int,
+    *,
+    frame_count: int = 24,
+    saturation: float = 1.0,
+    value: float = 1.0,
+) -> bytes:
+    resolved_led_count = int(led_count)
+    resolved_frame_count = int(frame_count)
+    if resolved_led_count <= 0:
+        raise LianLiWirelessError("LED count must be positive")
+    if resolved_frame_count <= 0:
+        raise LianLiWirelessError("frame count must be positive")
+    frame_bytes = bytearray()
+    for frame_index in range(resolved_frame_count):
+        offset = frame_index / resolved_frame_count
+        for led_index in range(resolved_led_count):
+            hue = (led_index / max(1, resolved_led_count) + offset) % 1.0
+            frame_bytes.extend(_hsv_to_rgb(hue, saturation, value))
+    return bytes(frame_bytes)
+
+
 def infer_led_count(device: WirelessDeviceInfo) -> int:
     mapping = {
         1: 116,
@@ -631,12 +825,25 @@ def infer_led_count(device: WirelessDeviceInfo) -> int:
         65: 96,
     }
     if device.device_type in mapping:
-        return mapping[device.device_type]
-    if device.device_type == 10:
-        return 24 + max(device.fan_count, 0) * 24
-    if device.fan_count > 0:
-        return device.fan_count * 26
-    return 60
+        led_count = mapping[device.device_type]
+    elif device.device_type == 10:
+        led_count = 24 + max(device.fan_count, 0) * 24
+    elif device.fan_count > 0:
+        led_count = device.fan_count * 26
+    else:
+        led_count = 60
+
+    hint = extract_led_count_hint(device.raw)
+    if hint and hint != led_count and (led_count == 60 or device.fan_count == 0):
+        return hint
+    return led_count
+
+
+def extract_led_count_hint(raw: bytes) -> int | None:
+    if len(raw) < 32:
+        return None
+    hint = raw[31]
+    return hint or None
 
 
 def build_rf_chunks(channel: int, rx_type: int, payload: bytes) -> list[bytes]:
@@ -780,6 +987,31 @@ def _rgb_bytes(color: tuple[int, int, int]) -> bytes:
         if not 0 <= int(component) <= 255:
             raise LianLiWirelessError("RGB color values must be between 0 and 255")
     return bytes(int(component) for component in color)
+
+
+def _hsv_to_rgb(hue: float, saturation: float, value: float) -> tuple[int, int, int]:
+    h = float(hue) % 1.0
+    s = max(0.0, min(1.0, float(saturation)))
+    v = max(0.0, min(1.0, float(value)))
+    segment = int(h * 6.0)
+    fraction = h * 6.0 - segment
+    p = v * (1.0 - s)
+    q = v * (1.0 - fraction * s)
+    t = v * (1.0 - (1.0 - fraction) * s)
+    segment %= 6
+    if segment == 0:
+        red, green, blue = v, t, p
+    elif segment == 1:
+        red, green, blue = q, v, p
+    elif segment == 2:
+        red, green, blue = p, v, t
+    elif segment == 3:
+        red, green, blue = p, q, v
+    elif segment == 4:
+        red, green, blue = t, p, v
+    else:
+        red, green, blue = v, p, q
+    return int(red * 255) & 0xFF, int(green * 255) & 0xFF, int(blue * 255) & 0xFF
 
 
 def _ceil_div(value: int, divisor: int) -> int:

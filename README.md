@@ -1,4 +1,4 @@
-# 光枢
+# 光枢 / Lumen Hub
 
 Linux 下的屏幕、灯效、风扇与硬件联动控制中心。
 
@@ -10,7 +10,7 @@ Linux 下的屏幕、灯效、风扇与硬件联动控制中心。
 - 联力 L-Wireless 设备读取、实验性风扇/灯光/小屏控制。
 - 睡眠前一键关闭 LCD 屏幕与整机灯光。
 
-底层 Python 包名仍为 `usb9_lcd`，命令行入口也保持兼容。
+英文项目名为 `Lumen Hub`，仓库/包名使用 `lumen-hub`；底层 Python 包名仍为 `usb9_lcd`，命令行入口也保持兼容。
 
 ## 目标硬件
 
@@ -26,6 +26,12 @@ python -m pip install -e '.[dev]'
 python -m usb9_lcd detect
 python -m usb9_lcd show ./image.png
 python -m usb9_lcd.gui.app
+```
+
+安装后也可以直接运行：
+
+```bash
+lumen-hub
 ```
 
 ## Static Image
@@ -70,7 +76,13 @@ Launch the desktop GUI:
 python -m usb9_lcd.gui.app
 ```
 
-The desktop GUI supports a dark monitoring dashboard, local asset library, static image upload, and animated asset playback for the detected ASUS LCD. The display model and preview geometry are device-aware, so future screens can provide different sizes, shapes, pixel styles, and protocols through separate drivers.
+或使用安装后的脚本入口：
+
+```bash
+lumen-hub-gui
+```
+
+The desktop GUI supports a dark monitoring dashboard, local asset library, static image upload, animated asset playback for the detected ASUS LCD, OpenRGB lighting, PWM fan control, and an experimental LIAN LI wireless page. The display model and preview geometry are device-aware, so future screens can provide different sizes, shapes, pixel styles, and protocols through separate drivers.
 
 The `灯效` page controls motherboard, RAM, fan, and ARGB lighting through the OpenRGB SDK Server. Start OpenRGB with its SDK server enabled before connecting from the GUI. The default endpoint is `127.0.0.1:6742`.
 
@@ -85,6 +97,22 @@ If Linux denies access to `/dev/hidraw*`, add a udev rule similar to:
 ```udev
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1c7b", MODE="0660", GROUP="plugdev"
 ```
+
+PWM 风扇写入权限可以在 GUI 的 `风扇 -> 维护 -> 权限` 中诊断。风扇页默认延迟加载，进入页面或点击“重新扫描风扇”时会请求系统授权加载主板 hwmon 驱动；交互式探测会在标准模块无效时追加 `nct6683 force=1` 兜底。短期可以点击“请求系统权限”触发系统认证弹窗；长期建议复制 GUI 生成的 tmpfiles 规则模板，安装到 `/etc/tmpfiles.d/lumen-hub-pwm.conf`，然后执行：
+
+```bash
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/lumen-hub-pwm.conf
+```
+
+OpenRGB 灯效页默认保持关闭；连接 OpenRGB SDK Server 后才会应用灯效。联力无线页目前仍是实验性功能，默认只读，写入必须启用复选框并输入确认令牌。
+
+## 开发验证
+
+```bash
+QT_QPA_PLATFORM=offscreen pytest -q
+```
+
+GitHub Actions 配置在 `.github/workflows/tests.yml`，会在 push 和 pull request 时安装依赖并运行完整测试。
 
 On this machine the installed rule is:
 

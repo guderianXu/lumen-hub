@@ -3,15 +3,20 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "usb9-lcd"
+name = "lumen-hub"
 version = "0.1.0"
-description = "Control an ASUS TUF GAMING LC III ARGB LCD over motherboard USB 9-pin HID"
+description = "Linux hardware control center for LCD screens, OpenRGB lighting, PWM fans, and LIAN LI wireless devices"
 requires-python = ">=3.10"
 dependencies = [
   "openrgb-python>=0.3.6",
   "Pillow>=10.0",
   "PySide6>=6.7",
 ]
+
+[project.scripts]
+lumen-hub = "usb9_lcd.gui.app:main"
+lumen-hub-gui = "usb9_lcd.gui.app:main"
+usb9-lcd = "usb9_lcd.cli:main"
 
 [project.optional-dependencies]
 dev = [
