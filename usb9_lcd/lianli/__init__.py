@@ -31,6 +31,7 @@ from usb9_lcd.lianli.capture import (
     load_capture_packets,
     protocol_signature_catalog,
     summarize_capture_dir,
+    windows_capture_note,
     usb_capture_readiness,
     windows_capture_runbook,
 )
@@ -127,6 +128,7 @@ __all__ = [
     "linux_interface_contract_report",
     "lianli_validation_gate",
     "summarize_capture_dir",
+    "windows_capture_note",
     "usb_capture_readiness",
     "windows_capture_runbook",
     "protocol_signature_catalog",

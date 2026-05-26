@@ -45,6 +45,7 @@
 - [x] 新增 `receiver-pairing-risk-report`，用于在执行任何 bind/unbind 前输出可分享的风险复核 JSON。
 - [x] 新增 `capture-gap-report`，用于把缺失/部分 Windows USBPcap 场景按 baseline、PWM、灯光、sort/quick-sync、RF rebind 顺序排序，并给出下一份 pcap 的后处理命令。
 - [x] 新增 `windows-capture-runbook`，用于在 Windows VM 抓包前输出逐场景任务、当前状态、风险、验收条件、导出命令、sidecar 记录模板和分析命令。
+- [x] 新增 `windows-capture-note`，用于按场景生成 `<capture-stem>.notes.json`，避免手写 sidecar 时填错 scenario、capture_file 或目标上下文。
 - [x] `capture-set-report` 会读取 `<capture-stem>.notes.json` sidecar，并把目标 MAC、Master MAC、channel、rx_type、device_type、fan_count、LED count 和观察记录放入对应场景；这些 sidecar 不会被误当成抓包输入。
 - [x] 新增 `lianli-validation-gate`，用于把可选 `artifact-evidence-matrix`、`capture-gap-report`、`receiver-evidence-report` 和 `receiver-pairing-risk-report` 合并成一个 readiness JSON，优先暴露 blocker、warning 和下一步命令。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并只在身份一致、写入门禁通过时自动填入唯一可用 MAC。
@@ -154,6 +155,19 @@ python tools/lianli_wireless_probe.py \
   --save-json .cache/lianli/windows-capture-runbook.json \
   windows-capture-runbook .cache/lianli/captures \
   --capture-base lianli-v2117
+
+python tools/lianli_wireless_probe.py \
+  --save-json .cache/lianli/captures/lianli-v2117-01-direct-fan-speed.notes.json \
+  windows-capture-note direct-fan-speed \
+  --capture-base lianli-v2117 \
+  --receiver-mac <receiver-mac> \
+  --master-mac <master-mac> \
+  --channel <channel> \
+  --rx-type <rx-type> \
+  --device-type <device-type> \
+  --fan-count <fan-count> \
+  --led-count <led-count> \
+  --mark-actions-done
 
 python tools/lianli_wireless_probe.py \
   --save-json .cache/lianli/capture-gap-report.json \

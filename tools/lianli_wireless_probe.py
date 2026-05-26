@@ -47,6 +47,7 @@ from usb9_lcd.lianli.capture import (
     protocol_signature_catalog,
     summarize_capture_dir,
     usb_capture_readiness,
+    windows_capture_note,
     windows_capture_runbook,
     windows_capture_plan,
 )
@@ -625,6 +626,33 @@ def _build_parser() -> argparse.ArgumentParser:
     windows_runbook.add_argument("--rainbow-frames", type=int, default=3)
     windows_runbook.add_argument("--interval-ms", type=int, default=40)
     windows_runbook.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+
+    windows_note = subparsers.add_parser(
+        "windows-capture-note",
+        help="Generate a sidecar JSON template for one Windows USBPcap scenario",
+    )
+    windows_note.add_argument("scenario_id", help="Scenario id from windows-capture-runbook")
+    windows_note.add_argument("--version", default="2.1.17", help="L-Connect version under test")
+    windows_note.add_argument("--capture-base", help="Output capture filename prefix")
+    windows_note.add_argument("--capture-file", help="Override the planned capture filename")
+    windows_note.add_argument("--captured-at", default="")
+    windows_note.add_argument("--operator", default="")
+    windows_note.add_argument("--environment", default="windows-vm-usb-passthrough")
+    windows_note.add_argument("--receiver-mac", default="")
+    windows_note.add_argument("--master-mac", default="")
+    windows_note.add_argument("--channel", type=lambda value: int(value, 0))
+    windows_note.add_argument("--rx-type", type=lambda value: int(value, 0))
+    windows_note.add_argument("--device-type", type=lambda value: int(value, 0))
+    windows_note.add_argument("--fan-count", type=int)
+    windows_note.add_argument("--led-count", type=int)
+    windows_note.add_argument(
+        "--usbpcap-interface",
+        dest="usbpcap_interfaces",
+        action="append",
+        help="USBPcap VID:PID recorded in the capture; repeat for multiple devices",
+    )
+    windows_note.add_argument("--observation", action="append", default=[])
+    windows_note.add_argument("--mark-actions-done", action="store_true")
 
     usb_readiness = subparsers.add_parser(
         "usb-capture-readiness",
@@ -1945,6 +1973,26 @@ def main(argv: list[str] | None = None) -> int:
             rainbow_frames=args.rainbow_frames,
             interval_ms=args.interval_ms,
             effect_index=args.effect_index,
+        )
+    elif command == "windows-capture-note":
+        payload = windows_capture_note(
+            args.scenario_id,
+            version=args.version,
+            capture_base=args.capture_base,
+            capture_file=args.capture_file,
+            captured_at=args.captured_at,
+            operator=args.operator,
+            environment=args.environment,
+            receiver_mac=args.receiver_mac,
+            master_mac=args.master_mac,
+            channel=args.channel,
+            rx_type=args.rx_type,
+            device_type=args.device_type,
+            fan_count=args.fan_count,
+            led_count=args.led_count,
+            usbpcap_interfaces=args.usbpcap_interfaces,
+            observations=args.observation,
+            mark_actions_done=args.mark_actions_done,
         )
     elif command == "analyze-capture":
         payload = analyze_capture_file(args.path)

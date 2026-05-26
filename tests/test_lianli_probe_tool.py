@@ -3245,6 +3245,36 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
     assert runbook_payload["next_task"]["id"] == "baseline"
     assert runbook_payload["tasks"][0]["capture_path"] == str(tmp_path / f"{base}-00-baseline.pcapng")
     assert runbook_payload["tasks"][0]["manual_tshark_export_command"].startswith("tshark -r ")
+    assert "windows-capture-note baseline" in runbook_payload["tasks"][0]["capture_note_command"]
+    note_payload = _run_probe(
+        "windows-capture-note",
+        "direct-fan-speed",
+        "--capture-base",
+        base,
+        "--receiver-mac",
+        "aa:bb:cc:dd:ee:ff",
+        "--master-mac",
+        "10:20:30:40:50:60",
+        "--channel",
+        "8",
+        "--rx-type",
+        "3",
+        "--device-type",
+        "2",
+        "--fan-count",
+        "3",
+        "--led-count",
+        "132",
+        "--observation",
+        "Applied 55% fan speed.",
+        "--mark-actions-done",
+    )
+    assert note_payload["operation"] == "windows-capture-note"
+    assert note_payload["status"] == "ready"
+    assert note_payload["capture_file"] == f"{base}-01-direct-fan-speed.pcapng"
+    assert note_payload["capture_note_file"] == f"{base}-01-direct-fan-speed.notes.json"
+    assert note_payload["target_context"]["channel"] == 8
+    assert note_payload["observations"] == ["Applied 55% fan speed."]
     contract = payload["linux_interface_contract"]
     assert contract["transport"]["sender"]["confidence"] == "high"
     assert contract["transport"]["sender"]["write_endpoint"] == "0x01"

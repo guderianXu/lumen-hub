@@ -155,6 +155,9 @@ def test_fan_host_control_rows_keep_identity_control_and_binding_separate():
         "温度绑定",
     ]
     assert panel.findChildren(QFrame, "FanControlRow")
+    assert panel.findChildren(QFrame, "FanControlToolbar")
+    assert panel.findChildren(QFrame, "FanControlIdentityBlock")
+    assert panel.findChildren(QFrame, "FanControlSliderBlock")
     bind_blocks = panel.findChildren(QFrame, "FanControlBindBlock")
     assert bind_blocks
     assert bind_blocks[0].parentWidget().objectName() == "FanControlGroup"

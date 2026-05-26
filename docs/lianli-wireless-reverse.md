@@ -358,6 +358,11 @@ Practical interpretation:
     emits a machine-readable capture checklist for baseline, direct fan speed,
     motherboard PWM sync, RF unbind/rebind, sort/quick-sync, and lighting
     static/off plus generated-rainbow scenarios.
+  - New sidecar note helper:
+    `python tools/lianli_wireless_probe.py --save-json .cache/lianli/captures/lianli-v2117-01-direct-fan-speed.notes.json windows-capture-note direct-fan-speed --capture-base lianli-v2117 --receiver-mac <receiver-mac> --master-mac <master-mac> --channel <channel> --rx-type <rx-type> --device-type <device-type> --fan-count <fan-count> --led-count <led-count> --mark-actions-done`
+    creates the `<capture-stem>.notes.json` operator record consumed by
+    `capture-set-report`, so the target MAC/channel/action context is kept next
+    to each Windows USBPcap file.
   - New batch triage helper:
     `python tools/lianli_wireless_probe.py summarize-captures <capture-dir>`
     recursively ranks `.pcapng`, `.pcap`, `.txt`, `.json`, `.tsv`, and `.hex`

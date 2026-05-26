@@ -1285,6 +1285,77 @@ def windows_capture_runbook(
     }
 
 
+def windows_capture_note(
+    scenario_id: str,
+    *,
+    version: str = "2.1.17",
+    capture_base: str | None = None,
+    capture_file: str | None = None,
+    captured_at: str = "",
+    operator: str = "",
+    environment: str = "windows-vm-usb-passthrough",
+    receiver_mac: str = "",
+    master_mac: str = "",
+    channel: int | str | None = None,
+    rx_type: int | str | None = None,
+    device_type: int | str | None = None,
+    fan_count: int | str | None = None,
+    led_count: int | str | None = None,
+    usbpcap_interfaces: Iterable[str] | None = None,
+    observations: Iterable[str] | None = None,
+    mark_actions_done: bool = False,
+) -> dict[str, Any]:
+    base = capture_base or f"l-connect-v{version}"
+    scenarios = _windows_capture_scenarios(base)
+    scenario = next((item for item in scenarios if str(item.get("id") or "") == scenario_id), None)
+    if scenario is None:
+        return {
+            "operation": "windows-capture-note",
+            "schema_version": CAPTURE_NOTE_SCHEMA_VERSION,
+            "status": "unknown-scenario",
+            "scenario_id": scenario_id,
+            "known_scenario_ids": [str(item.get("id") or "") for item in scenarios],
+        }
+
+    resolved_capture_file = capture_file or str(scenario.get("capture_file") or "")
+    note = _windows_capture_note_template({"version": version}, scenario, resolved_capture_file)
+    note["status"] = _windows_capture_note_template_status(
+        receiver_mac=receiver_mac,
+        master_mac=master_mac,
+        channel=channel,
+        rx_type=rx_type,
+        device_type=device_type,
+        fan_count=fan_count,
+        led_count=led_count,
+        mark_actions_done=mark_actions_done,
+    )
+    note["capture_base"] = base
+    note["captured_at"] = captured_at
+    note["operator"] = operator
+    note["environment"] = environment
+    note["target_context"] = {
+        "receiver_mac": receiver_mac,
+        "master_mac": master_mac,
+        "channel": _windows_capture_note_value(channel),
+        "rx_type": _windows_capture_note_value(rx_type),
+        "device_type": _windows_capture_note_value(device_type),
+        "fan_count": _windows_capture_note_value(fan_count),
+        "led_count": _windows_capture_note_value(led_count),
+    }
+    if usbpcap_interfaces is not None:
+        note["usbpcap_interfaces"] = _ordered_strings_from_list(list(usbpcap_interfaces))
+    if mark_actions_done:
+        note["windows_actions_completed"] = [
+            {**item, "done": True}
+            for item in note["windows_actions_completed"]
+            if isinstance(item, dict)
+        ]
+    note["observations"] = [str(item) for item in (observations or [])]
+    note["capture_note_file"] = _windows_capture_note_file(resolved_capture_file)
+    note["recommended_save_path"] = _windows_capture_note_file(resolved_capture_file)
+    return note
+
+
 def linux_interface_contract_report(
     path: Path,
     *,
@@ -9658,6 +9729,7 @@ def _windows_capture_runbook_tasks(
                 "capture_note_file": _windows_capture_note_file(capture_file),
                 "capture_note_path": str(_windows_capture_note_path(root, capture_file)),
                 "capture_note_template": _windows_capture_note_template(plan, scenario, capture_file),
+                "capture_note_command": _windows_capture_note_command(root, scenario_id, capture_file),
                 "goal": str(scenario.get("goal") or report.get("goal") or ""),
                 "windows_actions": _ordered_strings_from_list(scenario.get("windows_actions")),
                 "expected_evidence": _ordered_strings_from_list(scenario.get("expected_evidence")),
@@ -9753,8 +9825,68 @@ def _windows_capture_runbook_recommended_commands(
     ]
     if next_task:
         commands.append(f"capture next scenario: {next_task.get('capture_file')}")
+        note_command = str(next_task.get("capture_note_command") or "")
+        if note_command:
+            commands.append(note_command)
         commands.extend(_ordered_strings_from_list(next_task.get("linux_analysis_commands")))
     return _unique_preserve_order(commands)
+
+
+def _windows_capture_note_command(root: Path, scenario_id: str, capture_file: str) -> str:
+    return _tool_command(
+        "--save-json",
+        str(_windows_capture_note_path(root, capture_file)),
+        "windows-capture-note",
+        scenario_id,
+        "--capture-base",
+        _capture_set_base_from_capture_file(capture_file),
+        "--receiver-mac",
+        "<receiver-mac>",
+        "--master-mac",
+        "<master-mac>",
+        "--channel",
+        "<channel>",
+        "--rx-type",
+        "<rx-type>",
+        "--device-type",
+        "<device-type>",
+        "--fan-count",
+        "<fan-count>",
+        "--led-count",
+        "<led-count>",
+        "--mark-actions-done",
+    )
+
+
+def _windows_capture_note_value(value: int | str | None) -> int | str:
+    return "" if value is None else value
+
+
+def _windows_capture_note_template_status(
+    *,
+    receiver_mac: str,
+    master_mac: str,
+    channel: int | str | None,
+    rx_type: int | str | None,
+    device_type: int | str | None,
+    fan_count: int | str | None,
+    led_count: int | str | None,
+    mark_actions_done: bool,
+) -> str:
+    required_values: tuple[int | str | None, ...] = (
+        receiver_mac,
+        master_mac,
+        channel,
+        rx_type,
+        device_type,
+        fan_count,
+        led_count,
+    )
+    if not mark_actions_done:
+        return "needs-action-confirmation"
+    if any(value in (None, "") for value in required_values):
+        return "needs-target-context"
+    return "ready"
 
 
 def _windows_capture_note_file(capture_file: str) -> str:

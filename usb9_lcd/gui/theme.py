@@ -157,6 +157,11 @@ def gui_stylesheet() -> str:
         background: transparent;
     }
     QWidget#FanControlContainer { background: transparent; }
+    QFrame#FanControlToolbar {
+        background: #161819;
+        border: 1px solid #303438;
+        border-radius: 8px;
+    }
     QFrame#FanControlGroup {
         background: #18191a;
         border: 1px solid #33373a;
@@ -172,6 +177,11 @@ def gui_stylesheet() -> str:
         border: 1px solid #303438;
         border-radius: 7px;
         padding: 8px;
+    }
+    QFrame#FanControlSliderBlock {
+        background: #161819;
+        border: 1px solid #303438;
+        border-radius: 7px;
     }
     QFrame#FanControlBindBlock {
         background: #141617;

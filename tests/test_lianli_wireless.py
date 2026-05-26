@@ -69,6 +69,7 @@ from usb9_lcd.lianli.capture import (
     protocol_signature_catalog,
     summarize_capture_dir,
     usb_capture_readiness,
+    windows_capture_note,
     windows_capture_runbook,
     windows_capture_plan,
 )
@@ -2851,6 +2852,8 @@ def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
     assert first_task["capture_note_template"]["schema_version"] == "lianli-windows-capture-note/v1"
     assert first_task["capture_note_template"]["scenario_id"] == "baseline"
     assert first_task["capture_note_template"]["target_context"]["receiver_mac"] == ""
+    assert f"{base}-00-baseline.notes.json" in first_task["capture_note_command"]
+    assert "windows-capture-note baseline" in first_task["capture_note_command"]
     assert first_task["windows_actions"][0] == "Start USBPcap capture."
     assert "receiver-list-request" in first_task["expected_evidence"]
     assert "0416:8040" in first_task["acceptance_checks"][1]
@@ -2858,6 +2861,39 @@ def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
     assert str(tmp_path / f"{base}-00-baseline.pcapng") in first_task["linux_analysis_commands"][0]
     assert any("capture-gap-report" in command for command in report["post_batch_commands"])
     assert report["recommended_commands"][3] == f"capture next scenario: {base}-00-baseline.pcapng"
+    assert "windows-capture-note baseline" in report["recommended_commands"][4]
+
+
+def test_windows_capture_note_generates_filled_sidecar_template():
+    base = "lianli-v2117"
+    note = windows_capture_note(
+        "direct-fan-speed",
+        capture_base=base,
+        captured_at="2026-05-26T21:00:00+08:00",
+        operator="xjw",
+        receiver_mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=132,
+        observations=["Applied 55% then 75%; fans audibly changed."],
+        mark_actions_done=True,
+    )
+
+    assert note["operation"] == "windows-capture-note"
+    assert note["schema_version"] == "lianli-windows-capture-note/v1"
+    assert note["status"] == "ready"
+    assert note["capture_file"] == f"{base}-01-direct-fan-speed.pcapng"
+    assert note["capture_note_file"] == f"{base}-01-direct-fan-speed.notes.json"
+    assert note["operator"] == "xjw"
+    assert note["target_context"]["receiver_mac"] == "aa:bb:cc:dd:ee:ff"
+    assert note["target_context"]["channel"] == 8
+    assert note["target_context"]["led_count"] == 132
+    assert all(item["done"] for item in note["windows_actions_completed"])
+    assert "live-pwm RF frames" in note["expected_evidence"]
+    assert note["observations"] == ["Applied 55% then 75%; fans audibly changed."]
 
 
 def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_capture(tmp_path):
