@@ -912,7 +912,26 @@ def test_probe_receiver_evidence_report_detects_completed_safe_pwm_directory(tmp
     assert write_set["packets_written"] == 4
     assert write_set["likely_effective"] is True
     assert all(item["exists"] for item in write_set["files"])
-    assert any("receiver-observation" in command for command in payload["recommended_commands"])
+    observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
+    assert observation_commands
+    assert "--target aa:bb:cc:dd:ee:ff" in observation_commands[0]
+    assert "--observed-pwm 120" in observation_commands[0]
+
+
+def test_probe_receiver_evidence_report_observation_command_keeps_pwm_tuple(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    live_pwm_path = output_dir / "live-pwm.json"
+    live_pwm = json.loads(live_pwm_path.read_text(encoding="utf-8"))
+    live_pwm["pwm_values"] = [96, 112, 128, 144]
+    live_pwm_path.write_text(json.dumps(live_pwm) + "\n", encoding="utf-8")
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
+
+    assert observation_commands
+    assert "--target aa:bb:cc:dd:ee:ff" in observation_commands[0]
+    assert "--observed-pwm 96,112,128,144" in observation_commands[0]
 
 
 def test_probe_receiver_observation_records_visual_result(tmp_path):

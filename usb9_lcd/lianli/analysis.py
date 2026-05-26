@@ -583,19 +583,37 @@ def receiver_observation_commands(path: Path) -> list[str]:
         output_dir = str(write_set.get("output_dir") or "")
         if not output_dir:
             continue
-        commands.append(
-            _tool_command(
-                "--save-json",
-                str(Path(output_dir) / RECEIVER_OBSERVATION_FILE_NAME),
-                "receiver-observation",
-                output_dir,
-                "--effect",
-                "changed",
+        argv = [
+            "--save-json",
+            str(Path(output_dir) / RECEIVER_OBSERVATION_FILE_NAME),
+            "receiver-observation",
+            output_dir,
+            "--effect",
+            "changed",
+        ]
+        target = str(write_set.get("target") or "").strip()
+        if target:
+            argv.extend(["--target", target])
+        observed_pwm = _format_observed_pwm_arg(write_set.get("pwm_values"))
+        if observed_pwm:
+            argv.extend(["--observed-pwm", observed_pwm])
+        argv.extend(
+            [
                 "--note",
                 "fan speed visibly changed after guarded PWM write",
-            )
+            ]
         )
+        commands.append(_tool_command(*argv))
     return commands
+
+
+def _format_observed_pwm_arg(value: Any) -> str:
+    values = _int_list(value)
+    if not values:
+        return ""
+    if len(set(values)) == 1:
+        return str(values[0])
+    return ",".join(str(item) for item in values)
 
 
 def _sha256_file(path: Path) -> str:

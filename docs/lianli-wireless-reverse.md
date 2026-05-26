@@ -1066,14 +1066,18 @@ Risks:
   checklist follows the MAC-specific `experiments/safe-pwm-<mac>` path emitted
   by `receiver_control_next_action`. `receiver-observation <safe-pwm-dir>`
   creates the matching manual `observation.json` record for visible/audible fan
-  response. Evidence reports now distinguish complete machine logs that still
-  need observation (`write-evidence-needs-observation`) from confirmed control
-  evidence (`write-evidence-confirmed`). Negative, malformed, or ambiguous
-  observations now produce explicit conflict/invalid/unclear statuses instead
-  of being treated as merely missing observation. Confirmed observations also
-  have to match the `live-pwm.json` target MAC, and recorded PWM values are
-  compared against `pwm_values`; mismatches are treated as observation
-  conflicts rather than validated control.
+  response. When machine logs are complete but no observation exists, the
+  recommended observation command now carries the same target MAC and expected
+  PWM tuple from `live-pwm.json`, reducing the chance that a manual observation
+  is recorded against the wrong fan group. Evidence reports now distinguish
+  complete machine logs that still need observation
+  (`write-evidence-needs-observation`) from confirmed control evidence
+  (`write-evidence-confirmed`). Negative, malformed, or ambiguous observations
+  now produce explicit conflict/invalid/unclear statuses instead of being
+  treated as merely missing observation. Confirmed observations also have to
+  match the `live-pwm.json` target MAC, and recorded PWM values are compared
+  against `pwm_values`; mismatches are treated as observation conflicts rather
+  than validated control.
 - `LianLiWirelessPage`: GUI page for safe LIAN LI wireless probing. It exposes
   sysfs scanning, live receiver snapshots, live master MAC queries, and a
   `只读验证` action that saves scan, live-list, live-master, and live-lcd-info

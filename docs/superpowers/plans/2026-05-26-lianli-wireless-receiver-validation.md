@@ -120,6 +120,9 @@ python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/write-g
 只在 write-gate 通过后执行最小 PWM 实验。优先复制
 `receiver_control_next_action.recommended_commands[0]`，它会用真实 MAC 生成
 `experiments/safe-pwm-aa-bb-cc-dd-ee-ff` 这类输出目录，避免多个目标互相覆盖。
+安全 PWM 机器日志齐全后，`receiver-evidence-report` 推荐的
+`receiver-observation` 命令会自动带上同一个目标 MAC 和写入 PWM 值，
+优先复制它来记录观察结果，避免手工把观察记到错误目标上。
 手工执行时可以使用同样格式：
 
 ```bash
@@ -150,6 +153,7 @@ python tools/lianli_wireless_probe.py \
   --save-json .cache/lianli/hardware/experiments/safe-pwm-aa-bb-cc-dd-ee-ff/observation.json \
   receiver-observation .cache/lianli/hardware/experiments/safe-pwm-aa-bb-cc-dd-ee-ff \
   --effect changed \
+  --target aa:bb:cc:dd:ee:ff \
   --observed-pwm 120 \
   --note "fan speed visibly changed after guarded PWM write"
 ```
