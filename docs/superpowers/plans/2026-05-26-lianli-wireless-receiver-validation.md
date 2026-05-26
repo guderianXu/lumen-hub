@@ -57,6 +57,7 @@
 - [x] `capture-gap-report` / `windows-capture-runbook` / `windows-capture-plan` 已支持 `--artifact-dir`；目标版本 changelog 会写入 `artifact_capture_context`，并通过 `changelog_focus` 调整场景优先级。baseline 仍优先，direct PWM 仍是第一类写入验证，RF bind/unbind 只会在较低风险场景之后提前。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并只在身份一致、写入门禁通过时自动填入唯一可用 MAC。
 - [x] `extract-wireless-js` 已输出结构化 `ipc_events` 和 `settings_keys`，`artifact-evidence-matrix` 会汇总 `wireless_js_interface_versions`；这些入口线索只用于标注 Windows 抓包动作，不会单独升级为已确认 RF 协议证据。
+- [x] `extract-wireless-js` 已新增 `capture_hints`，把官方 JS 的 controller/settings/effect/discovery 入口映射到 baseline、PWM、sync、sort、灯光等 Windows 抓包场景；`windows-capture-runbook` 和 `capture-gap-report` 会在每个场景暴露 `interface_focus`。
 
 ## 待完成
 

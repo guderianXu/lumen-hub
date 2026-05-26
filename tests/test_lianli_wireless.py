@@ -798,16 +798,19 @@ def test_wireless_js_extractor_summarizes_usb_ipc_and_product_clues(tmp_path):
     clue_names = {item["name"] for item in analysis["clues"]}
     ipc_names = {item["name"] for item in analysis["ipc_events"]}
     settings_by_key = {item["settings_key"]: item for item in analysis["settings_keys"]}
+    capture_hint_names = {item["name"] for item in analysis["capture_hints"]}
 
     assert analysis["operation"] == "extract-wireless-js"
     assert analysis["matched_file_count"] == 1
     assert {"rf-sender-usb-id", "rf-receiver-usb-id", "l-wireless-product", "wireless-lcd-des-key"} <= clue_names
     assert ipc_names == {"scanWireless"}
     assert settings_by_key["WirelessConfig"]["operation"] == "writeSettings"
+    assert {"device-discovery", "wireless-config-settings"} <= capture_hint_names
     assert analysis["summary"]["categories"]["usb-id"] == 2
     assert analysis["summary"]["categories"]["ipc"] == 3
     assert analysis["summary"]["ipc_event_occurrences"] == 1
     assert analysis["summary"]["settings_key_occurrences"] == 1
+    assert analysis["summary"]["capture_hint_scenarios"]["baseline"] == 2
     assert analysis["summary"]["top_ipc_events"] == ["scanWireless"]
     assert analysis["summary"]["top_settings_keys"] == ["writeSettings:WirelessConfig"]
     assert analysis["summary"]["confidence"]["high"] >= 4
@@ -934,8 +937,20 @@ def test_artifact_evidence_matrix_ranks_versions_by_protocol_value(tmp_path):
     assert versions["v2.1.23"]["hid_command_categories"] == {"discovery": 1, "sync": 1}
     assert versions["v2.1.23"]["wireless_js_ipc_events"] == {"updateControllerVersion": 1}
     assert versions["v2.1.23"]["wireless_js_settings_keys"] == {"readSettingsLike:ALV2Controller-%": 1}
+    assert versions["v2.1.23"]["wireless_js_capture_hints"] == {
+        "device-discovery": 1,
+        "fan-controller-settings": 2,
+    }
+    assert versions["v2.1.23"]["wireless_js_capture_hint_scenarios"] == {
+        "baseline": 1,
+        "direct-fan-speed": 2,
+        "motherboard-pwm-sync": 2,
+        "sort-quick-sync": 2,
+    }
     assert "v2.1.23" in matrix["summary"]["wired_hid_fan_versions"]
     assert matrix["summary"]["wireless_js_interface_versions"] == ["v2.1.23"]
+    assert matrix["summary"]["wireless_js_capture_hint_versions"] == ["v2.1.23"]
+    assert matrix["summary"]["wireless_js_capture_hint_scenarios"]["direct-fan-speed"] == 2
 
 
 def test_artifact_analyzer_finds_slv3_sensor_asset_models(tmp_path):
@@ -3002,6 +3017,17 @@ def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
         ),
         encoding="utf-8",
     )
+    wireless_js = artifact_dir / "assets-v2.1.17-wireless.js"
+    wireless_js.write_text(
+        "ipcRenderer.send('message-queue', JSON.stringify({event:'updateControllerVersion'}));"
+        "pipe.writeSettings('ALV2Controller-', data);"
+        "pipe.writeSettings('ALV2LightEfferct-', data);",
+        encoding="utf-8",
+    )
+    (artifact_dir / "extract-wireless-js-v2.1.17.json").write_text(
+        json.dumps(extract_wireless_js_clues(wireless_js)),
+        encoding="utf-8",
+    )
 
     runbook = windows_capture_runbook(tmp_path, capture_base=base, artifact_dir=artifact_dir)
     tasks = {item["id"]: item for item in runbook["tasks"]}
@@ -3014,6 +3040,10 @@ def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
     assert tasks["sort-quick-sync"]["priority"] == 15
     assert tasks["sort-quick-sync"]["changelog_focus"]["matched"] is True
     assert "quick sync" in tasks["sort-quick-sync"]["changelog_focus"]["evidence"][0]["text"]
+    assert tasks["direct-fan-speed"]["interface_focus"]["matched"] is True
+    assert tasks["direct-fan-speed"]["interface_focus"]["source"] == "target-version"
+    assert tasks["direct-fan-speed"]["interface_focus"]["matched_hints"] == ["fan-controller-settings"]
+    assert tasks["lighting-static-and-off"]["interface_focus"]["matched_hints"] == ["lighting-effect-settings"]
     assert tasks["rf-rebind"]["base_priority"] == 90
     assert tasks["rf-rebind"]["priority"] == 70
     assert tasks["rf-rebind"]["changelog_focus"]["matched_keywords"] == ["binding", "rf"]
@@ -3026,6 +3056,8 @@ def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
     assert runbook["tasks"][0]["priority_order"] == 1
     assert gap_ids[:4] == ["baseline", "direct-fan-speed", "sort-quick-sync", "motherboard-pwm-sync"]
     assert gap_report["artifact_capture_context_status"] == "target-found"
+    direct_gap = next(item for item in gap_report["scenario_gaps"] if item["id"] == "direct-fan-speed")
+    assert direct_gap["interface_focus"]["matched_hints"] == ["fan-controller-settings"]
     assert "--artifact-dir" in gap_report["recommended_commands"][0]
 
 

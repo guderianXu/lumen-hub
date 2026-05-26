@@ -1024,9 +1024,13 @@ Risks:
   structured AL V2 / SL V2 product ID, function, and HID report-template maps,
   and `extract_wireless_js_clues()` for summarizing wireless/USB/IPC clue
   contexts in official JS bundles. The wireless JS extractor now also emits
-  structured `ipc_events` and `settings_keys`, so Windows-side USBPcap actions
-  can be labeled from the official Electron message queue and settings pipe
-  keys without treating those interface hints as confirmed RF protocol proof.
+  structured `ipc_events`, `settings_keys`, and `capture_hints`, so Windows-side
+  USBPcap actions can be labeled from the official Electron message queue and
+  settings pipe keys without treating those interface hints as confirmed RF
+  protocol proof. `windows-capture-runbook` and `capture-gap-report` surface the
+  matching hints as `interface_focus` per scenario; target-version hints are
+  preferred, with a lower-confidence matrix-summary fallback when only another
+  analyzed L-Connect asset version contains the JS entry points.
   High-entropy data still gets warnings where isolated 4-byte VID/PID hits may
   be accidental.
 - `usb9_lcd.lianli.changelog`: official L-Connect 3 changelog analyzer. It

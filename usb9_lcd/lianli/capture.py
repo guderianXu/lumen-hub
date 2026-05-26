@@ -9930,6 +9930,7 @@ def _capture_gap_scenario_items(
         scenario_id = str(scenario.get("id") or "")
         meta = _capture_gap_scenario_priority_meta(scenario_id, artifact_context)
         focus = meta.get("changelog_focus") if isinstance(meta.get("changelog_focus"), dict) else {}
+        interface_focus = meta.get("interface_focus") if isinstance(meta.get("interface_focus"), dict) else {}
         gaps.append(
             {
                 "id": scenario_id,
@@ -9939,6 +9940,7 @@ def _capture_gap_scenario_items(
                 "phase": str(meta["phase"]),
                 "risk": str(meta["risk"]),
                 "changelog_focus": focus,
+                "interface_focus": interface_focus,
                 "capture_file": str(scenario.get("capture_file") or ""),
                 "path": str(scenario.get("path") or ""),
                 "goal": str(scenario.get("goal") or ""),
@@ -9973,6 +9975,7 @@ def _capture_gap_scenario_priority_meta(
     meta["base_priority"] = base_priority
     meta["priority"] = priority
     meta["changelog_focus"] = focus
+    meta["interface_focus"] = _capture_interface_scenario_focus(scenario_id, artifact_context)
     return meta
 
 
@@ -10039,13 +10042,18 @@ def _capture_artifact_context(version: str, artifact_dir: Path | None) -> dict[s
             "error": str(error),
         }
     target = _capture_artifact_target_version(matrix, version)
+    summary = matrix.get("summary") if isinstance(matrix.get("summary"), dict) else {}
     if not target:
         return {
             "status": "target-missing",
             "path": str(root),
             "version": version,
             "matrix_status": str(matrix.get("status") or ""),
-            "summary": matrix.get("summary") if isinstance(matrix.get("summary"), dict) else {},
+            "summary": summary,
+            "matrix_wireless_js_capture_hints": _int_mapping(summary.get("wireless_js_capture_hints")),
+            "matrix_wireless_js_capture_hint_scenarios": _int_mapping(
+                summary.get("wireless_js_capture_hint_scenarios")
+            ),
         }
     return {
         "status": "target-found",
@@ -10060,6 +10068,12 @@ def _capture_artifact_context(version: str, artifact_dir: Path | None) -> dict[s
         "changelog_keywords": _int_mapping(target.get("changelog_keywords")),
         "changelog_category_scores": _int_mapping(target.get("changelog_category_scores")),
         "changelog_evidence": _capture_changelog_evidence(target.get("changelog_evidence")),
+        "wireless_js_capture_hints": _int_mapping(target.get("wireless_js_capture_hints")),
+        "wireless_js_capture_hint_scenarios": _int_mapping(target.get("wireless_js_capture_hint_scenarios")),
+        "matrix_wireless_js_capture_hints": _int_mapping(summary.get("wireless_js_capture_hints")),
+        "matrix_wireless_js_capture_hint_scenarios": _int_mapping(
+            summary.get("wireless_js_capture_hint_scenarios")
+        ),
     }
 
 
@@ -10183,6 +10197,53 @@ def _capture_changelog_scenario_focus_spec(scenario_id: str) -> dict[str, Any]:
             "reason": "Target changelog mentions RF binding; priority is raised but pairing remains after lower-risk writes.",
         },
     }.get(scenario_id, {})
+
+
+def _capture_interface_scenario_focus(
+    scenario_id: str,
+    artifact_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not artifact_context or str(artifact_context.get("status") or "") not in {"target-found", "target-missing"}:
+        return {}
+    target_counts = _int_mapping(artifact_context.get("wireless_js_capture_hint_scenarios"))
+    matrix_counts = _int_mapping(artifact_context.get("matrix_wireless_js_capture_hint_scenarios"))
+    target_score = int(target_counts.get(scenario_id, 0))
+    matrix_score = int(matrix_counts.get(scenario_id, 0))
+    if target_score <= 0 and matrix_score <= 0:
+        return {}
+    source = "target-version" if target_score > 0 else "matrix-summary"
+    score = target_score if target_score > 0 else matrix_score
+    hints = (
+        _capture_interface_hint_matches(scenario_id, artifact_context.get("wireless_js_capture_hints"))
+        if target_score > 0
+        else _capture_interface_hint_matches(scenario_id, artifact_context.get("matrix_wireless_js_capture_hints"))
+    )
+    return {
+        "matched": True,
+        "reason": "Official JS IPC/settings interface hints map to this capture scenario.",
+        "source": source,
+        "hint_score": score,
+        "matched_hints": hints,
+    }
+
+
+def _capture_interface_hint_matches(scenario_id: str, raw_hints: Any) -> list[str]:
+    hints = _int_mapping(raw_hints)
+    return [
+        hint_id
+        for hint_id, count in hints.items()
+        if count > 0 and scenario_id in _capture_interface_hint_scenarios(hint_id)
+    ]
+
+
+def _capture_interface_hint_scenarios(hint_id: str) -> set[str]:
+    return {
+        "device-discovery": {"baseline"},
+        "fan-controller-settings": {"direct-fan-speed", "motherboard-pwm-sync", "sort-quick-sync"},
+        "lighting-effect-settings": {"lighting-static-and-off", "lighting-generated-rainbow", "sort-quick-sync"},
+        "wireless-config-settings": {"baseline", "rf-rebind"},
+        "sort-or-quick-sync": {"sort-quick-sync"},
+    }.get(str(hint_id), set())
 
 
 def _capture_focus_evidence(
@@ -10390,6 +10451,7 @@ def _windows_capture_runbook_tasks(
         capture_path = root / capture_file if capture_file else root
         meta = _capture_gap_scenario_priority_meta(scenario_id, artifact_context)
         focus = meta.get("changelog_focus") if isinstance(meta.get("changelog_focus"), dict) else {}
+        interface_focus = meta.get("interface_focus") if isinstance(meta.get("interface_focus"), dict) else {}
         priority = meta.get("priority")
         planned_linux_commands = _ordered_strings_from_list(scenario.get("linux_commands"))
         linux_commands = _capture_contextual_command_set(
@@ -10410,6 +10472,7 @@ def _windows_capture_runbook_tasks(
                 "phase": str(meta.get("phase") or ""),
                 "risk": str(meta.get("risk") or ""),
                 "changelog_focus": focus,
+                "interface_focus": interface_focus,
                 "capture_file": capture_file,
                 "capture_path": str(capture_path),
                 "capture_note_file": _windows_capture_note_file(capture_file),
@@ -11292,6 +11355,9 @@ def _windows_capture_plan_scenarios(
         focus = meta.get("changelog_focus") if isinstance(meta.get("changelog_focus"), dict) else {}
         if focus:
             payload["changelog_focus"] = focus
+        interface_focus = meta.get("interface_focus") if isinstance(meta.get("interface_focus"), dict) else {}
+        if interface_focus:
+            payload["interface_focus"] = interface_focus
         scenarios.append(payload)
     return scenarios
 

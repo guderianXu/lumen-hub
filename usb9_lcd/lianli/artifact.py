@@ -93,6 +93,17 @@ class JsCluePattern:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class JsCaptureHintRule:
+    name: str
+    label: str
+    capability: str
+    scenario_ids: tuple[str, ...]
+    keywords: tuple[str, ...]
+    confidence: str = "medium"
+    note: str = ""
+
+
 STATIC_PATTERNS = (
     StaticPattern("RF sender VID:PID text", b"0416:8040", "usb-id", "high"),
     StaticPattern("RF receiver VID:PID text", b"0416:8041", "usb-id", "high"),
@@ -413,6 +424,51 @@ WIRELESS_JS_CLUE_PATTERNS = (
     ),
 )
 
+WIRELESS_JS_CAPTURE_HINT_RULES = (
+    JsCaptureHintRule(
+        name="device-discovery",
+        label="Device discovery / controller refresh",
+        capability="receiver-discovery",
+        scenario_ids=("baseline",),
+        keywords=("scan", "find-device", "finddevice", "updatecontrollerversion", "controller-version"),
+        note="Useful labels for idle receiver-list/master-query capture actions.",
+    ),
+    JsCaptureHintRule(
+        name="fan-controller-settings",
+        label="Fan controller settings",
+        capability="fan-speed",
+        scenario_ids=("direct-fan-speed", "motherboard-pwm-sync", "sort-quick-sync"),
+        keywords=("alv2controller", "slv2controller", "controller-", "fan", "rpm", "pwm"),
+        note="Settings keys likely tied to fan speed, sync, or controller-profile changes.",
+    ),
+    JsCaptureHintRule(
+        name="lighting-effect-settings",
+        label="Lighting effect settings",
+        capability="lighting",
+        scenario_ids=("lighting-static-and-off", "lighting-generated-rainbow", "sort-quick-sync"),
+        keywords=("lightefferct", "lighteffect", "light", "lighting", "effect", "rgb", "led"),
+        note="Settings keys likely tied to lighting/off/static/animated effect captures.",
+    ),
+    JsCaptureHintRule(
+        name="wireless-config-settings",
+        label="Wireless configuration settings",
+        capability="pairing-or-wireless-profile",
+        scenario_ids=("baseline", "rf-rebind"),
+        keywords=("wirelessconfig", "bind", "unbind", "pair"),
+        confidence="low",
+        note="Wireless profile keys should be inspected before any bind/unbind capture.",
+    ),
+    JsCaptureHintRule(
+        name="sort-or-quick-sync",
+        label="Sort / quick-sync settings path",
+        capability="settings-rewrite",
+        scenario_ids=("sort-quick-sync",),
+        keywords=("sort", "quick", "sync", "order", "position"),
+        confidence="medium",
+        note="Useful for labeling the changelog-driven sort/quick-sync capture scenario.",
+    ),
+)
+
 
 def analyze_artifact_file(path: Path) -> dict[str, Any]:
     if not path.is_file():
@@ -542,6 +598,8 @@ def _empty_artifact_version_state(version: str) -> dict[str, Any]:
         "wireless_js_high_confidence": Counter(),
         "wireless_js_ipc_events": Counter(),
         "wireless_js_settings_keys": Counter(),
+        "wireless_js_capture_hints": Counter(),
+        "wireless_js_capture_hint_scenarios": Counter(),
         "hid_product_ids": Counter(),
         "hid_command_categories": Counter(),
         "nsis_file_count": 0,
@@ -729,6 +787,15 @@ def _merge_wireless_js_report(state: dict[str, Any], payload: dict[str, Any]) ->
         name = str(item.get("name") or item.get("key") or "")
         if name:
             state["wireless_js_settings_keys"][name] += int(item.get("count", 1) or 1)
+    for item in payload.get("capture_hints", []) if isinstance(payload.get("capture_hints"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("key") or "")
+        count = int(item.get("source_count", item.get("count", 1)) or 1)
+        if name:
+            state["wireless_js_capture_hints"][name] += count
+        for scenario_id in _strings_from_any_list(item.get("scenario_ids")):
+            state["wireless_js_capture_hint_scenarios"][scenario_id] += count
 
 
 def _merge_hid_js_report(state: dict[str, Any], payload: dict[str, Any]) -> None:
@@ -779,6 +846,8 @@ def _artifact_version_payload(state: dict[str, Any]) -> dict[str, Any]:
     wireless_js_high = dict(sorted(state["wireless_js_high_confidence"].items()))
     wireless_js_ipc_events = dict(sorted(state["wireless_js_ipc_events"].items()))
     wireless_js_settings_keys = dict(sorted(state["wireless_js_settings_keys"].items()))
+    wireless_js_capture_hints = dict(sorted(state["wireless_js_capture_hints"].items()))
+    wireless_js_capture_hint_scenarios = dict(sorted(state["wireless_js_capture_hint_scenarios"].items()))
     hid_categories = dict(sorted(state["hid_command_categories"].items()))
     changelog_score = int(state.get("changelog_score") or 0)
     changelog_keywords = dict(sorted(state["changelog_keywords"].items()))
@@ -810,6 +879,8 @@ def _artifact_version_payload(state: dict[str, Any]) -> dict[str, Any]:
         "wireless_js_high_confidence": wireless_js_high,
         "wireless_js_ipc_events": wireless_js_ipc_events,
         "wireless_js_settings_keys": wireless_js_settings_keys,
+        "wireless_js_capture_hints": wireless_js_capture_hints,
+        "wireless_js_capture_hint_scenarios": wireless_js_capture_hint_scenarios,
         "hid_product_ids": dict(sorted(state["hid_product_ids"].items())),
         "hid_command_categories": hid_categories,
         "nsis_file_count": state["nsis_file_count"],
@@ -963,6 +1034,16 @@ def _artifact_matrix_summary(versions: list[dict[str, Any]]) -> dict[str, Any]:
             for item in versions
             if item.get("wireless_js_ipc_events") or item.get("wireless_js_settings_keys")
         ],
+        "wireless_js_capture_hint_versions": [
+            item["version"]
+            for item in versions
+            if item.get("wireless_js_capture_hints")
+        ],
+        "wireless_js_capture_hints": _sum_version_counters(versions, "wireless_js_capture_hints"),
+        "wireless_js_capture_hint_scenarios": _sum_version_counters(
+            versions,
+            "wireless_js_capture_hint_scenarios",
+        ),
         "high_priority_capture_versions": [
             item["version"] for item in versions if item["capture_priority"] == "high"
         ],
@@ -985,6 +1066,15 @@ def _artifact_matrix_summary(versions: list[dict[str, Any]]) -> dict[str, Any]:
             for item in recommended[:12]
         ],
     }
+
+
+def _sum_version_counters(versions: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for item in versions:
+        value = item.get(key)
+        if isinstance(value, dict):
+            counts.update(_int_mapping(value))
+    return dict(sorted(counts.items()))
 
 
 def _artifact_version_sort_key(item: dict[str, Any]) -> tuple[int, tuple[int, ...] | str]:
@@ -1195,6 +1285,7 @@ def extract_wireless_js_clues(
     clue_list = _sorted_hid_js_aggregates(clues)
     ipc_event_list = _sorted_hid_js_aggregates(ipc_events)
     settings_key_list = _sorted_hid_js_aggregates(settings_keys)
+    capture_hint_list = _wireless_js_capture_hints(ipc_event_list, settings_key_list)
     return {
         "operation": "extract-wireless-js",
         "root": str(path),
@@ -1207,10 +1298,13 @@ def extract_wireless_js_clues(
         "clues": clue_list,
         "ipc_events": ipc_event_list,
         "settings_keys": settings_key_list,
+        "capture_hints": capture_hint_list,
         "summary": {
             "clue_occurrences": sum(int(item["count"]) for item in clue_list),
             "ipc_event_occurrences": sum(int(item["count"]) for item in ipc_event_list),
             "settings_key_occurrences": sum(int(item["count"]) for item in settings_key_list),
+            "capture_hint_count": len(capture_hint_list),
+            "capture_hint_scenarios": _wireless_js_capture_hint_scenarios(capture_hint_list),
             "categories": _js_clue_categories(clue_list),
             "confidence": _js_clue_confidence(clue_list),
             "high_confidence_clues": [
@@ -1218,6 +1312,7 @@ def extract_wireless_js_clues(
             ],
             "top_ipc_events": [item["name"] for item in ipc_event_list[:12]],
             "top_settings_keys": [item["name"] for item in settings_key_list[:12]],
+            "top_capture_hints": [item["name"] for item in capture_hint_list[:12]],
         },
         "files": files,
         "skipped": skipped,
@@ -1415,6 +1510,96 @@ def _js_named_match_items(
         }
         for name, matches in sorted(matches_by_name.items())
     ]
+
+
+def _wireless_js_capture_hints(
+    ipc_events: list[dict[str, Any]],
+    settings_keys: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    sources = [
+        _wireless_js_capture_source("ipc-event", item)
+        for item in ipc_events
+        if isinstance(item, dict)
+    ] + [
+        _wireless_js_capture_source("settings-key", item)
+        for item in settings_keys
+        if isinstance(item, dict)
+    ]
+    hints: list[dict[str, Any]] = []
+    for rule in WIRELESS_JS_CAPTURE_HINT_RULES:
+        matched_sources = [
+            source
+            for source in sources
+            if _capture_hint_rule_matches(rule, str(source.get("search_text") or ""))
+        ]
+        if not matched_sources:
+            continue
+        matched_sources.sort(key=lambda item: (-int(item["count"]), str(item["name"])))
+        source_kinds = Counter(str(item["kind"]) for item in matched_sources)
+        source_count = sum(int(item["count"]) for item in matched_sources)
+        hints.append(
+            {
+                "key": rule.name,
+                "name": rule.name,
+                "label": rule.label,
+                "capability": rule.capability,
+                "scenario_ids": list(rule.scenario_ids),
+                "confidence": rule.confidence,
+                "source_count": source_count,
+                "source_kinds": dict(sorted(source_kinds.items())),
+                "sources": [
+                    {
+                        key: value
+                        for key, value in source.items()
+                        if key != "search_text"
+                    }
+                    for source in matched_sources[:8]
+                ],
+                "note": rule.note,
+            }
+        )
+    return sorted(
+        hints,
+        key=lambda item: (
+            -int(item["source_count"]),
+            str(item["name"]),
+        ),
+    )
+
+
+def _wireless_js_capture_source(kind: str, item: dict[str, Any]) -> dict[str, Any]:
+    name = str(item.get("name") or item.get("key") or "")
+    settings_key = str(item.get("settings_key") or "")
+    operation = str(item.get("operation") or "")
+    search_text = _normalize_js_interface_text(
+        " ".join(part for part in (name, settings_key, operation, str(item.get("label") or "")) if part)
+    )
+    return {
+        "kind": kind,
+        "name": name,
+        "operation": operation,
+        "settings_key": settings_key,
+        "count": int(item.get("count", 1) or 1),
+        "files": list(item.get("files", []))[:4] if isinstance(item.get("files"), list) else [],
+        "search_text": search_text,
+    }
+
+
+def _capture_hint_rule_matches(rule: JsCaptureHintRule, search_text: str) -> bool:
+    return any(_normalize_js_interface_text(keyword) in search_text for keyword in rule.keywords)
+
+
+def _normalize_js_interface_text(text: str) -> str:
+    return re.sub(r"[^0-9a-z]+", "", str(text or "").casefold())
+
+
+def _wireless_js_capture_hint_scenarios(capture_hints: list[dict[str, Any]]) -> dict[str, int]:
+    scenarios: Counter[str] = Counter()
+    for hint in capture_hints:
+        count = int(hint.get("source_count", 1) or 1)
+        for scenario_id in _strings_from_any_list(hint.get("scenario_ids")):
+            scenarios[scenario_id] += count
+    return dict(sorted(scenarios.items()))
 
 
 def _merge_hid_js_aggregates(target: dict[Any, dict[str, Any]], items: list[dict[str, Any]]) -> None:
