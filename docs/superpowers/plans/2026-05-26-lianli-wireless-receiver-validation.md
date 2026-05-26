@@ -10,6 +10,7 @@
 - 已有接收器插上后的整包验证入口：`receiver-validation-bundle`。
 - `receiver-validation-bundle` 会保存自身 JSON、`summary.json`，并把 `hardware_validation` / `receiver_control_next_action` 提升到 stdout 顶层。
 - 已有 `receiver-evidence-report`，用于审计实机日志目录、列出必需证据文件、每个 JSON 的 SHA256，以及推荐/已存在的安全 PWM 实验目录。
+- 已有 `receiver-observation`，用于把安全 PWM 后肉眼/听感确认的风扇变化保存成 `observation.json`。
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
 - `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令。
 - GUI 的“汇总实验”会显示同一个下一步结论，并在唯一候选 MAC 可用时自动填入目标 MAC。
@@ -27,6 +28,7 @@
 - [x] `receiver-validation-bundle` 会在同一目录写出 `receiver-validation-bundle.json` 和 `summary.json`。
 - [x] 新增 `receiver-evidence-report`，用于把实机验证目录整理成可分享的证据清单。
 - [x] `receiver-evidence-report` 会跟随下一步推荐命令里的安全 PWM 输出目录，不再只检查固定 `safe-pwm-001`。
+- [x] 新增 `receiver-observation`，用于把实际风扇变化记录进证据目录；`receiver-evidence-report` 会区分只收集机器日志和已经肉眼确认。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并自动填入唯一可用 MAC。
@@ -139,7 +141,23 @@ python tools/lianli_wireless_probe.py safe-pwm-experiment \
 - after snapshot
 - analyze-live-pwm.json
 - summary.json
-- 观察到的实际风扇变化
+- observation.json，记录观察到的实际风扇变化
+
+记录观察结果：
+
+```bash
+python tools/lianli_wireless_probe.py \
+  --save-json .cache/lianli/hardware/experiments/safe-pwm-aa-bb-cc-dd-ee-ff/observation.json \
+  receiver-observation .cache/lianli/hardware/experiments/safe-pwm-aa-bb-cc-dd-ee-ff \
+  --effect changed \
+  --observed-pwm 120 \
+  --note "fan speed visibly changed after guarded PWM write"
+```
+
+如果风扇没有变化，`--effect unchanged`；如果没看清，`--effect unclear`。
+`receiver-evidence-report` 会把完整机器日志但缺观察记录的状态标成
+`write-evidence-needs-observation`，只有观察记录确认变化后才会变成
+`write-evidence-confirmed`。
 
 ## 还没有做
 
@@ -198,5 +216,6 @@ python tools/lianli_wireless_probe.py safe-pwm-experiment \
 - `experiments/safe-pwm-<mac>/live-list-after.json`
 - `experiments/safe-pwm-<mac>/analyze-live-pwm.json`
 - `experiments/safe-pwm-<mac>/summary.json`
+- `experiments/safe-pwm-<mac>/observation.json`
 
 只有这些证据显示目标 MAC、packet compare、写入前后状态和实际风扇反馈一致，才能把 PWM 控制从“候选可行”升级为“实机验证可行”。

@@ -7,7 +7,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from usb9_lcd.lianli import KNOWN_USB_DEVICES, UDEV_RULES, scan_known_usb_devices
-from usb9_lcd.lianli.analysis import analyze_live_log, diff_snapshot_files, receiver_evidence_report, summarize_experiment_dir
+from usb9_lcd.lianli.analysis import (
+    analyze_live_log,
+    diff_snapshot_files,
+    receiver_evidence_report,
+    receiver_observation_record,
+    summarize_experiment_dir,
+)
 from usb9_lcd.lianli.artifact import (
     DEFAULT_TREE_MAX_FILE_SIZE,
     HID_JS_MAX_FILE_SIZE,
@@ -158,6 +164,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Audit a saved receiver validation directory and emit a shareable evidence manifest",
     )
     evidence.add_argument("path", type=Path)
+
+    observation = subparsers.add_parser(
+        "receiver-observation",
+        help="Create a manual visual observation JSON for one safe PWM experiment directory",
+    )
+    observation.add_argument("path", type=Path)
+    observation.add_argument("--effect", choices=("changed", "unchanged", "unclear"), default="unclear")
+    observation.add_argument("--target", default="")
+    observation.add_argument("--observed-pwm", default="")
+    observation.add_argument("--observed-rpm", default="")
+    observation.add_argument("--note", action="append", default=[])
+    observation.add_argument("--operator", default="")
+    observation.add_argument("--observed-at", default="")
 
     artifact = subparsers.add_parser(
         "analyze-artifact",
@@ -1814,6 +1833,17 @@ def main(argv: list[str] | None = None) -> int:
         payload = summarize_experiment_dir(args.path)
     elif command == "receiver-evidence-report":
         payload = receiver_evidence_report(args.path)
+    elif command == "receiver-observation":
+        payload = receiver_observation_record(
+            args.path,
+            effect=args.effect,
+            target=args.target,
+            observed_pwm=args.observed_pwm,
+            observed_rpm=args.observed_rpm,
+            note=args.note,
+            operator=args.operator,
+            observed_at=args.observed_at,
+        )
     elif command == "analyze-artifact":
         payload = analyze_artifact_file(args.path)
     elif command == "analyze-artifact-tree":

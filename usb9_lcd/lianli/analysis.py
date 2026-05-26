@@ -33,6 +33,8 @@ RECEIVER_EVIDENCE_WRITE_FILE_NAMES = (
     "summary.json",
 )
 RECEIVER_EVIDENCE_FALLBACK_WRITE_DIR = "experiments/safe-pwm-001"
+RECEIVER_OBSERVATION_FILE_NAME = "observation.json"
+RECEIVER_OBSERVATION_EFFECTS = ("changed", "unchanged", "unclear")
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -108,12 +110,19 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
     missing_required = [item for item in required if not item["exists"]]
     complete_write_sets = [item for item in write_sets if item["status"] == "complete"]
     partial_write_sets = [item for item in write_sets if item["status"] == "partial"]
+    confirmed_write_sets = [
+        item for item in write_sets if item["control_proof_status"] == "visually-confirmed"
+    ]
+    observation_missing_sets = [
+        item for item in write_sets if item["visual_observation"]["status"] == "missing"
+    ]
     status = receiver_evidence_status(
         missing_required_count=len(missing_required),
         invalid_file_count=int(summary.get("invalid_file_count") or 0),
         hardware_status=str(hardware_validation.get("status") or ""),
         next_action_status=str(next_action.get("status") or ""),
         complete_write_set_count=len(complete_write_sets),
+        confirmed_write_set_count=len(confirmed_write_sets),
     )
     return {
         "operation": "receiver-evidence-report",
@@ -128,12 +137,55 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
         "write_evidence_set_count": len(write_sets),
         "write_evidence_complete_count": len(complete_write_sets),
         "write_evidence_partial_count": len(partial_write_sets),
+        "write_evidence_confirmed_count": len(confirmed_write_sets),
+        "visual_observation_missing_count": len(observation_missing_sets),
         "write_evidence_sets": write_sets,
         "file_manifest": manifest,
         "hardware_validation": hardware_validation,
         "receiver_control_next_action": next_action,
         "recommended_commands": receiver_evidence_recommended_commands(root, status, next_action),
         "summary": summary,
+    }
+
+
+def receiver_observation_record(
+    path: Path,
+    *,
+    effect: str = "unclear",
+    target: str = "",
+    observed_pwm: str = "",
+    observed_rpm: str = "",
+    note: str | list[str] = "",
+    operator: str = "",
+    observed_at: str = "",
+) -> dict[str, Any]:
+    normalized_effect = str(effect or "unclear").strip().lower()
+    if normalized_effect not in RECEIVER_OBSERVATION_EFFECTS:
+        raise LianLiWirelessError(
+            "receiver observation effect must be one of: "
+            + ", ".join(RECEIVER_OBSERVATION_EFFECTS)
+        )
+    notes = note if isinstance(note, list) else [note]
+    clean_notes = [str(item).strip() for item in notes if str(item).strip()]
+    write_set = receiver_evidence_write_set(Path(path).parent, path, {"observation-target"})
+    inferred_target = target or str(write_set.get("target") or "")
+    return {
+        "operation": "receiver-observation",
+        "experiment_dir": str(path),
+        "target": inferred_target,
+        "effect": normalized_effect,
+        "observed_pwm": str(observed_pwm or ""),
+        "observed_rpm": str(observed_rpm or ""),
+        "operator": str(operator or ""),
+        "observed_at": str(observed_at or ""),
+        "notes": clean_notes,
+        "machine_evidence_status": str(write_set.get("status") or ""),
+        "machine_evidence_files": write_set.get("files", []),
+        "checklist": [
+            "Confirm the target MAC matches the fan group being watched.",
+            "Record whether fan speed visibly/audibly changed after the guarded write.",
+            "Keep this JSON as observation.json inside the same safe-pwm experiment directory.",
+        ],
     }
 
 
@@ -197,17 +249,24 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
     missing = [item for item in files if not item["exists"]]
     live_pwm = _optional_json_object(output_dir / "live-pwm.json")
     analysis = _optional_json_object(output_dir / "analyze-live-pwm.json")
+    visual_observation = receiver_visual_observation(output_dir)
     if not missing:
         status = "complete"
     elif present:
         status = "partial"
     else:
         status = "missing"
+    control_proof_status = receiver_control_proof_status(
+        machine_status=status,
+        likely_effective=analysis.get("likely_effective"),
+        visual_status=str(visual_observation.get("status") or ""),
+    )
     return {
         "output_dir": str(output_dir),
         "relative_dir": _relative_path(root, output_dir),
         "sources": sorted(sources),
         "status": status,
+        "control_proof_status": control_proof_status,
         "present_count": len(present),
         "missing_count": len(missing),
         "target": str(live_pwm.get("target") or analysis.get("target") or ""),
@@ -215,8 +274,79 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
         "packets_written": live_pwm.get("packets_written"),
         "likely_effective": analysis.get("likely_effective"),
         "expected_effect": analysis.get("expected_effect") if isinstance(analysis.get("expected_effect"), dict) else {},
+        "visual_observation": visual_observation,
         "files": files,
     }
+
+
+def receiver_visual_observation(output_dir: Path) -> dict[str, Any]:
+    path = output_dir / RECEIVER_OBSERVATION_FILE_NAME
+    base = {
+        "path": str(path),
+        "relative_name": RECEIVER_OBSERVATION_FILE_NAME,
+    }
+    if not path.exists():
+        return {
+            **base,
+            "status": "missing",
+            "effect": "",
+            "target": "",
+            "notes": [],
+        }
+    try:
+        payload = load_json_file(path)
+    except LianLiWirelessError as error:
+        return {
+            **base,
+            "status": "invalid",
+            "effect": "",
+            "target": "",
+            "notes": [],
+            "error": str(error),
+        }
+    effect = str(payload.get("effect") or "unclear").strip().lower()
+    if str(payload.get("operation") or "") != "receiver-observation":
+        status = "invalid"
+    elif effect == "changed":
+        status = "confirmed"
+    elif effect == "unchanged":
+        status = "contradicts"
+    elif effect == "unclear":
+        status = "unclear"
+    else:
+        status = "invalid"
+    return {
+        **base,
+        "status": status,
+        "effect": effect,
+        "target": str(payload.get("target") or ""),
+        "observed_pwm": str(payload.get("observed_pwm") or ""),
+        "observed_rpm": str(payload.get("observed_rpm") or ""),
+        "operator": str(payload.get("operator") or ""),
+        "observed_at": str(payload.get("observed_at") or ""),
+        "notes": _string_list(payload.get("notes")),
+    }
+
+
+def receiver_control_proof_status(
+    *,
+    machine_status: str,
+    likely_effective: Any,
+    visual_status: str,
+) -> str:
+    if machine_status != "complete":
+        return f"machine-evidence-{machine_status}"
+    if visual_status == "confirmed":
+        return "visually-confirmed"
+    if visual_status == "contradicts":
+        return "visual-observation-conflicts"
+    if visual_status == "invalid":
+        return "invalid-observation"
+    if visual_status == "unclear":
+        return "needs-clear-observation"
+    if likely_effective is True:
+        return "machine-evidence-complete-needs-observation"
+    return "needs-observation"
 
 
 def receiver_evidence_file_item(root: Path, path: Path) -> dict[str, Any]:
@@ -285,6 +415,7 @@ def receiver_evidence_status(
     hardware_status: str,
     next_action_status: str,
     complete_write_set_count: int = 0,
+    confirmed_write_set_count: int = 0,
 ) -> str:
     if invalid_file_count:
         return "invalid-evidence-files"
@@ -292,8 +423,10 @@ def receiver_evidence_status(
         return "missing-readonly-evidence"
     if hardware_status == "errors":
         return "validation-errors"
+    if confirmed_write_set_count:
+        return "write-evidence-confirmed"
     if hardware_status == "readonly-and-write-observed" or complete_write_set_count:
-        return "write-evidence-collected"
+        return "write-evidence-needs-observation"
     if next_action_status == "ready-for-single-target-safe-pwm":
         return "ready-for-single-target-safe-pwm"
     if hardware_status == "readonly-and-write-gate-ready":
@@ -320,9 +453,37 @@ def receiver_evidence_recommended_commands(path: Path, status: str, next_action:
     action_commands = next_action.get("recommended_commands")
     if isinstance(action_commands, list):
         commands.extend(str(command) for command in action_commands if isinstance(command, str) and command)
+    if status == "write-evidence-needs-observation":
+        commands.extend(receiver_observation_commands(path))
     if _tool_command("receiver-evidence-report", str(path)) not in commands:
         commands.append(_tool_command("receiver-evidence-report", str(path)))
     return _unique_preserve_order(commands)
+
+
+def receiver_observation_commands(path: Path) -> list[str]:
+    commands = []
+    for write_set in receiver_evidence_write_sets(path, {}):
+        if write_set.get("status") != "complete":
+            continue
+        observation = write_set.get("visual_observation")
+        if isinstance(observation, dict) and observation.get("status") == "confirmed":
+            continue
+        output_dir = str(write_set.get("output_dir") or "")
+        if not output_dir:
+            continue
+        commands.append(
+            _tool_command(
+                "--save-json",
+                str(Path(output_dir) / RECEIVER_OBSERVATION_FILE_NAME),
+                "receiver-observation",
+                output_dir,
+                "--effect",
+                "changed",
+                "--note",
+                "fan speed visibly changed after guarded PWM write",
+            )
+        )
+    return commands
 
 
 def _sha256_file(path: Path) -> str:

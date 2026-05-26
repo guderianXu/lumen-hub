@@ -142,6 +142,30 @@ def _write_receiver_evidence_required_payloads(path: Path) -> None:
         item_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+def _write_receiver_safe_pwm_evidence(path: Path) -> Path:
+    output_dir = path / "experiments" / "safe-pwm-aa-bb-cc-dd-ee-ff"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, payload in {
+        "live-list-before.json": {"operation": "live-list-before", "device_count": 1, "devices": [_device_payload()]},
+        "live-pwm.json": {
+            "operation": "live-pwm",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "pwm_values": [120, 120, 120, 120],
+            "packets_written": 4,
+        },
+        "live-list-after.json": {"operation": "live-list-after", "device_count": 1, "devices": [_device_payload()]},
+        "analyze-live-pwm.json": {
+            "operation": "analyze-log",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "likely_effective": True,
+            "expected_effect": {"available": True, "matched": True},
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(output_dir)},
+    }.items():
+        (output_dir / name).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return output_dir
+
+
 def _write_lianli_usb_sysfs_and_dev(sys_root: Path, dev_root: Path) -> None:
     for name, vid, pid, product, busnum, devnum in (
         ("1-1", "0416", "8040", "SLV3TX_V1.6", "001", "002"),
@@ -868,34 +892,19 @@ def test_probe_receiver_evidence_report_audits_saved_bundle(tmp_path):
 
 def test_probe_receiver_evidence_report_detects_completed_safe_pwm_directory(tmp_path):
     _write_receiver_evidence_required_payloads(tmp_path)
-    output_dir = tmp_path / "experiments" / "safe-pwm-aa-bb-cc-dd-ee-ff"
-    output_dir.mkdir(parents=True)
-    for name, payload in {
-        "live-list-before.json": {"operation": "live-list-before", "device_count": 1, "devices": [_device_payload()]},
-        "live-pwm.json": {
-            "operation": "live-pwm",
-            "target": "aa:bb:cc:dd:ee:ff",
-            "pwm_values": [120, 120, 120, 120],
-            "packets_written": 4,
-        },
-        "live-list-after.json": {"operation": "live-list-after", "device_count": 1, "devices": [_device_payload()]},
-        "analyze-live-pwm.json": {
-            "operation": "analyze-log",
-            "target": "aa:bb:cc:dd:ee:ff",
-            "likely_effective": True,
-            "expected_effect": {"available": True, "matched": True},
-        },
-        "summary.json": {"operation": "summarize-experiments", "path": str(output_dir)},
-    }.items():
-        (output_dir / name).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    _write_receiver_safe_pwm_evidence(tmp_path)
 
     payload = _run_probe("receiver-evidence-report", str(tmp_path))
     write_set = payload["write_evidence_sets"][0]
 
-    assert payload["status"] == "write-evidence-collected"
+    assert payload["status"] == "write-evidence-needs-observation"
     assert payload["write_evidence_complete_count"] == 1
     assert payload["write_evidence_partial_count"] == 0
+    assert payload["write_evidence_confirmed_count"] == 0
+    assert payload["visual_observation_missing_count"] == 1
     assert write_set["status"] == "complete"
+    assert write_set["control_proof_status"] == "machine-evidence-complete-needs-observation"
+    assert write_set["visual_observation"]["status"] == "missing"
     assert write_set["relative_dir"] == "experiments/safe-pwm-aa-bb-cc-dd-ee-ff"
     assert write_set["sources"] == ["existing-files", "recommended-command"]
     assert write_set["target"] == "aa:bb:cc:dd:ee:ff"
@@ -903,6 +912,65 @@ def test_probe_receiver_evidence_report_detects_completed_safe_pwm_directory(tmp
     assert write_set["packets_written"] == 4
     assert write_set["likely_effective"] is True
     assert all(item["exists"] for item in write_set["files"])
+    assert any("receiver-observation" in command for command in payload["recommended_commands"])
+
+
+def test_probe_receiver_observation_records_visual_result(tmp_path):
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+
+    payload = _run_probe(
+        "receiver-observation",
+        str(output_dir),
+        "--effect",
+        "changed",
+        "--observed-pwm",
+        "120",
+        "--observed-rpm",
+        "audibly faster",
+        "--operator",
+        "tester",
+        "--observed-at",
+        "2026-05-26T20:00:00+08:00",
+        "--note",
+        "fan speed visibly changed after guarded PWM write",
+    )
+
+    assert payload["operation"] == "receiver-observation"
+    assert payload["experiment_dir"] == str(output_dir)
+    assert payload["target"] == "aa:bb:cc:dd:ee:ff"
+    assert payload["effect"] == "changed"
+    assert payload["observed_pwm"] == "120"
+    assert payload["observed_rpm"] == "audibly faster"
+    assert payload["operator"] == "tester"
+    assert payload["observed_at"] == "2026-05-26T20:00:00+08:00"
+    assert payload["machine_evidence_status"] == "complete"
+    assert payload["notes"] == ["fan speed visibly changed after guarded PWM write"]
+
+
+def test_probe_receiver_evidence_report_uses_visual_observation(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    _run_probe(
+        "--save-json",
+        str(output_dir / "observation.json"),
+        "receiver-observation",
+        str(output_dir),
+        "--effect",
+        "changed",
+        "--note",
+        "fan speed visibly changed after guarded PWM write",
+    )
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = payload["write_evidence_sets"][0]
+
+    assert payload["status"] == "write-evidence-confirmed"
+    assert payload["write_evidence_confirmed_count"] == 1
+    assert payload["visual_observation_missing_count"] == 0
+    assert write_set["control_proof_status"] == "visually-confirmed"
+    assert write_set["visual_observation"]["status"] == "confirmed"
+    assert write_set["visual_observation"]["effect"] == "changed"
+    assert write_set["visual_observation"]["notes"] == ["fan speed visibly changed after guarded PWM write"]
 
 
 def test_probe_live_pwm_requires_confirmation(monkeypatch):

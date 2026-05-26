@@ -1064,7 +1064,11 @@ Risks:
   the next recommended command next to the manifest. It also audits the
   recommended or already-created safe PWM output directory, so the evidence
   checklist follows the MAC-specific `experiments/safe-pwm-<mac>` path emitted
-  by `receiver_control_next_action`.
+  by `receiver_control_next_action`. `receiver-observation <safe-pwm-dir>`
+  creates the matching manual `observation.json` record for visible/audible fan
+  response. Evidence reports now distinguish complete machine logs that still
+  need observation (`write-evidence-needs-observation`) from confirmed control
+  evidence (`write-evidence-confirmed`).
 - `LianLiWirelessPage`: GUI page for safe LIAN LI wireless probing. It exposes
   sysfs scanning, live receiver snapshots, live master MAC queries, and a
   `只读验证` action that saves scan, live-list, live-master, and live-lcd-info
