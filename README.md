@@ -112,6 +112,8 @@ OpenRGB 灯效页默认保持关闭；连接 OpenRGB SDK Server 后才会应用�
 QT_QPA_PLATFORM=offscreen pytest -q
 ```
 
+联力无线的 Windows USBPcap 抓包执行手册见：`docs/lianli-wireless-windows-capture-playbook.md`，可直接用于 Windows 端按场景抓 baseline / PWM / sync / 灯光 / 重绑的 pcap 文件。
+
 GitHub Actions 配置在 `.github/workflows/tests.yml`，会在 push 和 pull request 时安装依赖并运行完整测试。
 
 On this machine the installed rule is:
