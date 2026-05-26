@@ -918,6 +918,46 @@ def test_probe_receiver_evidence_report_flags_receiver_identity_conflict(tmp_pat
     assert "receiver-validation-bundle" in report["recommended_commands"][0]
 
 
+def test_probe_receiver_evidence_report_flags_snapshot_receiver_set_mismatch(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    readonly_live_list = tmp_path / "readonly" / "live-list.json"
+    payload = json.loads(readonly_live_list.read_text(encoding="utf-8"))
+    payload["devices"][0]["mac"] = "11:22:33:44:55:66"
+    readonly_live_list.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    report = _run_probe("receiver-evidence-report", str(tmp_path))
+    identity = report["receiver_identity_consistency"]
+    conflicts = {item["type"]: item for item in identity["conflicts"]}
+
+    assert report["status"] == "receiver-identity-conflict"
+    assert identity["status"] == "conflict"
+    assert identity["receiver_macs"] == ["11:22:33:44:55:66", "aa:bb:cc:dd:ee:ff"]
+    assert conflicts["snapshot-receiver-set-mismatch"]["sources"] == [
+        {"relative_path": "live-list.json", "device_macs": ["aa:bb:cc:dd:ee:ff"]},
+        {"relative_path": "readonly/live-list.json", "device_macs": ["11:22:33:44:55:66"]},
+    ]
+
+
+def test_probe_receiver_evidence_report_flags_master_query_source_mismatch(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    readonly_master = tmp_path / "readonly" / "live-master.json"
+    payload = json.loads(readonly_master.read_text(encoding="utf-8"))
+    payload["master_mac"] = "66:55:44:33:22:11"
+    readonly_master.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    report = _run_probe("receiver-evidence-report", str(tmp_path))
+    identity = report["receiver_identity_consistency"]
+    conflicts = {item["type"]: item for item in identity["conflicts"]}
+
+    assert report["status"] == "receiver-identity-conflict"
+    assert identity["status"] == "conflict"
+    assert identity["master_query_macs"] == ["10:20:30:40:50:60", "66:55:44:33:22:11"]
+    assert conflicts["master-query-source-mismatch"]["sources"] == [
+        {"relative_path": "live-master.json", "master_mac": "10:20:30:40:50:60"},
+        {"relative_path": "readonly/live-master.json", "master_mac": "66:55:44:33:22:11"},
+    ]
+
+
 def test_probe_receiver_evidence_report_flags_master_query_mismatch(tmp_path):
     _write_receiver_evidence_required_payloads(tmp_path)
     live_master = tmp_path / "live-master.json"

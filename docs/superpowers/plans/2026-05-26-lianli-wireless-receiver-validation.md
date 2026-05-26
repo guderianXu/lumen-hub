@@ -29,7 +29,7 @@
 - [x] `receiver-validation-bundle` 会在同一目录写出 `receiver-validation-bundle.json` 和 `summary.json`。
 - [x] 新增 `receiver-evidence-report`，用于把实机验证目录整理成可分享的证据清单。
 - [x] `receiver-evidence-report` 会跟随下一步推荐命令里的安全 PWM 输出目录，不再只检查固定 `safe-pwm-001`。
-- [x] `receiver-evidence-report` 会输出 `receiver_identity_consistency`，当只读快照和 Master 查询互相矛盾时标记 `receiver-identity-conflict`。
+- [x] `receiver-evidence-report` 会输出 `receiver_identity_consistency`，当两份只读快照的 receiver 集合/身份字段不一致，或两份 Master 查询互相矛盾时标记 `receiver-identity-conflict`。
 - [x] 新增 `receiver-observation`，用于把实际风扇变化记录进证据目录；`receiver-evidence-report` 会区分只收集机器日志和已经肉眼确认。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。

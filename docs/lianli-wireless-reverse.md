@@ -1066,10 +1066,12 @@ Risks:
   `readonly/live-list.json`, and `live-master.json` for receiver MAC,
   master MAC, channel, rx_type, device_type, and fan_count mismatches. A
   mismatch is surfaced as `receiver-identity-conflict` before the log set can
-  be treated as a safe-write candidate. The report also audits the recommended
-  or already-created safe PWM output directory, so the evidence checklist
-  follows the MAC-specific `experiments/safe-pwm-<mac>` path emitted by
-  `receiver_control_next_action`. `receiver-observation <safe-pwm-dir>` creates
+  be treated as a safe-write candidate. The same audit now catches receiver MAC
+  set changes between top-level and nested readonly snapshots, plus conflicting
+  Master MACs between top-level and nested `live-master` logs. The report also
+  audits the recommended or already-created safe PWM output directory, so the
+  evidence checklist follows the MAC-specific `experiments/safe-pwm-<mac>` path
+  emitted by `receiver_control_next_action`. `receiver-observation <safe-pwm-dir>` creates
   the matching manual `observation.json` record for visible/audible fan
   response. When machine logs are complete but no observation exists, the
   recommended observation command now carries the same target MAC and expected

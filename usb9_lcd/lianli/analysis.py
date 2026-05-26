@@ -349,6 +349,31 @@ def receiver_identity_consistency(root: Path) -> dict[str, Any]:
                         )
         snapshot_sources.append(source)
 
+    ok_snapshot_sources = [
+        source
+        for source in snapshot_sources
+        if source.get("status") == "ok"
+    ]
+    if len(ok_snapshot_sources) > 1:
+        source_mac_sets = [
+            tuple(str(mac) for mac in source.get("device_macs", []) if isinstance(mac, str))
+            for source in ok_snapshot_sources
+        ]
+        if len(set(source_mac_sets)) > 1:
+            conflicts.append(
+                {
+                    "type": "snapshot-receiver-set-mismatch",
+                    "field": "receiver_macs",
+                    "sources": [
+                        {
+                            "relative_path": str(source.get("relative_path") or ""),
+                            "device_macs": list(source_mac_sets[index]),
+                        }
+                        for index, source in enumerate(ok_snapshot_sources)
+                    ],
+                }
+            )
+
     for relative_path in RECEIVER_IDENTITY_MASTER_FILES:
         path = root / relative_path
         source = {
@@ -408,6 +433,22 @@ def receiver_identity_consistency(root: Path) -> dict[str, Any]:
             if source.get("master_mac")
         }
     )
+    if len(master_macs) > 1:
+        conflicts.append(
+            {
+                "type": "master-query-source-mismatch",
+                "field": "master_mac",
+                "values": master_macs,
+                "sources": [
+                    {
+                        "relative_path": str(source.get("relative_path") or ""),
+                        "master_mac": str(source.get("master_mac") or ""),
+                    }
+                    for source in master_sources
+                    if source.get("master_mac")
+                ],
+            }
+        )
     bound_master_macs = sorted(
         {
             str(entry["fields"].get("master_mac") or "")
