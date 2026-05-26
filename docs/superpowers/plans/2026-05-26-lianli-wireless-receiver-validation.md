@@ -60,6 +60,7 @@
 - [x] `extract-wireless-js` 已新增 `capture_hints`，把官方 JS 的 controller/settings/effect/discovery 入口映射到 baseline、PWM、sync、sort、灯光等 Windows 抓包场景；`windows-capture-runbook` 和 `capture-gap-report` 会在每个场景暴露 `interface_focus`。
 - [x] `windows-capture-runbook` / `capture-gap-report` / capture-note 模板已输出 `interface_capture_actions`，把 `interface_focus` 转成场景级 Windows UI 操作和观察记录清单，便于真实 USBPcap 抓包时按官方入口逐项执行。
 - [x] `windows-capture-note --artifact-dir` 已把 `interface_capture_actions` 展开为 `interface_actions_completed` 勾选项；`capture-set-report.capture_note_operator_summary` 会把未确认的官方界面入口动作计入 `needs-action-confirmation`，避免后续把没有按官方路径操作的抓包误当成可验证证据。
+- [x] `lianli-validation-gate` 已输出 `artifact_capture_version_recommendations`，并在推荐命令里加入当前目标和关键替代版本的 `windows-capture-runbook`；这样 v2.1.17 的 changelog/RF 线索和 v2.1.23 的官方界面入口线索可以并行规划抓包。
 
 ## 待完成
 

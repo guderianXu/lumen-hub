@@ -1526,6 +1526,15 @@ def test_probe_lianli_validation_gate_includes_optional_artifact_matrix(tmp_path
         + "\n",
         encoding="utf-8",
     )
+    wireless_js = artifact_dir / "assets-v2.1.23-wireless.js"
+    wireless_js.write_text(
+        "const label='L-Wireless'; pipe.writeSettings('ALV2Controller-', data);",
+        encoding="utf-8",
+    )
+    (artifact_dir / "extract-wireless-js-v2.1.23.json").write_text(
+        json.dumps(extract_wireless_js_clues(wireless_js)) + "\n",
+        encoding="utf-8",
+    )
 
     payload = _run_probe(
         "lianli-validation-gate",
@@ -1548,9 +1557,16 @@ def test_probe_lianli_validation_gate_includes_optional_artifact_matrix(tmp_path
     assert payload["artifact_target_changelog_score"] == 48
     assert payload["artifact_target_capture_recommendation_score"] == 1048
     assert checks["official-static-artifact-evidence"]["status"] == "ok"
+    assert checks["official-capture-version-plan"]["status"] == "ok"
+    assert checks["official-capture-version-plan"]["detail"]["top_versions"][0]["version"] == "v2.1.17"
     assert checks["official-static-artifact-evidence"]["detail"]["changelog_score"] == 48
     assert checks["official-static-artifact-evidence"]["detail"]["capture_recommendation_score"] == 1048
     assert checks["official-static-artifact-evidence"]["detail"]["changelog_keywords"] == ["binding", "rf", "rpm-pwm"]
+    assert payload["artifact_capture_version_recommendations"][0]["version"] == "v2.1.17"
+    assert any(
+        item["version"] == "v2.1.23" and "--version 2.1.23" in item["windows_capture_runbook_command"]
+        for item in payload["artifact_capture_version_recommendations"]
+    )
     assert payload["reports"]["capture_gap"]["artifact_capture_changelog_score"] == 48
     rf_gap = {
         item["id"]: item
@@ -1559,6 +1575,14 @@ def test_probe_lianli_validation_gate_includes_optional_artifact_matrix(tmp_path
     assert rf_gap["base_priority"] == 90
     assert rf_gap["priority"] == 70
     assert "artifact-evidence-matrix" in " ".join(payload["recommended_commands"])
+    assert any(
+        "windows-capture-runbook" in command and "--capture-base lianli-v2117" in command
+        for command in payload["recommended_commands"]
+    )
+    assert any(
+        "windows-capture-runbook" in command and "--version 2.1.23" in command
+        for command in payload["recommended_commands"]
+    )
 
 
 def test_probe_receiver_evidence_report_flags_receiver_identity_conflict(tmp_path):

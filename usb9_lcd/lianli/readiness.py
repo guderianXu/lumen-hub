@@ -43,7 +43,21 @@ def lianli_validation_gate(
     pairing = _receiver_pairing_or_missing(hardware_dir, evidence)
     artifact = _artifact_matrix_or_missing(artifact_dir) if artifact_dir is not None else _artifact_not_configured()
     target_artifact = _target_artifact_version(artifact, version)
-    checklist = _validation_checklist(capture, evidence, pairing, artifact, target_artifact=target_artifact)
+    version_recommendations = _artifact_capture_version_recommendations(
+        artifact,
+        target_version=version,
+        capture_dir=capture_dir,
+        artifact_dir=artifact_dir,
+        capture_base=str(capture.get("capture_base") or capture_base or f"l-connect-v{version}"),
+    )
+    checklist = _validation_checklist(
+        capture,
+        evidence,
+        pairing,
+        artifact,
+        target_artifact=target_artifact,
+        version_recommendations=version_recommendations,
+    )
     blockers = [item for item in checklist if item["status"] == "blocker"]
     warnings = [item for item in checklist if item["status"] == "warning"]
     status = _validation_status(capture, evidence, pairing, blockers, warnings)
@@ -63,6 +77,7 @@ def lianli_validation_gate(
         "artifact_target_capture_recommendation_score": _int_value(
             target_artifact.get("capture_recommendation_score")
         ),
+        "artifact_capture_version_recommendations": version_recommendations,
         "capture_status": str(capture.get("status") or ""),
         "receiver_evidence_status": str(evidence.get("status") or ""),
         "receiver_next_action_status": _receiver_next_action_status(evidence),
@@ -81,6 +96,7 @@ def lianli_validation_gate(
             artifact_dir=artifact_dir.expanduser() if artifact_dir is not None else None,
             version=version,
             capture_base=str(capture.get("capture_base") or capture_base or f"l-connect-v{version}"),
+            version_recommendations=version_recommendations,
         ),
         "reports": {
             "artifact_evidence": artifact,
@@ -195,6 +211,7 @@ def _validation_checklist(
     artifact: dict[str, Any],
     *,
     target_artifact: dict[str, Any],
+    version_recommendations: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     gap_ids = {str(item.get("id") or "") for item in _dict_items(capture.get("scenario_gaps"))}
     operation_gaps = {
@@ -210,6 +227,11 @@ def _validation_checklist(
 
     checks = [
         *_artifact_checks(artifact, target_artifact),
+        *(
+            [_artifact_capture_version_check(version_recommendations)]
+            if str(artifact.get("status") or "") != "not-configured"
+            else []
+        ),
         _capture_note_context_check(capture),
         _capture_note_operator_check(capture),
         _check(
@@ -385,6 +407,109 @@ def _artifact_checks(artifact: dict[str, Any], target_artifact: dict[str, Any]) 
     ]
 
 
+def _artifact_capture_version_recommendations(
+    artifact: dict[str, Any],
+    *,
+    target_version: str,
+    capture_dir: Path,
+    artifact_dir: Path | None,
+    capture_base: str,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    summary = artifact.get("summary") if isinstance(artifact.get("summary"), dict) else {}
+    raw_items = summary.get("recommended_capture_versions")
+    if not isinstance(raw_items, list):
+        return []
+    wanted = _normalize_version(target_version)
+    recommendations: list[dict[str, Any]] = []
+    for rank, item in enumerate(raw_items, start=1):
+        if not isinstance(item, dict):
+            continue
+        version_label = str(item.get("version") or "")
+        version = _normalize_version(version_label)
+        if not version:
+            continue
+        is_target = version == wanted
+        base = capture_base if is_target else f"l-connect-v{version}"
+        recommendations.append(
+            {
+                "rank": rank,
+                "version": version_label or f"v{version}",
+                "normalized_version": version,
+                "is_current_target": is_target,
+                "score": _int_value(item.get("score")),
+                "assessment": str(item.get("assessment") or ""),
+                "changelog_score": _int_value(item.get("changelog_score")),
+                "release_date": str(item.get("release_date") or ""),
+                "capture_base": base,
+                "windows_capture_runbook_command": _tool_command(
+                    "windows-capture-runbook",
+                    str(capture_dir),
+                    "--version",
+                    version,
+                    "--capture-base",
+                    base,
+                    *(_artifact_dir_command_args(artifact_dir) if artifact_dir is not None else []),
+                ),
+            }
+        )
+        if len(recommendations) >= limit:
+            break
+    return recommendations
+
+
+def _artifact_capture_version_check(recommendations: list[dict[str, Any]]) -> dict[str, Any]:
+    if not recommendations:
+        return _check(
+            "official-capture-version-plan",
+            "warning",
+            "No artifact-derived capture-version recommendation was available; use the requested version only.",
+            value="no-recommendations",
+        )
+    target = next((item for item in recommendations if bool(item.get("is_current_target"))), {})
+    top = recommendations[0]
+    detail = {
+        "top_versions": [
+            {
+                "rank": _int_value(item.get("rank")),
+                "version": str(item.get("version") or ""),
+                "score": _int_value(item.get("score")),
+                "assessment": str(item.get("assessment") or ""),
+                "is_current_target": bool(item.get("is_current_target")),
+            }
+            for item in recommendations
+        ],
+        "runbook_commands": [
+            str(item.get("windows_capture_runbook_command") or "")
+            for item in recommendations
+            if str(item.get("windows_capture_runbook_command") or "")
+        ],
+    }
+    if not target:
+        return _check(
+            "official-capture-version-plan",
+            "warning",
+            "The requested capture version is not in the artifact recommendation queue.",
+            value="target-version-not-ranked",
+            detail=detail,
+        )
+    if bool(top.get("is_current_target")):
+        return _check(
+            "official-capture-version-plan",
+            "ok",
+            "The requested capture version is the top artifact-derived target.",
+            value=f"rank-{_int_value(target.get('rank'))}",
+            detail=detail,
+        )
+    return _check(
+        "official-capture-version-plan",
+        "warning",
+        "Another official L-Connect version has stronger static/changelog evidence; capture it in parallel if the installed latest version differs.",
+        value=f"rank-{_int_value(target.get('rank'))}",
+        detail=detail,
+    )
+
+
 def _operation_check(
     operation_gaps: dict[str, dict[str, Any]],
     operation: str,
@@ -516,10 +641,23 @@ def _validation_recommended_commands(
     artifact_dir: Path | None,
     version: str,
     capture_base: str,
+    version_recommendations: list[dict[str, Any]],
 ) -> list[str]:
     commands = _string_list(capture.get("recommended_commands"))
+    commands.append(
+        _tool_command(
+            "windows-capture-runbook",
+            str(capture_dir),
+            "--version",
+            version,
+            "--capture-base",
+            capture_base,
+            *(_artifact_dir_command_args(artifact_dir) if artifact_dir is not None else []),
+        )
+    )
     if artifact_dir is not None:
         commands.append(_tool_command("artifact-evidence-matrix", str(artifact_dir)))
+    commands.extend(_alternate_capture_version_runbook_commands(version_recommendations))
     evidence_status = str(evidence.get("status") or "")
     if evidence_status in {"missing-evidence-directory", "missing-readonly-evidence", "analysis-error"}:
         commands.append(
@@ -556,6 +694,22 @@ def _validation_recommended_commands(
         )
     )
     return _unique_preserve_order(commands)
+
+
+def _alternate_capture_version_runbook_commands(recommendations: list[dict[str, Any]]) -> list[str]:
+    commands: list[str] = []
+    for item in recommendations:
+        if bool(item.get("is_current_target")):
+            continue
+        assessment = str(item.get("assessment") or "")
+        if assessment not in {"rf-usb-protocol-lead", "rf-usb-low-confidence-lead", "wireless-adjacent-lead"}:
+            continue
+        command = str(item.get("windows_capture_runbook_command") or "")
+        if command:
+            commands.append(command)
+        if len(commands) >= 2:
+            break
+    return commands
 
 
 def _target_artifact_version(artifact: dict[str, Any], version: str) -> dict[str, Any]:

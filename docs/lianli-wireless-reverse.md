@@ -1037,6 +1037,12 @@ Risks:
   those same hints into `interface_actions_completed` checklist rows, and
   capture-set/operator summaries warn when the official-interface actions were
   not explicitly confirmed beside the USBPcap file.
+  `lianli-validation-gate` also lifts the artifact matrix's capture-version
+  queue into `artifact_capture_version_recommendations` and emits
+  `windows-capture-runbook` commands for the current target plus relevant
+  alternate official versions, so v2.1.17 changelog/RF leads and v2.1.23
+  interface-entry leads can be compared without guessing which installer was
+  used for a capture.
   High-entropy data still gets warnings where isolated 4-byte VID/PID hits may
   be accidental.
 - `usb9_lcd.lianli.changelog`: official L-Connect 3 changelog analyzer. It
