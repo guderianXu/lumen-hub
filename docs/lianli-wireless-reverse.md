@@ -359,10 +359,14 @@ Practical interpretation:
     motherboard PWM sync, RF unbind/rebind, sort/quick-sync, and lighting
     static/off plus generated-rainbow scenarios.
   - New sidecar note helper:
-    `python tools/lianli_wireless_probe.py --save-json .cache/lianli/captures/lianli-v2117-01-direct-fan-speed.notes.json windows-capture-note direct-fan-speed --capture-base lianli-v2117 --receiver-mac <receiver-mac> --master-mac <master-mac> --channel <channel> --rx-type <rx-type> --device-type <device-type> --fan-count <fan-count> --led-count <led-count> --mark-actions-done`
+    `python tools/lianli_wireless_probe.py --save-json .cache/lianli/captures/lianli-v2117-01-direct-fan-speed.notes.json windows-capture-note direct-fan-speed --capture-base lianli-v2117 --receiver-mac <receiver-mac> --master-mac <master-mac> --channel <channel> --rx-type <rx-type> --device-type <device-type> --fan-count <fan-count> --led-count <led-count> --pwm-values <captured-or-expected-pwm-tuple> --mark-actions-done`
     creates the `<capture-stem>.notes.json` operator record consumed by
     `capture-set-report`, so the target MAC/channel/action context is kept next
-    to each Windows USBPcap file.
+    to each Windows USBPcap file. The sidecar can also carry scenario operation
+    parameters such as direct PWM tuples, fallback PWM, decoded motherboard PWM,
+    bind/unbind PWM tuples, static RGB color, rainbow frame count, interval, and
+    effect index; when present, the planned no-write `compare-capture` commands
+    are emitted with those placeholders already filled.
   - New batch triage helper:
     `python tools/lianli_wireless_probe.py summarize-captures <capture-dir>`
     recursively ranks `.pcapng`, `.pcap`, `.txt`, `.json`, `.tsv`, and `.hex`
@@ -1433,10 +1437,10 @@ Risks:
   post-capture verification commands are explicit. `capture-set-report` reads
   `<capture-stem>.notes.json` sidecars back into each scenario and ignores them
   as capture inputs, so target MAC, master MAC, channel, rx_type, device_type,
-  fan count, LED count, and operator observations remain machine-readable. When
-  those fields are present, the runbook keeps the normal triage/protocol
-  commands and fills target placeholders in the per-scenario `compare-capture`
-  command.
+  fan count, LED count, expected operation parameters, and operator observations
+  remain machine-readable. When those fields are present, the runbook keeps the
+  normal triage/protocol commands and fills target plus parameter placeholders
+  in the per-scenario `compare-capture` command.
 - `python tools/lianli_wireless_probe.py lianli-validation-gate --capture-dir <capture-dir> --hardware-dir <hardware-log-dir> --artifact-dir <artifact-report-dir> --capture-base lianli-v2117`:
   added as the top-level no-write readiness report. It composes
   optional `artifact-evidence-matrix`, `capture-gap-report`, `receiver-evidence-report`, and

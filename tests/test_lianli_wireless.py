@@ -2857,6 +2857,7 @@ def test_capture_gap_report_fills_next_compare_command_from_capture_note(tmp_pat
         device_type=2,
         fan_count=3,
         led_count=132,
+        pwm_values="77,88,99,111",
         mark_actions_done=True,
     )
     (tmp_path / note["capture_note_file"]).write_text(json.dumps(note), encoding="utf-8")
@@ -2871,6 +2872,8 @@ def test_capture_gap_report_fills_next_compare_command_from_capture_note(tmp_pat
     assert any("aa:bb:cc:dd:ee:ff" in command for command in compare_commands)
     assert all("<receiver-mac>" not in command for command in compare_commands)
     assert any("--channel '8'" in command and "--rx-type '3'" in command for command in compare_commands)
+    assert any("--pwm-values '77,88,99,111'" in command for command in compare_commands)
+    assert all("<captured-or-expected-pwm-tuple>" not in command for command in compare_commands)
 
 
 def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
@@ -2916,6 +2919,7 @@ def test_windows_capture_note_generates_filled_sidecar_template():
         device_type=2,
         fan_count=3,
         led_count=132,
+        pwm_values="77,88,99,111",
         observations=["Applied 55% then 75%; fans audibly changed."],
         mark_actions_done=True,
     )
@@ -2929,9 +2933,42 @@ def test_windows_capture_note_generates_filled_sidecar_template():
     assert note["target_context"]["receiver_mac"] == "aa:bb:cc:dd:ee:ff"
     assert note["target_context"]["channel"] == 8
     assert note["target_context"]["led_count"] == 132
+    assert note["expected_parameters"]["pwm_values"] == "77,88,99,111"
     assert all(item["done"] for item in note["windows_actions_completed"])
     assert "live-pwm RF frames" in note["expected_evidence"]
     assert note["observations"] == ["Applied 55% then 75%; fans audibly changed."]
+
+
+def test_capture_set_report_fills_lighting_parameters_from_capture_note(tmp_path):
+    base = "lianli-v2117"
+    note = windows_capture_note(
+        "lighting-generated-rainbow",
+        capture_base=base,
+        receiver_mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=132,
+        frame_count=24,
+        interval_ms=50,
+        effect_index=1,
+        mark_actions_done=True,
+    )
+    (tmp_path / note["capture_note_file"]).write_text(json.dumps(note), encoding="utf-8")
+
+    report = capture_set_report(tmp_path, capture_base=base)
+    scenario = {item["id"]: item for item in report["scenarios"]}["lighting-generated-rainbow"]
+    commands = scenario["contextual_planned_linux_commands"]
+
+    assert any("--frame-count '24'" in command for command in commands)
+    assert any("--interval-ms '50'" in command for command in commands)
+    assert any("--effect-index '1'" in command for command in commands)
+    assert any("--led-count '132'" in command for command in commands)
+    assert all("<frame-count>" not in command for command in commands)
+    assert all("<interval-ms>" not in command for command in commands)
+    assert all("<effect-index>" not in command for command in commands)
 
 
 def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_capture(tmp_path):
@@ -2959,6 +2996,9 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
                     "device_type": 2,
                     "fan_count": 3,
                     "led_count": 132,
+                },
+                "expected_parameters": {
+                    "pwm_values": "77,88,99,111",
                 },
                 "windows_actions_completed": [{"action": "Applied 55% fan speed", "done": True}],
                 "observations": ["Fans audibly changed after apply."],
@@ -3015,6 +3055,8 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
     assert scenarios["direct-fan-speed"]["status"] == "missing-capture"
     assert any("aa:bb:cc:dd:ee:ff" in command and "<receiver-mac>" not in command for command in direct_contextual)
     assert any("--channel '8'" in command and "--rx-type '3'" in command for command in direct_contextual)
+    assert any("--pwm-values '77,88,99,111'" in command for command in direct_contextual)
+    assert all("<captured-or-expected-pwm-tuple>" not in command for command in direct_contextual)
     assert direct_gap["contextual_planned_linux_commands"] == direct_contextual
     assert direct_task["linux_analysis_commands"][-1] == direct_contextual[-1].replace(
         f"{base}-01-direct-fan-speed.pcapng",
@@ -3025,6 +3067,7 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
     assert note["windows_actions_all_done"] is True
     assert note["operator"] == "xjw"
     assert note["target_context"]["receiver_mac"] == "aa:bb:cc:dd:ee:ff"
+    assert note["expected_parameters"] == {"pwm_values": "77,88,99,111"}
     assert note["usbpcap_interfaces"] == ["0416:8040", "0416:8041"]
     assert note["observations"] == ["Fans audibly changed after apply."]
 

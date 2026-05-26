@@ -3268,6 +3268,9 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
                     "fan_count": 3,
                     "led_count": 132,
                 },
+                "expected_parameters": {
+                    "pwm_values": "77,88,99,111",
+                },
             }
         ),
         encoding="utf-8",
@@ -3299,6 +3302,7 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
     ]
     assert any("aa:bb:cc:dd:ee:ff" in command and "<receiver-mac>" not in command for command in direct_contextual)
     assert any("--channel '8'" in command and "--rx-type '3'" in command for command in direct_contextual)
+    assert any("--pwm-values '77,88,99,111'" in command for command in direct_contextual)
     assert payload["aggregate_rf_operations"] == {"live-pwm": 1}
     assert payload["aggregate_matched_signatures"] == {"pwm": 1}
     deltas = payload["cross_scenario_deltas"]
@@ -3385,6 +3389,8 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
         "3",
         "--led-count",
         "132",
+        "--pwm-values",
+        "77,88,99,111",
         "--observation",
         "Applied 55% fan speed.",
         "--mark-actions-done",
@@ -3394,6 +3400,7 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
     assert note_payload["capture_file"] == f"{base}-01-direct-fan-speed.pcapng"
     assert note_payload["capture_note_file"] == f"{base}-01-direct-fan-speed.notes.json"
     assert note_payload["target_context"]["channel"] == 8
+    assert note_payload["expected_parameters"]["pwm_values"] == "77,88,99,111"
     assert note_payload["observations"] == ["Applied 55% fan speed."]
     contract = payload["linux_interface_contract"]
     assert contract["transport"]["sender"]["confidence"] == "high"

@@ -97,6 +97,18 @@ _CAPTURE_NOTE_TARGET_CONTEXT_FIELDS = (
     "fan_count",
     "led_count",
 )
+_CAPTURE_NOTE_EXPECTED_PARAMETER_FIELDS = (
+    "pwm_values",
+    "fallback_pwm",
+    "motherboard_pwm",
+    "current_pwm",
+    "pre_unbind_pwm",
+    "post_bind_pwm",
+    "frame_count",
+    "interval_ms",
+    "effect_index",
+    "color",
+)
 TINYUZ_CTRL_LITERAL_LINE = 1
 TINYUZ_CTRL_CLIP_END = 2
 TINYUZ_CTRL_STREAM_END = 3
@@ -1328,6 +1340,16 @@ def windows_capture_note(
     device_type: int | str | None = None,
     fan_count: int | str | None = None,
     led_count: int | str | None = None,
+    pwm_values: Iterable[int] | str | None = None,
+    fallback_pwm: int | str | None = None,
+    motherboard_pwm: int | str | None = None,
+    current_pwm: Iterable[int] | str | None = None,
+    pre_unbind_pwm: Iterable[int] | str | None = None,
+    post_bind_pwm: Iterable[int] | str | None = None,
+    frame_count: int | str | None = None,
+    interval_ms: int | str | None = None,
+    effect_index: int | str | None = None,
+    color: Iterable[int] | str | None = None,
     usbpcap_interfaces: Iterable[str] | None = None,
     observations: Iterable[str] | None = None,
     mark_actions_done: bool = False,
@@ -1369,6 +1391,18 @@ def windows_capture_note(
         "fan_count": _windows_capture_note_value(fan_count),
         "led_count": _windows_capture_note_value(led_count),
     }
+    note["expected_parameters"] = _windows_capture_note_expected_parameters(
+        pwm_values=pwm_values,
+        fallback_pwm=fallback_pwm,
+        motherboard_pwm=motherboard_pwm,
+        current_pwm=current_pwm,
+        pre_unbind_pwm=pre_unbind_pwm,
+        post_bind_pwm=post_bind_pwm,
+        frame_count=frame_count,
+        interval_ms=interval_ms,
+        effect_index=effect_index,
+        color=color,
+    )
     if usbpcap_interfaces is not None:
         note["usbpcap_interfaces"] = _ordered_strings_from_list(list(usbpcap_interfaces))
     if mark_actions_done:
@@ -5679,7 +5713,9 @@ def _capture_note_contextual_commands(commands: Iterable[str], capture_note: dic
     context = capture_note.get("target_context")
     if not isinstance(context, dict):
         return []
+    parameters = _capture_note_parameter_mapping(capture_note.get("expected_parameters"))
     replacements = _capture_note_context_replacements(context)
+    replacements.update(_capture_note_parameter_replacements(parameters))
     if not replacements:
         return []
     contextual: list[str] = []
@@ -5709,6 +5745,34 @@ def _capture_note_context_replacements(context: dict[str, Any]) -> dict[str, str
         value = _capture_note_context_value(context.get(field))
         if value:
             replacements[placeholder] = shlex.quote(value)
+    return replacements
+
+
+def _capture_note_parameter_replacements(parameters: dict[str, str]) -> dict[str, str]:
+    placeholders = {
+        "pwm_values": ("<captured-or-expected-pwm-tuple>",),
+        "fallback_pwm": ("<fallback-pwm>",),
+        "motherboard_pwm": ("<decoded-motherboard-pwm>",),
+        "pre_unbind_pwm": ("<pre-unbind-pwm-tuple>",),
+        "post_bind_pwm": ("<post-bind-pwm-tuple>",),
+        "frame_count": ("<frame-count>",),
+        "interval_ms": ("<interval-ms>",),
+        "effect_index": ("<effect-index>",),
+        "color": ("<color>",),
+    }
+    if parameters.get("current_pwm"):
+        placeholders["current_pwm"] = (
+            "<current-pwm-tuple>",
+            "<pre-unbind-pwm-tuple>",
+            "<post-bind-pwm-tuple>",
+        )
+    replacements: dict[str, str] = {}
+    for field, field_placeholders in placeholders.items():
+        value = parameters.get(field, "")
+        if not value:
+            continue
+        for placeholder in field_placeholders:
+            replacements.setdefault(placeholder, shlex.quote(value))
     return replacements
 
 
@@ -10176,11 +10240,52 @@ def _windows_capture_note_command(root: Path, scenario_id: str, capture_file: st
         "--led-count",
         "<led-count>",
         "--mark-actions-done",
+        *_windows_capture_note_parameter_command_args(scenario_id),
     )
+
+
+def _windows_capture_note_parameter_command_args(scenario_id: str) -> list[str]:
+    by_scenario = {
+        "direct-fan-speed": ["--pwm-values", "<captured-or-expected-pwm-tuple>"],
+        "motherboard-pwm-sync": ["--fallback-pwm", "<fallback-pwm>"],
+        "rf-rebind": [
+            "--pre-unbind-pwm",
+            "<pre-unbind-pwm-tuple>",
+            "--post-bind-pwm",
+            "<post-bind-pwm-tuple>",
+        ],
+        "sort-quick-sync": ["--motherboard-pwm", "<decoded-motherboard-pwm>"],
+        "lighting-static-and-off": ["--color", "255,0,0"],
+        "lighting-generated-rainbow": [
+            "--frame-count",
+            "<frame-count>",
+            "--interval-ms",
+            "<interval-ms>",
+            "--effect-index",
+            "<effect-index>",
+        ],
+    }
+    return by_scenario.get(scenario_id, [])
 
 
 def _windows_capture_note_value(value: int | str | None) -> int | str:
     return "" if value is None else value
+
+
+def _windows_capture_note_parameter_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item).strip() for item in value if str(item).strip())
+    text = str(value).strip()
+    return text
+
+
+def _windows_capture_note_expected_parameters(**parameters: Any) -> dict[str, str]:
+    return {
+        field: _windows_capture_note_parameter_value(parameters.get(field))
+        for field in _CAPTURE_NOTE_EXPECTED_PARAMETER_FIELDS
+    }
 
 
 def _windows_capture_note_template_status(
@@ -10246,6 +10351,10 @@ def _windows_capture_note_template(
             "fan_count": "",
             "led_count": "",
         },
+        "expected_parameters": {
+            field: ""
+            for field in _CAPTURE_NOTE_EXPECTED_PARAMETER_FIELDS
+        },
         "windows_actions_completed": [
             {"action": action, "done": False}
             for action in _ordered_strings_from_list(scenario.get("windows_actions"))
@@ -10285,6 +10394,7 @@ def _capture_set_scenario_note(root: Path, capture_file: str, scenario_id: str) 
     warnings = _capture_note_warnings(payload, scenario_id, capture_file)
     actions = _capture_note_actions(payload.get("windows_actions_completed"))
     target_context = _capture_note_mapping(payload.get("target_context"))
+    expected_parameters = _capture_note_parameter_mapping(payload.get("expected_parameters"))
     missing_target_fields = _capture_note_target_context_missing_fields(target_context)
     operator_status = _capture_note_operator_status(payload, actions, missing_target_fields)
     return {
@@ -10301,6 +10411,7 @@ def _capture_set_scenario_note(root: Path, capture_file: str, scenario_id: str) 
         "lconnect_version": str(payload.get("lconnect_version") or payload.get("version") or ""),
         "target_context": target_context,
         "target_context_missing_fields": missing_target_fields,
+        "expected_parameters": expected_parameters,
         "usbpcap_interfaces": _ordered_strings_from_list(payload.get("usbpcap_interfaces")),
         "windows_actions_completed": actions,
         "windows_action_count": len(actions),
@@ -10364,6 +10475,17 @@ def _capture_note_target_context_missing_fields(context: dict[str, Any]) -> list
 
 def _capture_note_mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _capture_note_parameter_mapping(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for field in _CAPTURE_NOTE_EXPECTED_PARAMETER_FIELDS:
+        parameter = _windows_capture_note_parameter_value(value.get(field))
+        if parameter:
+            result[field] = parameter
+    return result
 
 
 def _capture_note_actions(value: Any) -> list[dict[str, Any]]:

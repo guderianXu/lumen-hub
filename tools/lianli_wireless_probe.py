@@ -645,6 +645,16 @@ def _build_parser() -> argparse.ArgumentParser:
     windows_note.add_argument("--device-type", type=lambda value: int(value, 0))
     windows_note.add_argument("--fan-count", type=int)
     windows_note.add_argument("--led-count", type=int)
+    windows_note.add_argument("--pwm-values", help="Observed/expected direct PWM tuple, e.g. 77,88,99,111")
+    windows_note.add_argument("--fallback-pwm", help="Observed/expected PWM used when sync is disabled")
+    windows_note.add_argument("--motherboard-pwm", help="Decoded motherboard PWM value for quick-sync/mirror captures")
+    windows_note.add_argument("--current-pwm", help="Observed/expected current PWM tuple for bind/unbind captures")
+    windows_note.add_argument("--pre-unbind-pwm", help="Observed/expected PWM tuple before RF unbind")
+    windows_note.add_argument("--post-bind-pwm", help="Observed/expected PWM tuple after RF bind")
+    windows_note.add_argument("--frame-count", help="Observed/expected rainbow frame count")
+    windows_note.add_argument("--interval-ms", help="Observed/expected RGB frame interval in ms")
+    windows_note.add_argument("--effect-index", help="Observed/expected lighting effect index")
+    windows_note.add_argument("--color", help="Observed/expected static RGB color, e.g. 255,0,0")
     windows_note.add_argument(
         "--usbpcap-interface",
         dest="usbpcap_interfaces",
@@ -1990,6 +2000,16 @@ def main(argv: list[str] | None = None) -> int:
             device_type=args.device_type,
             fan_count=args.fan_count,
             led_count=args.led_count,
+            pwm_values=args.pwm_values,
+            fallback_pwm=args.fallback_pwm,
+            motherboard_pwm=args.motherboard_pwm,
+            current_pwm=args.current_pwm,
+            pre_unbind_pwm=args.pre_unbind_pwm,
+            post_bind_pwm=args.post_bind_pwm,
+            frame_count=args.frame_count,
+            interval_ms=args.interval_ms,
+            effect_index=args.effect_index,
+            color=args.color,
             usbpcap_interfaces=args.usbpcap_interfaces,
             observations=args.observation,
             mark_actions_done=args.mark_actions_done,
