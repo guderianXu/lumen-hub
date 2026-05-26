@@ -1036,9 +1036,12 @@ Risks:
   capture-note templates. `windows-capture-note --artifact-dir` now expands
   those same hints into `interface_actions_completed` checklist rows, and
   capture-set/operator summaries warn when the official-interface actions were
-  not explicitly confirmed beside the USBPcap file.
-  `lianli-validation-gate` also lifts the artifact matrix's capture-version
-  queue into `artifact_capture_version_recommendations` and emits
+  not explicitly confirmed beside the USBPcap file. The runbook now also emits
+  `capture_note_sidecar_queue` and `capture_note_sidecar_commands`, ordered by
+  the same scenario priority, so baseline/PWM/sort/lighting/RF sidecar
+  templates can be generated from one queue after the real receiver target
+  fields are known. `lianli-validation-gate` also lifts the artifact matrix's
+  capture-version queue into `artifact_capture_version_recommendations` and emits
   `windows-capture-runbook` commands for the current target plus relevant
   alternate official versions, so v2.1.17 changelog/RF leads and v2.1.23
   interface-entry leads can be compared without guessing which installer was
@@ -1476,7 +1479,10 @@ Risks:
   fan count, LED count, expected operation parameters, and operator observations
   remain machine-readable. When those fields are present, the runbook keeps the
   normal triage/protocol commands and fills target plus parameter placeholders
-  in the per-scenario `compare-capture` command.
+  in the per-scenario `compare-capture` command. The top-level
+  `capture_note_sidecar_queue` mirrors the capture priority order and includes
+  each missing/partial scenario's sidecar command plus required target fields
+  and scenario-specific parameter placeholders.
 - `python tools/lianli_wireless_probe.py lianli-validation-gate --capture-dir <capture-dir> --hardware-dir <hardware-log-dir> --artifact-dir <artifact-report-dir> --capture-base lianli-v2117`:
   added as the top-level no-write readiness report. It composes
   optional `artifact-evidence-matrix`, `capture-gap-report`, `receiver-evidence-report`, and

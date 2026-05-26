@@ -61,6 +61,7 @@
 - [x] `windows-capture-runbook` / `capture-gap-report` / capture-note 模板已输出 `interface_capture_actions`，把 `interface_focus` 转成场景级 Windows UI 操作和观察记录清单，便于真实 USBPcap 抓包时按官方入口逐项执行。
 - [x] `windows-capture-note --artifact-dir` 已把 `interface_capture_actions` 展开为 `interface_actions_completed` 勾选项；`capture-set-report.capture_note_operator_summary` 会把未确认的官方界面入口动作计入 `needs-action-confirmation`，避免后续把没有按官方路径操作的抓包误当成可验证证据。
 - [x] `lianli-validation-gate` 已输出 `artifact_capture_version_recommendations`，并在推荐命令里加入当前目标和关键替代版本的 `windows-capture-runbook`；这样 v2.1.17 的 changelog/RF 线索和 v2.1.23 的官方界面入口线索可以并行规划抓包。
+- [x] `windows-capture-runbook` 已输出 `capture_note_sidecar_queue` / `capture_note_sidecar_commands`，按当前优先级列出所有缺失/部分抓包场景的 sidecar 生成命令；装上接收器后可以先填真实 receiver/master/channel，再批量生成 `<capture-stem>.notes.json`，减少手工填错场景名、文件名和参数占位符。
 
 ## 待完成
 

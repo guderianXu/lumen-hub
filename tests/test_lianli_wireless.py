@@ -2965,9 +2965,11 @@ def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
     assert report["missing_task_count"] == 7
     assert report["next_task"]["id"] == "baseline"
     assert report["next_task"]["priority"] == 0
+    assert report["capture_note_sidecar_command_count"] == 7
     assert first_task["capture_file"] == f"{base}-00-baseline.pcapng"
     assert first_task["capture_path"] == str(tmp_path / f"{base}-00-baseline.pcapng")
     assert first_task["capture_note_file"] == f"{base}-00-baseline.notes.json"
+    assert first_task["capture_note_status"] == "missing"
     assert first_task["capture_note_template"]["schema_version"] == "lianli-windows-capture-note/v1"
     assert first_task["capture_note_template"]["scenario_id"] == "baseline"
     assert first_task["capture_note_template"]["target_context"]["receiver_mac"] == ""
@@ -2981,6 +2983,13 @@ def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
     assert any("capture-gap-report" in command for command in report["post_batch_commands"])
     assert report["recommended_commands"][3] == f"capture next scenario: {base}-00-baseline.pcapng"
     assert "windows-capture-note baseline" in report["recommended_commands"][4]
+    assert [item["id"] for item in report["capture_note_sidecar_queue"][:3]] == [
+        "baseline",
+        "direct-fan-speed",
+        "motherboard-pwm-sync",
+    ]
+    assert "windows-capture-note direct-fan-speed" in report["capture_note_sidecar_commands"][1]
+    assert any("windows-capture-note direct-fan-speed" in command for command in report["recommended_commands"])
 
 
 def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
@@ -3061,6 +3070,10 @@ def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
         "capture_note": "Maps to official JS controller settings keys such as ALV2Controller- / SLV2Controller-.",
     }
     assert "--artifact-dir" in tasks["direct-fan-speed"]["capture_note_command"]
+    assert runbook["capture_note_sidecar_queue"][1]["id"] == "direct-fan-speed"
+    assert runbook["capture_note_sidecar_queue"][1]["interface_action_count"] == 1
+    assert "--artifact-dir" in runbook["capture_note_sidecar_queue"][1]["capture_note_command"]
+    assert runbook["capture_note_sidecar_queue"][2]["id"] == "sort-quick-sync"
     assert tasks["lighting-static-and-off"]["interface_focus"]["matched_hints"] == ["lighting-effect-settings"]
     assert "lighting effect settings" in tasks["lighting-static-and-off"]["interface_capture_actions"][0]["ui_actions"][0]
     assert tasks["rf-rebind"]["base_priority"] == 90

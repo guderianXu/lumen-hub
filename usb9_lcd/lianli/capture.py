@@ -1315,6 +1315,7 @@ def windows_capture_runbook(
         artifact_dir=artifact_dir,
     )
     next_task = next((task for task in tasks if task["capture_file"] == next_gap.get("capture_file")), {})
+    capture_note_sidecar_queue = _windows_capture_runbook_sidecar_queue(tasks)
     status = _capture_gap_status(capture_report, scenario_gaps, operation_gaps)
     return {
         "operation": "windows-capture-runbook",
@@ -1338,6 +1339,13 @@ def windows_capture_runbook(
         "operator_rules": _windows_capture_runbook_operator_rules(),
         "windows_setup": _windows_capture_runbook_setup(plan),
         "tasks": tasks,
+        "capture_note_sidecar_queue": capture_note_sidecar_queue,
+        "capture_note_sidecar_command_count": len(capture_note_sidecar_queue),
+        "capture_note_sidecar_commands": [
+            str(item.get("capture_note_command") or "")
+            for item in capture_note_sidecar_queue
+            if str(item.get("capture_note_command") or "")
+        ],
         "post_batch_commands": [
             _tool_command("capture-set-report", str(root), "--capture-base", base),
             _tool_command(
@@ -1363,6 +1371,7 @@ def windows_capture_runbook(
             base,
             version,
             next_task,
+            capture_note_sidecar_queue=capture_note_sidecar_queue,
             artifact_dir=artifact_dir,
         ),
         "capture_gap_summary": {
@@ -10663,6 +10672,17 @@ def _windows_capture_runbook_tasks(
                 "capture_path": str(capture_path),
                 "capture_note_file": _windows_capture_note_file(capture_file),
                 "capture_note_path": str(_windows_capture_note_path(root, capture_file)),
+                "capture_note_status": str(
+                    (report.get("capture_note") or {}).get("status")
+                    if isinstance(report.get("capture_note"), dict)
+                    else ""
+                )
+                or "missing",
+                "capture_note_operator_status": str(
+                    (report.get("capture_note") or {}).get("operator_status")
+                    if isinstance(report.get("capture_note"), dict)
+                    else ""
+                ),
                 "capture_note_template": _windows_capture_note_template(plan, scenario, capture_file),
                 "capture_note_command": _windows_capture_note_command(
                     root,
@@ -10688,6 +10708,47 @@ def _windows_capture_runbook_tasks(
     for priority_order, task in enumerate(priority_tasks, start=1):
         task["priority_order"] = priority_order
     return priority_tasks
+
+
+def _windows_capture_runbook_sidecar_queue(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    queue = []
+    for task in sorted(
+        tasks,
+        key=lambda item: (
+            int(item.get("priority_order") or 999),
+            str(item.get("capture_file") or ""),
+        ),
+    ):
+        if str(task.get("status") or "") == "evidence-found":
+            continue
+        command = str(task.get("capture_note_command") or "")
+        if not command:
+            continue
+        scenario_id = str(task.get("id") or "")
+        queue.append(
+            {
+                "priority_order": int(task.get("priority_order") or 999),
+                "id": scenario_id,
+                "status": str(task.get("status") or ""),
+                "risk": str(task.get("risk") or ""),
+                "phase": str(task.get("phase") or ""),
+                "capture_file": str(task.get("capture_file") or ""),
+                "capture_note_file": str(task.get("capture_note_file") or ""),
+                "capture_note_path": str(task.get("capture_note_path") or ""),
+                "capture_note_status": str(task.get("capture_note_status") or ""),
+                "capture_note_operator_status": str(task.get("capture_note_operator_status") or ""),
+                "capture_note_command": command,
+                "target_context_fields": list(_CAPTURE_NOTE_TARGET_CONTEXT_FIELDS),
+                "scenario_parameter_args": _windows_capture_note_parameter_command_args(scenario_id),
+                "missing_evidence": _ordered_strings_from_list(task.get("missing_evidence")),
+                "interface_action_count": len(
+                    task.get("interface_capture_actions")
+                    if isinstance(task.get("interface_capture_actions"), list)
+                    else []
+                ),
+            }
+        )
+    return queue
 
 
 def _windows_capture_runbook_acceptance_checks(
@@ -10761,6 +10822,7 @@ def _windows_capture_runbook_recommended_commands(
     version: str,
     next_task: dict[str, Any],
     *,
+    capture_note_sidecar_queue: list[dict[str, Any]] | None = None,
     artifact_dir: Path | None = None,
 ) -> list[str]:
     commands = [
@@ -10793,6 +10855,10 @@ def _windows_capture_runbook_recommended_commands(
         if note_command:
             commands.append(note_command)
         commands.extend(_ordered_strings_from_list(next_task.get("linux_analysis_commands")))
+    for item in (capture_note_sidecar_queue or [])[1:3]:
+        command = str(item.get("capture_note_command") or "")
+        if command:
+            commands.append(command)
     return _unique_preserve_order(commands)
 
 
