@@ -806,6 +806,53 @@ def test_probe_summarize_experiments_reports_receiver_validation_bundle(tmp_path
 
 
 def test_probe_summarize_experiments_recommends_one_safe_pwm_after_write_gate(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+
+    payload = _run_probe("summarize-experiments", str(tmp_path))
+    action = payload["receiver_control_next_action"]
+
+    assert payload["receiver_identity_consistency"]["status"] == "consistent"
+    assert action["status"] == "ready-for-single-target-safe-pwm"
+    assert action["can_run_safe_pwm"] is True
+    assert action["receiver_identity_status"] == "consistent"
+    assert action["candidate_count"] == 1
+    assert action["ready_candidate_count"] == 1
+    assert action["candidates"][0]["mac"] == "aa:bb:cc:dd:ee:ff"
+    assert action["candidates"][0]["status"] == "ready"
+    assert action["candidates"][0]["safe_pwm_argv"] == [
+        "safe-pwm-experiment",
+        "--mac",
+        "aa:bb:cc:dd:ee:ff",
+        "--pwm",
+        "120",
+        "--output-dir",
+        str(tmp_path / "experiments" / "safe-pwm-aa-bb-cc-dd-ee-ff"),
+        "--confirm",
+        "WRITE-LIANLI",
+    ]
+    assert action["recommended_commands"][0] == action["candidates"][0]["safe_pwm_command"]
+    assert action["recommended_commands"][1] == f"python tools/lianli_wireless_probe.py summarize-experiments {tmp_path}"
+
+
+def test_probe_summarize_experiments_blocks_safe_pwm_on_identity_conflict(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    readonly_live_list = tmp_path / "readonly" / "live-list.json"
+    payload = json.loads(readonly_live_list.read_text(encoding="utf-8"))
+    payload["devices"][0]["mac"] = "11:22:33:44:55:66"
+    readonly_live_list.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    summary = _run_probe("summarize-experiments", str(tmp_path))
+    action = summary["receiver_control_next_action"]
+
+    assert summary["receiver_identity_consistency"]["status"] == "conflict"
+    assert action["status"] == "receiver-identity-conflict"
+    assert action["can_run_safe_pwm"] is False
+    assert action["receiver_identity_status"] == "conflict"
+    assert not any("safe-pwm-experiment" in command for command in action["recommended_commands"])
+    assert "receiver-validation-bundle" in action["recommended_commands"][0]
+
+
+def test_probe_summarize_experiments_blocks_safe_pwm_on_incomplete_identity(tmp_path):
     (tmp_path / "receiver-validation-bundle.json").write_text(
         json.dumps(
             {
@@ -825,39 +872,18 @@ def test_probe_summarize_experiments_recommends_one_safe_pwm_after_write_gate(tm
         encoding="utf-8",
     )
     (tmp_path / "live-list.json").write_text(
-        json.dumps(
-            {
-                "operation": "live-list",
-                "device_count": 1,
-                "devices": [_device_payload()],
-            }
-        )
-        + "\n",
+        json.dumps({"operation": "live-list", "device_count": 1, "devices": [_device_payload()]}) + "\n",
         encoding="utf-8",
     )
 
-    payload = _run_probe("summarize-experiments", str(tmp_path))
-    action = payload["receiver_control_next_action"]
+    summary = _run_probe("summarize-experiments", str(tmp_path))
+    action = summary["receiver_control_next_action"]
 
-    assert action["status"] == "ready-for-single-target-safe-pwm"
-    assert action["can_run_safe_pwm"] is True
-    assert action["candidate_count"] == 1
-    assert action["ready_candidate_count"] == 1
-    assert action["candidates"][0]["mac"] == "aa:bb:cc:dd:ee:ff"
-    assert action["candidates"][0]["status"] == "ready"
-    assert action["candidates"][0]["safe_pwm_argv"] == [
-        "safe-pwm-experiment",
-        "--mac",
-        "aa:bb:cc:dd:ee:ff",
-        "--pwm",
-        "120",
-        "--output-dir",
-        str(tmp_path / "experiments" / "safe-pwm-aa-bb-cc-dd-ee-ff"),
-        "--confirm",
-        "WRITE-LIANLI",
-    ]
-    assert action["recommended_commands"][0] == action["candidates"][0]["safe_pwm_command"]
-    assert action["recommended_commands"][1] == f"python tools/lianli_wireless_probe.py summarize-experiments {tmp_path}"
+    assert summary["receiver_identity_consistency"]["status"] == "incomplete"
+    assert action["status"] == "needs-receiver-identity-validation"
+    assert action["can_run_safe_pwm"] is False
+    assert action["receiver_identity_status"] == "incomplete"
+    assert not any("safe-pwm-experiment" in command for command in action["recommended_commands"])
 
 
 def test_probe_receiver_evidence_report_audits_saved_bundle(tmp_path):

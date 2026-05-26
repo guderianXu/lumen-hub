@@ -13,8 +13,8 @@
 - `receiver-evidence-report` 会交叉检查 `live-list.json`、`readonly/live-list.json`、`live-master.json` 的 receiver MAC、Master MAC、channel、rx_type、device_type、fan_count，避免混用不同接收器或旧日志。
 - 已有 `receiver-observation`，用于把安全 PWM 后肉眼/听感确认的风扇变化保存成 `observation.json`。
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
-- `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令。
-- GUI 的“汇总实验”会显示同一个下一步结论，并在唯一候选 MAC 可用时自动填入目标 MAC。
+- `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令；如果 receiver 身份证据冲突或不完整，会先要求重新采集整包验证日志。
+- GUI 的“汇总实验”会显示同一个下一步结论，并且只在 `receiver_control_next_action` 真正允许安全 PWM 时自动填入唯一候选 MAC。
 - 已有抓包驱动的安全写入门禁：`linux-control-write-gate`。
 - GUI 联力页已接入写入门禁；真实主窗口默认要求 write-gate 通过后才解锁写入。
 - 目前仍没有真实 L-Wireless 接收器/风扇硬件验证结果，因此不能把 Linux 写入控制判定为完成。
@@ -33,7 +33,7 @@
 - [x] 新增 `receiver-observation`，用于把实际风扇变化记录进证据目录；`receiver-evidence-report` 会区分只收集机器日志和已经肉眼确认。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
-- [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并自动填入唯一可用 MAC。
+- [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并只在身份一致、写入门禁通过时自动填入唯一可用 MAC。
 
 ## 待完成
 

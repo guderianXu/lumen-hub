@@ -1383,7 +1383,11 @@ class LianLiWirelessPage(QWidget):
             for candidate in action.get("candidates", [])
             if isinstance(candidate, dict) and candidate.get("status") == "ready"
         ] if isinstance(action.get("candidates"), list) else []
-        if len(ready_candidates) == 1 and not self.lianli_mac_input.text().strip():
+        action_ready = (
+            str(action.get("status") or "") == "ready-for-single-target-safe-pwm"
+            and bool(action.get("can_run_safe_pwm"))
+        )
+        if action_ready and len(ready_candidates) == 1 and not self.lianli_mac_input.text().strip():
             mac = str(ready_candidates[0].get("mac") or "").strip()
             if mac:
                 self.lianli_mac_input.setText(mac)
@@ -1405,6 +1409,8 @@ class LianLiWirelessPage(QWidget):
             "needs-receiver-validation-bundle": "下一步：先运行 receiver-validation-bundle",
             "needs-live-list": "下一步：先刷新 live-list 接收器快照",
             "needs-write-gate": "下一步：写入门禁未通过，继续补抓包/packet compare",
+            "receiver-identity-conflict": "下一步：接收器身份日志互相矛盾，先重新采集 receiver-validation-bundle",
+            "needs-receiver-identity-validation": "下一步：接收器身份日志不完整，先重新采集 receiver-validation-bundle",
         }
         text = messages.get(status, f"下一步：{status}")
         if ready_macs:

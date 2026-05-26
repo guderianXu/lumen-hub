@@ -1644,6 +1644,20 @@ def test_lianli_wireless_page_surfaces_receiver_next_action(monkeypatch, tmp_pat
         ),
         encoding="utf-8",
     )
+    (tmp_path / "live-master.json").write_text(
+        json.dumps({"operation": "live-master", "detected": True, "master_mac": "10:20:30:40:50:60"}),
+        encoding="utf-8",
+    )
+    readonly_dir = tmp_path / "readonly"
+    readonly_dir.mkdir()
+    (readonly_dir / "live-list.json").write_text(
+        json.dumps({"operation": "live-list", "device_count": 1, "devices": [_lianli_device_payload()]}),
+        encoding="utf-8",
+    )
+    (readonly_dir / "live-master.json").write_text(
+        json.dumps({"operation": "live-master", "detected": True, "master_mac": "10:20:30:40:50:60"}),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         pages.QFileDialog,
         "getExistingDirectory",
@@ -1659,6 +1673,68 @@ def test_lianli_wireless_page_surfaces_receiver_next_action(monkeypatch, tmp_pat
     assert "写入门禁已通过" in page.lianli_next_action_label.text()
     assert "aa:bb:cc:dd:ee:ff" in page.lianli_next_action_label.text()
     assert page.lianli_mac_input.text() == "aa:bb:cc:dd:ee:ff"
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_summary_identity_conflict_blocks_auto_mac_fill(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui import pages
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    (tmp_path / "receiver-validation-bundle.json").write_text(
+        json.dumps(
+            {
+                "operation": "receiver-validation-bundle",
+                "output_dir": str(tmp_path),
+                "capture_dir": str(tmp_path / "captures"),
+                "experiment_dir": str(tmp_path / "experiments"),
+                "step_count": 7,
+                "ok_count": 7,
+                "error_count": 0,
+                "ready_for_guarded_write": True,
+                "write_gate_status": "write-enabled",
+                "steps": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "live-list.json").write_text(
+        json.dumps({"operation": "live-list", "device_count": 1, "devices": [_lianli_device_payload()]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "live-master.json").write_text(
+        json.dumps({"operation": "live-master", "detected": True, "master_mac": "10:20:30:40:50:60"}),
+        encoding="utf-8",
+    )
+    readonly_dir = tmp_path / "readonly"
+    readonly_dir.mkdir()
+    conflict_device = _lianli_device_payload()
+    conflict_device["mac"] = "11:22:33:44:55:66"
+    (readonly_dir / "live-list.json").write_text(
+        json.dumps({"operation": "live-list", "device_count": 1, "devices": [conflict_device]}),
+        encoding="utf-8",
+    )
+    (readonly_dir / "live-master.json").write_text(
+        json.dumps({"operation": "live-master", "detected": True, "master_mac": "10:20:30:40:50:60"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        pages.QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(tmp_path),
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: None)
+
+    page.summarize_lianli_experiments()
+
+    assert _process_events_until(app, lambda: "receiver-identity-conflict" in page.lianli_snapshot_text.toPlainText())
+    assert "身份日志互相矛盾" in page.lianli_next_action_label.text()
+    assert page.lianli_mac_input.text() == ""
 
     page.close()
     app.quit()

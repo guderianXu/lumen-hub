@@ -1057,7 +1057,10 @@ Risks:
   `receiver_control_next_action`, which turns the bundle plus `live-list`
   snapshot into an explicit decision: do not write, collect more evidence, or
   run exactly one conservative `safe-pwm-experiment` command for a bound
-  receiver MAC.
+  receiver MAC. That decision now also consumes `receiver_identity_consistency`;
+  if top-level/nested readonly receiver snapshots or Master queries conflict,
+  `summarize-experiments` reports `receiver-identity-conflict` and withholds the
+  safe PWM command until the validation bundle is recaptured.
   `receiver-evidence-report <hardware-log-dir>` audits that same directory as a
   shareable evidence package: it checks required post-plug JSON files, records
   file sizes and SHA256 hashes, mirrors the hardware validation state, and keeps

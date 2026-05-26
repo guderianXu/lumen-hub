@@ -1024,6 +1024,7 @@ def summarize_experiment_dir(path: Path) -> dict[str, Any]:
         validation_errors,
         receiver_validation_bundles=receiver_validation_bundles,
     )
+    identity_consistency = receiver_identity_consistency(path if path.is_dir() else path.parent)
     return {
         "operation": "summarize-experiments",
         "path": str(path),
@@ -1042,11 +1043,13 @@ def summarize_experiment_dir(path: Path) -> dict[str, Any]:
         "live_snapshot_devices": dict(sorted(live_snapshot_devices.items())),
         "live_snapshot_context": live_snapshot_context,
         "hardware_validation": hardware_validation,
+        "receiver_identity_consistency": identity_consistency,
         "receiver_control_next_action": receiver_control_next_action(
             path,
             hardware_validation,
             live_snapshot_devices,
             receiver_validation_bundles,
+            identity_consistency,
         ),
         "invalid_files": invalid_files,
         "live_logs": summaries,
@@ -1252,10 +1255,13 @@ def receiver_control_next_action(
     hardware_validation: dict[str, Any],
     live_snapshot_devices: dict[str, dict[str, Any]],
     receiver_validation_bundles: list[dict[str, Any]],
+    identity_consistency: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     candidates = receiver_safe_pwm_candidates(path, live_snapshot_devices)
     ready_candidates = [item for item in candidates if item["status"] == "ready"]
     hardware_status = str(hardware_validation.get("status") or "")
+    identity_consistency = identity_consistency or {}
+    identity_status = str(identity_consistency.get("status") or "")
     recommended_commands: list[str] = []
 
     if hardware_status == "errors":
@@ -1267,7 +1273,37 @@ def receiver_control_next_action(
         reason = "A guarded write experiment is already represented in this log directory."
         can_run_safe_pwm = False
     elif hardware_status == "readonly-and-write-gate-ready":
-        if ready_candidates:
+        if identity_status == "conflict":
+            status = "receiver-identity-conflict"
+            reason = "Readonly snapshots or master-query logs disagree; recapture the receiver bundle before any write."
+            can_run_safe_pwm = False
+            recommended_commands.append(
+                _tool_command(
+                    "--save-json",
+                    str(path / "receiver-validation-bundle.json"),
+                    "receiver-validation-bundle",
+                    "--output-dir",
+                    str(path),
+                    "--capture-dir",
+                    ".cache/lianli",
+                )
+            )
+        elif identity_status in {"missing", "incomplete"}:
+            status = "needs-receiver-identity-validation"
+            reason = "Write-gate passed, but receiver identity evidence is incomplete; rerun the validation bundle first."
+            can_run_safe_pwm = False
+            recommended_commands.append(
+                _tool_command(
+                    "--save-json",
+                    str(path / "receiver-validation-bundle.json"),
+                    "receiver-validation-bundle",
+                    "--output-dir",
+                    str(path),
+                    "--capture-dir",
+                    ".cache/lianli",
+                )
+            )
+        elif ready_candidates:
             status = "ready-for-single-target-safe-pwm"
             reason = "Write-gate passed and at least one bound receiver MAC is available from live-list."
             can_run_safe_pwm = True
@@ -1313,6 +1349,8 @@ def receiver_control_next_action(
         "candidate_count": len(candidates),
         "ready_candidate_count": len(ready_candidates),
         "hardware_status": hardware_status,
+        "receiver_identity_status": identity_status,
+        "receiver_identity_consistency": identity_consistency,
         "recommended_commands": recommended_commands,
         "candidates": candidates,
     }
