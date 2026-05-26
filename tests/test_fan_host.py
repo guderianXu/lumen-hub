@@ -149,7 +149,7 @@ def test_fan_host_control_rows_keep_identity_control_and_binding_separate():
         [],
     )
 
-    assert panel.findChildren(QFrame, "FanControlIdentityBlock")
+    assert panel.findChildren(QFrame, "FanControlRow")
     assert panel.findChildren(QFrame, "FanControlBindBlock")
     path_labels = panel.findChildren(QLabel, "FanControlPathLabel")
     assert [label.text() for label in path_labels] == ["PWM1/FAN1"]
