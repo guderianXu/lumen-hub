@@ -1406,9 +1406,13 @@ Risks:
   planned Windows USBPcap scenarios with the current `capture-set-report`
   audit, so each task carries its current status, priority, risk, capture path,
   exact Windows actions, expected evidence, acceptance checks, per-file Linux
-  analyzer commands, and a manual `tshark -T fields` export command. Use it
-  before a Windows VM capture session so the next missing file and its
-  post-capture verification commands are explicit.
+  analyzer commands, a manual `tshark -T fields` export command, and a
+  `lianli-windows-capture-note/v1` sidecar template. Use it before a Windows VM
+  capture session so the next missing file, its target context note, and its
+  post-capture verification commands are explicit. `capture-set-report` reads
+  `<capture-stem>.notes.json` sidecars back into each scenario and ignores them
+  as capture inputs, so target MAC, master MAC, channel, rx_type, device_type,
+  fan count, LED count, and operator observations remain machine-readable.
 - `python tools/lianli_wireless_probe.py lianli-validation-gate --capture-dir <capture-dir> --hardware-dir <hardware-log-dir> --artifact-dir <artifact-report-dir> --capture-base lianli-v2117`:
   added as the top-level no-write readiness report. It composes
   optional `artifact-evidence-matrix`, `capture-gap-report`, `receiver-evidence-report`, and

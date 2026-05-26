@@ -2847,6 +2847,10 @@ def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
     assert report["next_task"]["priority"] == 0
     assert first_task["capture_file"] == f"{base}-00-baseline.pcapng"
     assert first_task["capture_path"] == str(tmp_path / f"{base}-00-baseline.pcapng")
+    assert first_task["capture_note_file"] == f"{base}-00-baseline.notes.json"
+    assert first_task["capture_note_template"]["schema_version"] == "lianli-windows-capture-note/v1"
+    assert first_task["capture_note_template"]["scenario_id"] == "baseline"
+    assert first_task["capture_note_template"]["target_context"]["receiver_mac"] == ""
     assert first_task["windows_actions"][0] == "Start USBPcap capture."
     assert "receiver-list-request" in first_task["expected_evidence"]
     assert "0416:8040" in first_task["acceptance_checks"][1]
@@ -2854,6 +2858,57 @@ def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
     assert str(tmp_path / f"{base}-00-baseline.pcapng") in first_task["linux_analysis_commands"][0]
     assert any("capture-gap-report" in command for command in report["post_batch_commands"])
     assert report["recommended_commands"][3] == f"capture next scenario: {base}-00-baseline.pcapng"
+
+
+def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_capture(tmp_path):
+    base = "lianli-v2117"
+    note_path = tmp_path / f"{base}-01-direct-fan-speed.notes.json"
+    note_path.write_text(
+        json.dumps(
+            {
+                "operation": "windows-capture-note",
+                "schema_version": "lianli-windows-capture-note/v1",
+                "version": "2.1.17",
+                "capture_base": base,
+                "scenario_id": "direct-fan-speed",
+                "capture_file": f"{base}-01-direct-fan-speed.pcapng",
+                "captured_at": "2026-05-26T21:00:00+08:00",
+                "operator": "xjw",
+                "environment": "windows-vm-usb-passthrough",
+                "lconnect_version": "2.1.17",
+                "usbpcap_interfaces": ["0416:8040", "0416:8041"],
+                "target_context": {
+                    "receiver_mac": "aa:bb:cc:dd:ee:ff",
+                    "master_mac": "10:20:30:40:50:60",
+                    "channel": 8,
+                    "rx_type": 3,
+                    "device_type": 2,
+                    "fan_count": 3,
+                    "led_count": 132,
+                },
+                "windows_actions_completed": [{"action": "Applied 55% fan speed", "done": True}],
+                "observations": ["Fans audibly changed after apply."],
+                "expected_evidence": ["live-pwm RF frames"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = capture_set_report(tmp_path, capture_base=base)
+    scenarios = {scenario["id"]: scenario for scenario in report["scenarios"]}
+    note = scenarios["direct-fan-speed"]["capture_note"]
+
+    assert report["status_counts"] == {"missing-capture": 7}
+    assert report["capture_note_status_counts"] == {"missing": 6, "ok": 1}
+    assert report["capture_note_present_count"] == 1
+    assert scenarios["direct-fan-speed"]["found"] is False
+    assert scenarios["direct-fan-speed"]["status"] == "missing-capture"
+    assert note["status"] == "ok"
+    assert note["operator"] == "xjw"
+    assert note["target_context"]["receiver_mac"] == "aa:bb:cc:dd:ee:ff"
+    assert note["usbpcap_interfaces"] == ["0416:8040", "0416:8041"]
+    assert note["observations"] == ["Fans audibly changed after apply."]
 
 
 def test_capture_set_report_feeds_static_rgb_observed_parameters_to_packet_preview(tmp_path):

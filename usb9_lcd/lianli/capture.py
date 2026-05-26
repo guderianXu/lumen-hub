@@ -87,6 +87,7 @@ CAPTURE_SUMMARY_SUFFIXES = {
     ".txt",
     ".tsv",
 }
+CAPTURE_NOTE_SCHEMA_VERSION = "lianli-windows-capture-note/v1"
 TINYUZ_CTRL_LITERAL_LINE = 1
 TINYUZ_CTRL_CLIP_END = 2
 TINYUZ_CTRL_STREAM_END = 3
@@ -1082,6 +1083,17 @@ def capture_set_report(
     evidence_found_count = status_counts.get("evidence-found", 0)
     partial_count = status_counts.get("partial-evidence", 0)
     error_count = status_counts.get("analysis-error", 0)
+    note_status_counts = Counter(
+        str(
+            (
+                item.get("capture_note")
+                if isinstance(item.get("capture_note"), dict)
+                else {}
+            ).get("status")
+            or "missing"
+        )
+        for item in scenario_reports
+    )
     overall_status = _capture_set_overall_status(
         scenario_count=len(scenarios),
         found_count=found_count,
@@ -1112,6 +1124,12 @@ def capture_set_report(
         "partial_evidence_count": partial_count,
         "error_count": error_count,
         "status_counts": dict(sorted(status_counts.items())),
+        "capture_note_status_counts": dict(sorted(note_status_counts.items())),
+        "capture_note_present_count": sum(
+            count
+            for status, count in note_status_counts.items()
+            if status in {"ok", "mismatch"}
+        ),
         "sender_seen_count": sender_seen_count,
         "receiver_seen_count": receiver_seen_count,
         "aggregate_rf_operations": dict(sorted(aggregate_operations.items())),
@@ -5119,7 +5137,9 @@ def _capture_summary_files(path: Path) -> list[Path]:
     return sorted(
         candidate
         for candidate in path.rglob("*")
-        if candidate.is_file() and candidate.suffix.lower() in CAPTURE_SUMMARY_SUFFIXES
+        if candidate.is_file()
+        and candidate.suffix.lower() in CAPTURE_SUMMARY_SUFFIXES
+        and not _is_windows_capture_note_path(candidate)
     )
 
 
@@ -5202,10 +5222,12 @@ def _capture_set_scenario_report(
     scenario_id = str(scenario.get("id") or "")
     capture_file = str(scenario.get("capture_file") or "")
     match = _capture_set_find_scenario_file(root, capture_files, scenario_id, capture_file)
+    capture_note = _capture_set_scenario_note(root, capture_file, scenario_id)
     requirements = _capture_set_scenario_requirements(scenario_id)
     base_report: dict[str, Any] = {
         "id": scenario_id,
         "capture_file": capture_file,
+        "capture_note": capture_note,
         "goal": scenario.get("goal", ""),
         "expected_evidence": list(scenario.get("expected_evidence", []) if isinstance(scenario.get("expected_evidence"), list) else []),
         "windows_actions": list(scenario.get("windows_actions", []) if isinstance(scenario.get("windows_actions"), list) else []),
@@ -9633,6 +9655,9 @@ def _windows_capture_runbook_tasks(
                 "risk": str(meta.get("risk") or ""),
                 "capture_file": capture_file,
                 "capture_path": str(capture_path),
+                "capture_note_file": _windows_capture_note_file(capture_file),
+                "capture_note_path": str(_windows_capture_note_path(root, capture_file)),
+                "capture_note_template": _windows_capture_note_template(plan, scenario, capture_file),
                 "goal": str(scenario.get("goal") or report.get("goal") or ""),
                 "windows_actions": _ordered_strings_from_list(scenario.get("windows_actions")),
                 "expected_evidence": _ordered_strings_from_list(scenario.get("expected_evidence")),
@@ -9730,6 +9755,156 @@ def _windows_capture_runbook_recommended_commands(
         commands.append(f"capture next scenario: {next_task.get('capture_file')}")
         commands.extend(_ordered_strings_from_list(next_task.get("linux_analysis_commands")))
     return _unique_preserve_order(commands)
+
+
+def _windows_capture_note_file(capture_file: str) -> str:
+    return f"{Path(capture_file).stem}.notes.json" if capture_file else "capture.notes.json"
+
+
+def _windows_capture_note_path(root: Path, capture_file: str) -> Path:
+    base = root.parent if root.is_file() else root
+    return base / _windows_capture_note_file(capture_file)
+
+
+def _windows_capture_note_template(
+    plan: dict[str, Any],
+    scenario: dict[str, Any],
+    capture_file: str,
+) -> dict[str, Any]:
+    version = str(plan.get("version") or "")
+    return {
+        "operation": "windows-capture-note",
+        "schema_version": CAPTURE_NOTE_SCHEMA_VERSION,
+        "version": version,
+        "capture_base": _capture_set_base_from_capture_file(capture_file),
+        "scenario_id": str(scenario.get("id") or ""),
+        "capture_file": capture_file,
+        "captured_at": "",
+        "operator": "",
+        "environment": "windows-vm-usb-passthrough",
+        "lconnect_version": version,
+        "usbpcap_interfaces": ["0416:8040", "0416:8041"],
+        "target_context": {
+            "receiver_mac": "",
+            "master_mac": "",
+            "channel": "",
+            "rx_type": "",
+            "device_type": "",
+            "fan_count": "",
+            "led_count": "",
+        },
+        "windows_actions_completed": [
+            {"action": action, "done": False}
+            for action in _ordered_strings_from_list(scenario.get("windows_actions"))
+        ],
+        "observations": [],
+        "expected_evidence": _ordered_strings_from_list(scenario.get("expected_evidence")),
+    }
+
+
+def _capture_set_scenario_note(root: Path, capture_file: str, scenario_id: str) -> dict[str, Any]:
+    expected_path = _windows_capture_note_path(root, capture_file)
+    candidates = _windows_capture_note_candidates(root, capture_file)
+    note_path = next((path for path in candidates if path.exists()), None)
+    if note_path is None:
+        return {
+            "status": "missing",
+            "path": str(expected_path),
+            "expected_path": str(expected_path),
+            "schema_version": CAPTURE_NOTE_SCHEMA_VERSION,
+        }
+    try:
+        payload = json.loads(note_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return {
+            "status": "invalid",
+            "path": str(note_path),
+            "expected_path": str(expected_path),
+            "error": str(error),
+        }
+    if not isinstance(payload, dict):
+        return {
+            "status": "invalid",
+            "path": str(note_path),
+            "expected_path": str(expected_path),
+            "error": "capture note JSON must contain an object",
+        }
+    warnings = _capture_note_warnings(payload, scenario_id, capture_file)
+    return {
+        "status": "mismatch" if warnings else "ok",
+        "path": str(note_path),
+        "expected_path": str(expected_path),
+        "schema_version": str(payload.get("schema_version") or ""),
+        "scenario_id": str(payload.get("scenario_id") or ""),
+        "capture_file": str(payload.get("capture_file") or ""),
+        "captured_at": str(payload.get("captured_at") or ""),
+        "operator": str(payload.get("operator") or ""),
+        "environment": str(payload.get("environment") or ""),
+        "lconnect_version": str(payload.get("lconnect_version") or payload.get("version") or ""),
+        "target_context": _capture_note_mapping(payload.get("target_context")),
+        "usbpcap_interfaces": _ordered_strings_from_list(payload.get("usbpcap_interfaces")),
+        "windows_actions_completed": _capture_note_actions(payload.get("windows_actions_completed")),
+        "observations": _capture_note_observations(payload.get("observations")),
+        "warnings": warnings,
+    }
+
+
+def _windows_capture_note_candidates(root: Path, capture_file: str) -> list[Path]:
+    base = root.parent if root.is_file() else root
+    stem = Path(capture_file).stem if capture_file else root.stem
+    name = Path(capture_file).name if capture_file else root.name
+    candidates = [
+        base / f"{stem}.notes.json",
+        base / f"{stem}.note.json",
+        base / f"{name}.notes.json",
+    ]
+    return _unique_paths(candidates)
+
+
+def _is_windows_capture_note_path(path: Path) -> bool:
+    name = path.name.lower()
+    return name.endswith(".notes.json") or name.endswith(".note.json")
+
+
+def _capture_note_warnings(payload: dict[str, Any], scenario_id: str, capture_file: str) -> list[str]:
+    warnings = []
+    if str(payload.get("operation") or "") != "windows-capture-note":
+        warnings.append("operation is not windows-capture-note")
+    if str(payload.get("schema_version") or "") != CAPTURE_NOTE_SCHEMA_VERSION:
+        warnings.append("schema_version does not match lianli-windows-capture-note/v1")
+    if str(payload.get("scenario_id") or "") != scenario_id:
+        warnings.append("scenario_id does not match planned scenario")
+    if str(payload.get("capture_file") or "") != capture_file:
+        warnings.append("capture_file does not match planned capture file")
+    return warnings
+
+
+def _capture_note_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _capture_note_actions(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _capture_note_observations(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, (str, int, float, bool))]
+
+
+def _unique_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    result: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
 
 
 def _safe_file_size(path: Path) -> int | None:
