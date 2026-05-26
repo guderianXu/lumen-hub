@@ -1080,6 +1080,54 @@ def test_probe_summarize_experiments_recommends_safe_lighting_after_confirmed_pw
     assert "receiver-evidence-report" in action["recommended_commands"][1]
 
 
+def test_probe_summarize_experiments_reaches_pairing_review_after_confirmed_lighting(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    pwm_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    rgb_dir = _write_receiver_safe_rgb_evidence(tmp_path)
+    rainbow_dir = _write_receiver_safe_rainbow_evidence(tmp_path)
+    for output_dir, note in (
+        (pwm_dir, "fan speed visibly changed after guarded PWM write"),
+        (rgb_dir, "lighting visibly changed after guarded wireless lighting write"),
+        (rainbow_dir, "lighting visibly changed after guarded wireless lighting write"),
+    ):
+        args = [
+            "--save-json",
+            str(output_dir / "observation.json"),
+            "receiver-observation",
+            str(output_dir),
+            "--effect",
+            "changed",
+            "--target",
+            "aa:bb:cc:dd:ee:ff",
+            "--note",
+            note,
+        ]
+        if output_dir == pwm_dir:
+            args.extend(["--observed-pwm", "120"])
+        _run_probe(*args)
+
+    payload = _run_probe("summarize-experiments", str(tmp_path))
+    action = payload["receiver_control_next_action"]
+    expansion = action["safe_expansion_candidate"]
+
+    assert action["status"] == "ready-for-pairing-risk-review"
+    assert action["can_run_safe_pwm"] is False
+    assert action["can_run_safe_lighting"] is False
+    assert action["can_review_safe_pairing"] is True
+    assert action["confirmed_pwm_write_count"] == 1
+    assert action["confirmed_lighting_write_count"] == 2
+    assert expansion["safe_lighting_commands"] == []
+    assert expansion["status"] == "lighting-covered"
+    assert "live-rgb" in expansion["completed_operations"]
+    assert "live-rainbow" in expansion["completed_operations"]
+    assert "safe-unbind-experiment --mac aa:bb:cc:dd:ee:ff --channel 8" in (
+        expansion["deferred_pairing_commands"][0]
+    )
+    assert action["recommended_commands"] == [
+        f"python tools/lianli_wireless_probe.py receiver-evidence-report {tmp_path}"
+    ]
+
+
 def test_probe_summarize_experiments_blocks_safe_pwm_on_identity_conflict(tmp_path):
     _write_receiver_evidence_required_payloads(tmp_path)
     readonly_live_list = tmp_path / "readonly" / "live-list.json"

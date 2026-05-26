@@ -1102,6 +1102,11 @@ Risks:
   0,0,0`. The same payload exposes deferred bind/unbind commands under
   `safe_expansion_candidate.deferred_pairing_commands`, but they are kept out of
   the primary recommendation because pairing changes receiver ownership state.
+  Once both static RGB and generated rainbow writes are visually confirmed, the
+  next-action status becomes `ready-for-pairing-risk-review`; the primary
+  recommendation remains regenerating `receiver-evidence-report`, while the
+  state-changing bind/unbind command stays in the deferred pairing list for
+  explicit operator review.
   Negative, malformed, or ambiguous observations now produce explicit
   conflict/invalid/unclear statuses instead of being treated as merely missing
   observation. Confirmed observations also have to match the `live-pwm.json`

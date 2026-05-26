@@ -1404,6 +1404,7 @@ class LianLiWirelessPage(QWidget):
         messages = {
             "ready-for-single-target-safe-pwm": "下一步：写入门禁已通过，可对一个已绑定 MAC 运行安全 PWM",
             "ready-for-safe-lighting-validation": "下一步：PWM 已确认，可一次运行一个安全灯光实验",
+            "ready-for-pairing-risk-review": "下一步：PWM 和灯光已确认，配对/解绑只进入风险复核",
             "write-validation-needs-observation": "下一步：已有写入机器日志，先补观察记录",
             "write-validation-conflict": "下一步：写入证据存在冲突，先复盘 receiver-evidence-report",
             "write-validation-incomplete": "下一步：写入证据不完整，先补齐 before/write/after/analysis",

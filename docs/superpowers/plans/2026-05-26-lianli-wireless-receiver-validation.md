@@ -15,7 +15,7 @@
 - 已有 `receiver-observation`，用于把安全 PWM 后肉眼/听感确认的风扇变化，或 RGB/绑定实验后的实际变化，保存成 `observation.json`。
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
 - `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令；如果 receiver 身份证据冲突或不完整，会先要求重新采集整包验证日志。
-- `receiver_control_next_action` 会在安全 PWM 机器日志完整但缺少观察时要求先补 `receiver-observation`；只有 PWM 已经视觉/听感确认后，才会推荐下一步安全 RGB / rainbow 灯光实验。
+- `receiver_control_next_action` 会在安全 PWM 机器日志完整但缺少观察时要求先补 `receiver-observation`；只有 PWM 已经视觉/听感确认后，才会推荐下一步安全 RGB / rainbow 灯光实验。PWM 和两类灯光都确认后，状态会进入 bind/unbind 风险复核，而不会把配对命令作为首选推荐。
 - GUI 的“汇总实验”会显示同一个下一步结论，并且只在 `receiver_control_next_action` 真正允许安全 PWM 时自动填入唯一候选 MAC。
 - 已有抓包驱动的安全写入门禁：`linux-control-write-gate`。
 - GUI 联力页已接入写入门禁；真实主窗口默认要求 write-gate 通过后才解锁写入。
@@ -37,7 +37,7 @@
 - [x] 新增 `receiver-observation`，用于把实际风扇变化记录进证据目录；`receiver-evidence-report` 会区分只收集机器日志和已经肉眼确认。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
-- [x] `receiver_control_next_action` 会在已确认 PWM 后给出下一阶段安全灯光实验建议，并把 bind/unbind 保留为延后验证命令。
+- [x] `receiver_control_next_action` 会在已确认 PWM 后给出下一阶段安全灯光实验建议；RGB 和 rainbow 都确认后进入 `ready-for-pairing-risk-review`，并把 bind/unbind 保留为延后验证命令。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并只在身份一致、写入门禁通过时自动填入唯一可用 MAC。
 
 ## 待完成
@@ -196,8 +196,11 @@ python tools/lianli_wireless_probe.py summarize-experiments .cache/lianli/hardwa
 `ready-for-safe-lighting-validation`，只复制
 `receiver_control_next_action.recommended_commands[0]` 运行一个灯光实验。
 该命令会优先使用 `safe-rgb-experiment --color 0,0,0`；完成后仍然先记录
-对应 `observation.json`，再考虑 rainbow。`safe_expansion_candidate` 里也会列出
-`deferred_pairing_commands`，但 bind/unbind 会改变接收器绑定状态，必须等 PWM 和灯光证据都归档后再单独评估。
+对应 `observation.json`，再考虑 rainbow。RGB 和 rainbow 都确认后，
+`receiver_control_next_action.status` 会变为 `ready-for-pairing-risk-review`。
+此时首选推荐仍然是重新生成 `receiver-evidence-report`；`safe_expansion_candidate`
+里会列出 `deferred_pairing_commands`，但 bind/unbind 会改变接收器绑定状态，
+必须等 PWM 和灯光证据都归档后再单独评估，不能作为普通下一步自动执行。
 
 ## 还没有做
 
@@ -215,6 +218,7 @@ python tools/lianli_wireless_probe.py summarize-experiments .cache/lianli/hardwa
 - 不要跳过 write-gate 直接运行 `live-pwm`、`live-rgb`、`live-bind`、`live-unbind`。
 - 不要对多个 MAC 同时写入。
 - 不要在不确定 receiver 是否绑定的情况下做 bind/unbind。
+- 不要在 `ready-for-pairing-risk-review` 前做 bind/unbind；即使进入该状态，也要先归档 PWM、RGB、rainbow 的 evidence report。
 - 不要把静态 JS 里的 wired-controller HID 命令当作 L-Wireless RF 协议。
 - 不要把 GUI 显示的“可点击”当作协议已验证；最终证据必须来自实机读写日志和官方抓包对比。
 

@@ -1547,9 +1547,16 @@ def receiver_control_next_action(
         if str(item.get("control_proof_status") or "") == "visually-confirmed"
         and str(item.get("write_operation") or "") in RECEIVER_PWM_WRITE_OPERATIONS
     ]
+    confirmed_lighting_sets = [
+        item
+        for item in write_sets
+        if str(item.get("control_proof_status") or "") == "visually-confirmed"
+        and str(item.get("write_operation") or "") in RECEIVER_LIGHTING_WRITE_OPERATIONS
+    ]
     expansion_candidate: dict[str, Any] = {}
     recommended_commands: list[str] = []
     can_run_safe_lighting = False
+    can_review_safe_pairing = False
 
     if hardware_status == "errors":
         status = "validation-errors"
@@ -1614,8 +1621,18 @@ def receiver_control_next_action(
             recommended_commands.append(lighting_commands[0])
             recommended_commands.append(_tool_command("receiver-evidence-report", str(path)))
         else:
-            status = "write-validation-already-observed"
-            reason = "Confirmed PWM evidence is present and no unrun safe lighting validation command remains in this directory."
+            pairing_commands = _string_list(expansion_candidate.get("deferred_pairing_commands"))
+            completed_lighting_operations = {
+                str(item.get("write_operation") or "")
+                for item in confirmed_lighting_sets
+            }
+            if pairing_commands and RECEIVER_LIGHTING_WRITE_OPERATIONS.issubset(completed_lighting_operations):
+                status = "ready-for-pairing-risk-review"
+                reason = "PWM and lighting writes have been visually confirmed; bind/unbind remains a state-changing risk-review step."
+                can_review_safe_pairing = True
+            else:
+                status = "write-validation-already-observed"
+                reason = "Confirmed PWM evidence is present and no unrun safe lighting validation command remains in this directory."
             can_run_safe_pwm = False
             recommended_commands.append(_tool_command("receiver-evidence-report", str(path)))
     elif hardware_status == "readonly-and-write-observed":
@@ -1697,6 +1714,7 @@ def receiver_control_next_action(
         "reason": reason,
         "can_run_safe_pwm": can_run_safe_pwm,
         "can_run_safe_lighting": can_run_safe_lighting,
+        "can_review_safe_pairing": can_review_safe_pairing,
         "candidate_count": len(candidates),
         "ready_candidate_count": len(ready_candidates),
         "write_evidence_set_count": len(write_sets),
@@ -1704,6 +1722,7 @@ def receiver_control_next_action(
         "write_evidence_incomplete_count": len(write_incomplete_sets),
         "write_evidence_pending_observation_count": len(pending_observation_sets),
         "confirmed_pwm_write_count": len(confirmed_pwm_sets),
+        "confirmed_lighting_write_count": len(confirmed_lighting_sets),
         "hardware_status": hardware_status,
         "receiver_identity_status": identity_status,
         "receiver_identity_consistency": identity_consistency,
