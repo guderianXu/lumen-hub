@@ -1401,6 +1401,14 @@ Risks:
   With no captures it prioritizes `lianli-v2117-00-baseline.pcapng`; with
   baseline/direct PWM already present it moves on to motherboard PWM sync before
   lighting, sort/quick-sync, and RF rebind.
+- `python tools/lianli_wireless_probe.py windows-capture-runbook <capture-dir> --capture-base lianli-v2117`:
+  added as the operator-facing version of the capture plan. It combines the
+  planned Windows USBPcap scenarios with the current `capture-set-report`
+  audit, so each task carries its current status, priority, risk, capture path,
+  exact Windows actions, expected evidence, acceptance checks, per-file Linux
+  analyzer commands, and a manual `tshark -T fields` export command. Use it
+  before a Windows VM capture session so the next missing file and its
+  post-capture verification commands are explicit.
 - `python tools/lianli_wireless_probe.py lianli-validation-gate --capture-dir <capture-dir> --hardware-dir <hardware-log-dir> --artifact-dir <artifact-report-dir> --capture-base lianli-v2117`:
   added as the top-level no-write readiness report. It composes
   optional `artifact-evidence-matrix`, `capture-gap-report`, `receiver-evidence-report`, and

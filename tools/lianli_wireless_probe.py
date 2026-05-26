@@ -47,6 +47,7 @@ from usb9_lcd.lianli.capture import (
     protocol_signature_catalog,
     summarize_capture_dir,
     usb_capture_readiness,
+    windows_capture_runbook,
     windows_capture_plan,
 )
 from usb9_lcd.lianli.changelog import DEFAULT_CHANGELOG_URL, analyze_lconnect_changelog
@@ -601,6 +602,29 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Environment being considered; VM USB passthrough remains the protocol-capture recommendation",
     )
+    windows_runbook = subparsers.add_parser(
+        "windows-capture-runbook",
+        help="Build an operator runbook that combines the capture plan with current capture gaps",
+    )
+    windows_runbook.add_argument("path", type=Path, nargs="?", default=Path(".cache/lianli/captures"))
+    windows_runbook.add_argument("--version", default="2.1.17", help="L-Connect version under test")
+    windows_runbook.add_argument("--installer", type=Path, help="Optional local L-Connect installer path")
+    windows_runbook.add_argument("--capture-base", help="Output capture filename prefix")
+    windows_runbook.add_argument(
+        "--environment",
+        choices=("auto", "vm", "wine", "docker"),
+        default="auto",
+        help="Environment being considered; VM USB passthrough remains the protocol-capture recommendation",
+    )
+    windows_runbook.add_argument(
+        "--experiment-dir",
+        type=Path,
+        help="Attach summarize-experiments output from a Linux validation/experiment directory",
+    )
+    windows_runbook.add_argument("--led-count", type=int, default=12)
+    windows_runbook.add_argument("--rainbow-frames", type=int, default=3)
+    windows_runbook.add_argument("--interval-ms", type=int, default=40)
+    windows_runbook.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
 
     usb_readiness = subparsers.add_parser(
         "usb-capture-readiness",
@@ -1909,6 +1933,19 @@ def main(argv: list[str] | None = None) -> int:
         payload = extract_wireless_js_clues(args.path, max_file_size=args.max_file_size)
     elif command == "analyze-changelog":
         payload = analyze_lconnect_changelog(args.source, top=args.top)
+    elif command == "windows-capture-runbook":
+        payload = windows_capture_runbook(
+            args.path,
+            version=args.version,
+            installer=args.installer,
+            capture_base=args.capture_base,
+            environment=args.environment,
+            experiment_dir=args.experiment_dir,
+            led_count=args.led_count,
+            rainbow_frames=args.rainbow_frames,
+            interval_ms=args.interval_ms,
+            effect_index=args.effect_index,
+        )
     elif command == "analyze-capture":
         payload = analyze_capture_file(args.path)
     elif command == "capture-replay-plan":

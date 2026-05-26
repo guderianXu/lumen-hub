@@ -1197,6 +1197,76 @@ def capture_gap_report(
     }
 
 
+def windows_capture_runbook(
+    path: Path,
+    *,
+    version: str = "2.1.17",
+    installer: Path | None = None,
+    capture_base: str | None = None,
+    environment: str = "auto",
+    experiment_dir: Path | None = None,
+    led_count: int = 12,
+    rainbow_frames: int = 3,
+    interval_ms: int = 40,
+    effect_index: int = 1,
+) -> dict[str, Any]:
+    root = path.expanduser()
+    base = capture_base or f"l-connect-v{version}"
+    plan = windows_capture_plan(
+        version=version,
+        installer=installer,
+        capture_base=base,
+        environment=environment,
+    )
+    capture_report = capture_set_report(
+        root,
+        version=version,
+        capture_base=base,
+        experiment_dir=experiment_dir,
+        led_count=led_count,
+        rainbow_frames=rainbow_frames,
+        interval_ms=interval_ms,
+        effect_index=effect_index,
+    )
+    scenarios = capture_report.get("scenarios")
+    matrix = capture_report.get("linux_control_matrix")
+    scenario_reports = scenarios if isinstance(scenarios, list) else []
+    scenario_gaps = _capture_gap_scenario_items(scenario_reports)
+    operation_gaps = _capture_gap_operation_items(matrix if isinstance(matrix, list) else [])
+    next_gap = scenario_gaps[0] if scenario_gaps else {}
+    tasks = _windows_capture_runbook_tasks(root, plan, scenario_reports)
+    next_task = next((task for task in tasks if task["capture_file"] == next_gap.get("capture_file")), {})
+    status = _capture_gap_status(capture_report, scenario_gaps, operation_gaps)
+    return {
+        "operation": "windows-capture-runbook",
+        "version": version,
+        "capture_base": base,
+        "capture_dir": str(root),
+        "status": status,
+        "source_capture_set_status": str(capture_report.get("status") or ""),
+        "scenario_count": len(tasks),
+        "complete_task_count": sum(1 for task in tasks if task["status"] == "evidence-found"),
+        "missing_task_count": sum(1 for task in tasks if task["status"] == "missing-capture"),
+        "partial_task_count": sum(1 for task in tasks if task["status"] == "partial-evidence"),
+        "next_task": next_task,
+        "operator_rules": _windows_capture_runbook_operator_rules(),
+        "windows_setup": _windows_capture_runbook_setup(plan),
+        "tasks": tasks,
+        "post_batch_commands": [
+            _tool_command("capture-set-report", str(root), "--capture-base", base),
+            _tool_command("capture-gap-report", str(root), "--capture-base", base),
+            _tool_command("lianli-validation-gate", "--capture-dir", str(root), "--hardware-dir", ".cache/lianli/hardware", "--capture-base", base),
+        ],
+        "recommended_commands": _windows_capture_runbook_recommended_commands(root, base, version, next_task),
+        "capture_gap_summary": {
+            "scenario_gap_count": len(scenario_gaps),
+            "operation_gap_count": len(operation_gaps),
+            "next_capture": next_gap,
+            "proof_gates": _capture_gap_proof_gates(capture_report, scenario_gaps, operation_gaps),
+        },
+    }
+
+
 def linux_interface_contract_report(
     path: Path,
     *,
@@ -9529,6 +9599,136 @@ def _capture_gap_recommended_commands(
         commands.extend(_ordered_strings_from_list(gap.get("recommended_commands")))
     for gap in operation_gaps[:2]:
         commands.extend(_ordered_strings_from_list(gap.get("recommended_commands")))
+    return _unique_preserve_order(commands)
+
+
+def _windows_capture_runbook_tasks(
+    root: Path,
+    plan: dict[str, Any],
+    scenario_reports: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    report_by_id = {
+        str(report.get("id") or ""): report
+        for report in scenario_reports
+        if isinstance(report, dict)
+    }
+    tasks = []
+    for order, scenario in enumerate(plan.get("scenarios", []) if isinstance(plan.get("scenarios"), list) else [], start=1):
+        if not isinstance(scenario, dict):
+            continue
+        scenario_id = str(scenario.get("id") or "")
+        report = report_by_id.get(scenario_id, {})
+        capture_file = str(scenario.get("capture_file") or report.get("capture_file") or "")
+        capture_path = root / capture_file if capture_file else root
+        meta = _capture_gap_scenario_meta(scenario_id)
+        priority = meta.get("priority")
+        linux_commands = _ordered_strings_from_list(scenario.get("linux_commands"))
+        tasks.append(
+            {
+                "order": order,
+                "id": scenario_id,
+                "status": str(report.get("status") or "missing-capture"),
+                "priority": int(priority if priority is not None else 100),
+                "phase": str(meta.get("phase") or ""),
+                "risk": str(meta.get("risk") or ""),
+                "capture_file": capture_file,
+                "capture_path": str(capture_path),
+                "goal": str(scenario.get("goal") or report.get("goal") or ""),
+                "windows_actions": _ordered_strings_from_list(scenario.get("windows_actions")),
+                "expected_evidence": _ordered_strings_from_list(scenario.get("expected_evidence")),
+                "matched_evidence": _ordered_strings_from_list(report.get("matched_evidence")),
+                "missing_evidence": _ordered_strings_from_list(report.get("missing_evidence")),
+                "acceptance_checks": _windows_capture_runbook_acceptance_checks(scenario, report),
+                "linux_analysis_commands": [
+                    _runbook_qualify_capture_command(command, capture_file, capture_path)
+                    for command in linux_commands
+                ],
+                "manual_tshark_export_command": _windows_capture_runbook_tshark_command(capture_path),
+                "notes": _windows_capture_runbook_task_notes(report),
+            }
+        )
+    return tasks
+
+
+def _windows_capture_runbook_acceptance_checks(
+    scenario: dict[str, Any],
+    report: dict[str, Any],
+) -> list[str]:
+    checks = [
+        "One scenario per pcapng file; do not mix unrelated L-Connect actions in the same capture.",
+        "USBPcap/Wireshark must include the L-Wireless RF sender 0416:8040 and receiver 0416:8041 when present.",
+    ]
+    for item in _ordered_strings_from_list(scenario.get("expected_evidence")):
+        checks.append(f"Analyzer should find: {item}.")
+    missing = _ordered_strings_from_list(report.get("missing_evidence"))
+    if missing:
+        checks.append("Current audit still misses: " + ", ".join(missing) + ".")
+    return checks
+
+
+def _windows_capture_runbook_tshark_command(capture_path: Path) -> str:
+    output = capture_path.with_suffix("")
+    return (
+        f"tshark -r {shlex.quote(str(capture_path))} -T fields -E separator=\\t "
+        f"-E occurrence=a -e frame.number -e usb.idVendor -e usb.idProduct "
+        f"-e usb.endpoint_address -e usb.capdata -e usbhid.data -e data.data "
+        f"> {shlex.quote(str(output) + '-hex.tsv')}"
+    )
+
+
+def _windows_capture_runbook_task_notes(report: dict[str, Any]) -> list[str]:
+    notes = []
+    status = str(report.get("status") or "")
+    if status == "evidence-found":
+        notes.append("This scenario already has enough evidence for the current analyzer.")
+    elif status == "partial-evidence":
+        notes.append("Recapture or inspect this scenario; the file exists but not all expected evidence was found.")
+    elif status == "missing-capture":
+        notes.append("No capture file was found for this scenario in the audited directory.")
+    error = str(report.get("error") or "")
+    if error:
+        notes.append(error)
+    return notes
+
+
+def _runbook_qualify_capture_command(command: str, capture_file: str, capture_path: Path) -> str:
+    if not capture_file:
+        return command
+    return command.replace(capture_file, str(capture_path))
+
+
+def _windows_capture_runbook_operator_rules() -> list[str]:
+    return [
+        "Use a Windows VM with USB passthrough plus Wireshark/USBPcap for protocol proof.",
+        "Start capture before the L-Connect action and stop immediately after the action settles.",
+        "Keep baseline, direct PWM, motherboard sync, lighting, and RF bind/unbind in separate files.",
+        "Record the target receiver MAC, master MAC, channel, rx_type, device_type, fan count, LED count, and exact UI action beside each file.",
+        "Treat bind/unbind as the last capture because it changes receiver pairing state.",
+    ]
+
+
+def _windows_capture_runbook_setup(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    setup = []
+    for item in plan.get("host_setup", []) if isinstance(plan.get("host_setup"), list) else []:
+        if isinstance(item, dict) and str(item.get("target") or "") in {"windows-vm", "linux-host-after-capture"}:
+            setup.append(item)
+    return setup
+
+
+def _windows_capture_runbook_recommended_commands(
+    root: Path,
+    base: str,
+    version: str,
+    next_task: dict[str, Any],
+) -> list[str]:
+    commands = [
+        _tool_command("windows-capture-plan", "--version", version, "--capture-base", base),
+        _tool_command("windows-capture-runbook", str(root), "--capture-base", base),
+        _tool_command("capture-gap-report", str(root), "--capture-base", base),
+    ]
+    if next_task:
+        commands.append(f"capture next scenario: {next_task.get('capture_file')}")
+        commands.extend(_ordered_strings_from_list(next_task.get("linux_analysis_commands")))
     return _unique_preserve_order(commands)
 
 

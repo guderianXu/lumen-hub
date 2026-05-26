@@ -18,6 +18,7 @@
 - `receiver_control_next_action` 会在安全 PWM 机器日志完整但缺少观察时要求先补 `receiver-observation`；只有 PWM 已经视觉/听感确认后，才会推荐下一步安全 RGB / rainbow 灯光实验。PWM 和两类灯光都确认后，状态会进入 bind/unbind 风险复核，而不会把配对命令作为首选推荐。
 - 已有 `receiver-pairing-risk-report`，用于在不写入 USB 的情况下审计 bind/unbind 前置证据、阻塞项、延后命令和人工复核状态。
 - 已有 `capture-gap-report`，用于把 Windows USBPcap 抓包目录压缩成“下一份该抓什么”的缺口报告，避免直接从完整 `capture-set-report` 里人工筛选。
+- 已有 `windows-capture-runbook`，用于把当前抓包缺口转换成 Windows VM 操作清单、验收条件、tshark 导出命令和 Linux 后处理命令。
 - 已有 `lianli-validation-gate`，用于把官方静态报告、Windows 抓包缺口、接收器实机证据和 bind/unbind 风险复核汇总成一个只读 gate。
 - GUI 的“汇总实验”会显示同一个下一步结论，并且只在 `receiver_control_next_action` 真正允许安全 PWM 时自动填入唯一候选 MAC。
 - 已有抓包驱动的安全写入门禁：`linux-control-write-gate`。
@@ -43,6 +44,7 @@
 - [x] `receiver_control_next_action` 会在已确认 PWM 后给出下一阶段安全灯光实验建议；RGB 和 rainbow 都确认后进入 `ready-for-pairing-risk-review`，并把 bind/unbind 保留为延后验证命令。
 - [x] 新增 `receiver-pairing-risk-report`，用于在执行任何 bind/unbind 前输出可分享的风险复核 JSON。
 - [x] 新增 `capture-gap-report`，用于把缺失/部分 Windows USBPcap 场景按 baseline、PWM、灯光、sort/quick-sync、RF rebind 顺序排序，并给出下一份 pcap 的后处理命令。
+- [x] 新增 `windows-capture-runbook`，用于在 Windows VM 抓包前输出逐场景任务、当前状态、风险、验收条件、导出命令和分析命令。
 - [x] 新增 `lianli-validation-gate`，用于把可选 `artifact-evidence-matrix`、`capture-gap-report`、`receiver-evidence-report` 和 `receiver-pairing-risk-report` 合并成一个 readiness JSON，优先暴露 blocker、warning 和下一步命令。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并只在身份一致、写入门禁通过时自动填入唯一可用 MAC。
 
@@ -145,6 +147,11 @@ python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/write-g
 ```bash
 python tools/lianli_wireless_probe.py windows-capture-plan \
   --version 2.1.17 \
+  --capture-base lianli-v2117
+
+python tools/lianli_wireless_probe.py \
+  --save-json .cache/lianli/windows-capture-runbook.json \
+  windows-capture-runbook .cache/lianli/captures \
   --capture-base lianli-v2117
 
 python tools/lianli_wireless_probe.py \

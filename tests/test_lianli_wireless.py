@@ -69,6 +69,7 @@ from usb9_lcd.lianli.capture import (
     protocol_signature_catalog,
     summarize_capture_dir,
     usb_capture_readiness,
+    windows_capture_runbook,
     windows_capture_plan,
 )
 import usb9_lcd.lianli.capture as capture_module
@@ -2831,6 +2832,28 @@ def test_capture_gap_report_prioritizes_baseline_when_no_captures_exist(tmp_path
         command == f"capture next scenario: {base}-00-baseline.pcapng"
         for command in report["recommended_commands"]
     )
+
+
+def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
+    base = "lianli-v2117"
+    report = windows_capture_runbook(tmp_path, capture_base=base)
+    first_task = report["tasks"][0]
+
+    assert report["operation"] == "windows-capture-runbook"
+    assert report["status"] == "needs-all-windows-captures"
+    assert report["scenario_count"] == 7
+    assert report["missing_task_count"] == 7
+    assert report["next_task"]["id"] == "baseline"
+    assert report["next_task"]["priority"] == 0
+    assert first_task["capture_file"] == f"{base}-00-baseline.pcapng"
+    assert first_task["capture_path"] == str(tmp_path / f"{base}-00-baseline.pcapng")
+    assert first_task["windows_actions"][0] == "Start USBPcap capture."
+    assert "receiver-list-request" in first_task["expected_evidence"]
+    assert "0416:8040" in first_task["acceptance_checks"][1]
+    assert "tshark -r" in first_task["manual_tshark_export_command"]
+    assert str(tmp_path / f"{base}-00-baseline.pcapng") in first_task["linux_analysis_commands"][0]
+    assert any("capture-gap-report" in command for command in report["post_batch_commands"])
+    assert report["recommended_commands"][3] == f"capture next scenario: {base}-00-baseline.pcapng"
 
 
 def test_capture_set_report_feeds_static_rgb_observed_parameters_to_packet_preview(tmp_path):

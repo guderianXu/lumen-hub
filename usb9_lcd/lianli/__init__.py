@@ -32,6 +32,7 @@ from usb9_lcd.lianli.capture import (
     protocol_signature_catalog,
     summarize_capture_dir,
     usb_capture_readiness,
+    windows_capture_runbook,
 )
 from usb9_lcd.lianli.changelog import (
     DEFAULT_CHANGELOG_URL,
@@ -127,6 +128,7 @@ __all__ = [
     "lianli_validation_gate",
     "summarize_capture_dir",
     "usb_capture_readiness",
+    "windows_capture_runbook",
     "protocol_signature_catalog",
     "build_bind_payload",
     "build_master_query_request",

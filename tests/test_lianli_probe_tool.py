@@ -3239,6 +3239,12 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
         command == f"capture next scenario: {base}-00-baseline.pcapng"
         for command in gap_payload["recommended_commands"]
     )
+    runbook_payload = _run_probe("windows-capture-runbook", str(tmp_path), "--capture-base", base)
+    assert runbook_payload["operation"] == "windows-capture-runbook"
+    assert runbook_payload["status"] == "needs-baseline-capture"
+    assert runbook_payload["next_task"]["id"] == "baseline"
+    assert runbook_payload["tasks"][0]["capture_path"] == str(tmp_path / f"{base}-00-baseline.pcapng")
+    assert runbook_payload["tasks"][0]["manual_tshark_export_command"].startswith("tshark -r ")
     contract = payload["linux_interface_contract"]
     assert contract["transport"]["sender"]["confidence"] == "high"
     assert contract["transport"]["sender"]["write_endpoint"] == "0x01"
