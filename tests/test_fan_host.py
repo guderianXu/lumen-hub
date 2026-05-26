@@ -79,6 +79,7 @@ def test_fan_host_layout_separates_dense_sections():
         "仪表盘",
         "曲线",
         "调速",
+        "绑定",
         "策略",
         "标定",
         "权限",
@@ -86,6 +87,7 @@ def test_fan_host_layout_separates_dense_sections():
         "历史",
     ]
     assert page.charts_tab.parentWidget() is not None
+    assert page.binding_tab.parentWidget() is not None
     assert page.channel_detail_tabs.count() == 3
     assert [page.channel_detail_tabs.tabText(index) for index in range(page.channel_detail_tabs.count())] == [
         "标定",
@@ -118,9 +120,9 @@ def test_fan_host_layout_separates_dense_sections():
     app.quit()
 
 
-def test_fan_host_control_rows_keep_identity_control_and_binding_separate():
+def test_fan_host_control_rows_keep_identity_and_pwm_output_separate():
     from PySide6.QtCore import Signal
-    from PySide6.QtWidgets import QApplication, QFrame, QLabel, QVBoxLayout
+    from PySide6.QtWidgets import QApplication, QFrame, QLabel, QTabWidget, QVBoxLayout, QWidget
 
     from usb9_lcd.gui.fan_host import DisplayFanChannel, EmbeddedFanControlPanel
 
@@ -155,21 +157,52 @@ def test_fan_host_control_rows_keep_identity_control_and_binding_separate():
         [],
     )
 
-    assert [panel._mode_tabs.tabText(index) for index in range(panel._mode_tabs.count())] == [
-        "手动调速",
-        "温度绑定",
-    ]
+    assert panel.findChildren(QTabWidget, "FanControlModeTabs") == []
     assert panel.findChildren(QFrame, "FanControlRow")
     assert panel.findChildren(QFrame, "FanControlToolbar")
-    assert not panel.findChildren(QFrame, "FanControlIdentityBlock")
-    assert not panel.findChildren(QFrame, "FanControlSliderBlock")
+    assert panel.findChildren(QWidget, "FanControlIdentityPane")
+    assert panel.findChildren(QWidget, "FanControlWritePane")
     assert panel.findChildren(QFrame, "FanControlRow")[0].findChildren(QLabel, "FanControlChannelTitle")
-    bind_blocks = panel.findChildren(QFrame, "FanControlBindBlock")
-    assert bind_blocks
-    assert bind_blocks[0].parentWidget().objectName() == "FanControlGroup"
     path_labels = panel.findChildren(QLabel, "FanControlPathLabel")
-    assert [label.text() for label in path_labels].count("PWM1/FAN1") == 2
+    assert [label.text() for label in path_labels].count("PWM1/FAN1") == 1
     assert panel._sliders["CPU_FAN · PWM1/FAN1"]._name_label.text() == "CPU_FAN · CPU"
+
+    panel.close()
+    app.quit()
+
+
+def test_fan_host_binding_panel_is_separate_from_pwm_sliders():
+    from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QWidget
+
+    from usb9_lcd.gui.fan_host import DisplayFanChannel, EmbeddedFanBindingPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = EmbeddedFanBindingPanel()
+    panel.populate_fans(
+        [
+            DisplayFanChannel(
+                name="AIO_PUMP · PWM2/FAN2",
+                pwm_path="/sys/class/hwmon/hwmon0/pwm2",
+                rpm_input="/sys/class/hwmon/hwmon0/fan2_input",
+                type_label="水泵/AIO",
+                channel_label="PWM2/FAN2",
+                header_label="AIO_PUMP",
+                header_confirmed=True,
+            )
+        ],
+        [
+            SimpleNamespace(name="CPU Tctl 温度", unit="°C", internal_id="cpu"),
+            SimpleNamespace(name="GPU 温度", unit="°C", internal_id="gpu"),
+        ],
+    )
+
+    assert panel.findChildren(QFrame, "FanBindingToolbar")
+    assert panel.findChildren(QFrame, "FanBindingGroup")
+    assert panel.findChildren(QFrame, "FanBindingRow")
+    assert panel.findChildren(QWidget, "FanBindingIdentityPane")
+    assert panel.findChildren(QWidget, "FanBindingPickerPane")
+    binding_combos = [combo for combo in panel.findChildren(QComboBox) if combo.findText("CPU Tctl 温度") >= 0]
+    assert binding_combos[0].currentText() == "CPU Tctl 温度"
 
     panel.close()
     app.quit()

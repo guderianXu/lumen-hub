@@ -741,6 +741,13 @@ def _fan_sort_key(fan) -> tuple[int, int, int, str]:  # noqa: ANN001
     )
 
 
+def _ordered_fan_roles(fans: list[object]) -> list[str]:
+    seen = {str(getattr(fan, "type_label", "") or "未识别通道") for fan in fans}
+    ordered = [role for role in FAN_ROLE_OVERVIEW_ORDER if role in seen]
+    ordered.extend(sorted(role for role in seen if role not in set(ordered)))
+    return ordered
+
+
 def _pwm_enable_mode_label(value: str) -> str:
     return {
         "0": "全速",
@@ -1495,11 +1502,9 @@ class EmbeddedFanControlPanel(QWidget):
         self._fan_slider_cls = fan_slider_cls
         self._sliders: dict[str, object] = {}
         self._fan_rows: dict[str, QWidget] = {}
-        self._bind_rows: dict[str, QWidget] = {}
         self._fan_roles: dict[str, str] = {}
         self._section_rows: dict[str, list[QWidget]] = {}
         self._section_widgets: dict[str, QWidget] = {}
-        self._role_sections: dict[str, list[QWidget]] = {}
         self._active_fans: set[str] = set()
         self._total_fans = 0
         self._control_enabled = False
@@ -1532,13 +1537,6 @@ class EmbeddedFanControlPanel(QWidget):
         top.setColumnStretch(0, 1)
         layout.addWidget(toolbar)
 
-        self._mode_tabs = QTabWidget()
-        self._mode_tabs.setObjectName("FanControlModeTabs")
-
-        manual_page = QWidget()
-        manual_layout = QVBoxLayout(manual_page)
-        manual_layout.setContentsMargins(0, 0, 0, 0)
-        manual_layout.setSpacing(0)
         self._scroll = QScrollArea()
         self._scroll.setObjectName("FanControlScrollArea")
         self._scroll.setWidgetResizable(True)
@@ -1548,33 +1546,14 @@ class EmbeddedFanControlPanel(QWidget):
         self._fan_layout.setContentsMargins(0, 0, 0, 0)
         self._fan_layout.setSpacing(10)
         self._scroll.setWidget(self._fan_container)
-        manual_layout.addWidget(self._scroll, 1)
-
-        binding_page = QWidget()
-        binding_layout = QVBoxLayout(binding_page)
-        binding_layout.setContentsMargins(0, 0, 0, 0)
-        binding_layout.setSpacing(0)
-        self._binding_scroll = QScrollArea()
-        self._binding_scroll.setObjectName("FanControlScrollArea")
-        self._binding_scroll.setWidgetResizable(True)
-        self._binding_container = QWidget()
-        self._binding_container.setObjectName("FanControlContainer")
-        self._binding_layout = QVBoxLayout(self._binding_container)
-        self._binding_layout.setContentsMargins(0, 0, 0, 0)
-        self._binding_layout.setSpacing(10)
-        self._binding_scroll.setWidget(self._binding_container)
-        binding_layout.addWidget(self._binding_scroll, 1)
-
-        self._mode_tabs.addTab(manual_page, "手动调速")
-        self._mode_tabs.addTab(binding_page, "温度绑定")
-        layout.addWidget(self._mode_tabs, 1)
+        layout.addWidget(self._scroll, 1)
         self._rebuild_role_filter([])
 
     def populate_fans(self, fans, temp_sensors) -> None:  # noqa: ANN001
         self._clear_rows()
         fans = sorted(list(fans), key=_fan_sort_key)
         self._total_fans = len(fans)
-        roles = self._ordered_roles(fans)
+        roles = _ordered_fan_roles(fans)
         self._rebuild_role_filter(roles)
 
         for role in roles:
@@ -1588,31 +1567,17 @@ class EmbeddedFanControlPanel(QWidget):
                 hint=FAN_ROLE_CONTROL_HINTS.get(role, "先确认物理接口，再启用 PWM 写入"),
             )
             section_layout = section.layout()
-            binding_section = self._make_section(
-                role,
-                len(role_fans),
-                title_prefix="温度绑定",
-                hint="把每个 PWM 通道绑定到最合适的温度源，避免把滑条和策略设置混在一起。",
-            )
-            binding_section_layout = binding_section.layout()
             for fan in role_fans:
                 row = self._make_fan_row(fan, temp_sensors)
                 section_layout.addWidget(row)
-                bind_row = self._make_binding_row(fan, temp_sensors)
-                binding_section_layout.addWidget(bind_row)
                 name = str(getattr(fan, "name", ""))
                 self._fan_rows[name] = row
-                self._bind_rows[name] = bind_row
                 self._fan_roles[name] = role
                 self._section_rows.setdefault(role, []).append(row)
-                self._section_rows.setdefault(role, []).append(bind_row)
             self._fan_layout.addWidget(section)
-            self._binding_layout.addWidget(binding_section)
             self._section_widgets[role] = section
-            self._role_sections.setdefault(role, []).extend([section, binding_section])
 
         self._fan_layout.addStretch(1)
-        self._binding_layout.addStretch(1)
         self._apply_filter()
         self._update_info()
 
@@ -1631,12 +1596,6 @@ class EmbeddedFanControlPanel(QWidget):
         for slider in self._sliders.values():
             if hasattr(slider, "set_control_enabled"):
                 slider.set_control_enabled(self._control_enabled)
-
-    def _ordered_roles(self, fans: list[object]) -> list[str]:
-        seen = {str(getattr(fan, "type_label", "") or "未识别通道") for fan in fans}
-        ordered = [role for role in FAN_ROLE_OVERVIEW_ORDER if role in seen]
-        ordered.extend(sorted(role for role in seen if role not in set(ordered)))
-        return ordered
 
     def _rebuild_role_filter(self, roles: list[str]) -> None:
         current = str(self._role_filter_combo.currentData() or "")
@@ -1672,19 +1631,21 @@ class EmbeddedFanControlPanel(QWidget):
         row.setObjectName("FanControlRow")
         detail = str(getattr(fan, "detail_text", "") or "")
         row.setToolTip(detail)
-        layout = QVBoxLayout(row)
+        layout = QGridLayout(row)
         layout.setContentsMargins(12, 10, 12, 12)
-        layout.setSpacing(9)
+        layout.setHorizontalSpacing(16)
+        layout.setVerticalSpacing(8)
 
         channel = str(getattr(fan, "channel_label", "") or "Channel")
         role = str(getattr(fan, "type_label", "") or "未识别通道")
         header = str(getattr(fan, "header_label", "") or "")
         identity = _fan_identity_state_label(fan)
 
-        header_layout = QGridLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setHorizontalSpacing(10)
-        header_layout.setVerticalSpacing(5)
+        identity_pane = QWidget()
+        identity_pane.setObjectName("FanControlIdentityPane")
+        identity_layout = QVBoxLayout(identity_pane)
+        identity_layout.setContentsMargins(0, 0, 0, 0)
+        identity_layout.setSpacing(7)
         title = QLabel(header or _fan_control_title(fan))
         title.setObjectName("FanControlChannelTitle")
         title.setWordWrap(True)
@@ -1708,13 +1669,20 @@ class EmbeddedFanControlPanel(QWidget):
         hint = QLabel(_fan_role_control_hint(role, has_pwm=True))
         hint.setObjectName("FieldHint")
         hint.setWordWrap(True)
-        header_layout.addWidget(title, 0, 0)
-        header_layout.addWidget(channel_label, 1, 0)
-        header_layout.addLayout(badge_row, 0, 1, 2, 1)
-        header_layout.addWidget(hint, 2, 0, 1, 2)
-        header_layout.setColumnStretch(0, 1)
-        header_layout.setColumnStretch(1, 0)
-        layout.addLayout(header_layout)
+        identity_layout.addWidget(title)
+        identity_layout.addWidget(channel_label)
+        identity_layout.addLayout(badge_row)
+        identity_layout.addWidget(hint)
+        identity_layout.addStretch(1)
+
+        write_pane = QWidget()
+        write_pane.setObjectName("FanControlWritePane")
+        write_layout = QVBoxLayout(write_pane)
+        write_layout.setContentsMargins(0, 0, 0, 0)
+        write_layout.setSpacing(6)
+        write_title = QLabel("PWM 输出")
+        write_title.setObjectName("FanControlPaneTitle")
+        write_layout.addWidget(write_title)
 
         slider = self._fan_slider_cls(str(getattr(fan, "name", channel)))
         slider.setObjectName("EmbeddedFanSlider")
@@ -1726,18 +1694,176 @@ class EmbeddedFanControlPanel(QWidget):
             name_label.setText(_fan_control_title(fan))
             name_label.setToolTip(detail)
         self._sliders[str(getattr(fan, "name", channel))] = slider
-        layout.addWidget(slider)
+        write_layout.addWidget(slider)
+        layout.addWidget(identity_pane, 0, 0)
+        layout.addWidget(write_pane, 0, 1)
+        layout.setColumnMinimumWidth(0, 220)
+        layout.setColumnStretch(0, 0)
+        layout.setColumnStretch(1, 1)
 
         return row
 
+    def _apply_filter(self, *_args) -> None:  # noqa: ANN002
+        role_filter = str(self._role_filter_combo.currentData() or "")
+        active_only = self._show_active_only_cb.isChecked()
+        for name, row in self._fan_rows.items():
+            role = self._fan_roles.get(name, "")
+            visible = (not role_filter or role == role_filter) and (not active_only or name in self._active_fans)
+            row.setVisible(visible)
+        for role, section in self._section_widgets.items():
+            section.setVisible(any(not row.isHidden() for row in self._section_rows.get(role, [])))
+
+    def _update_info(self) -> None:
+        counts: dict[str, int] = {}
+        for role in self._fan_roles.values():
+            counts[role] = counts.get(role, 0) + 1
+        role_parts = [
+            f"{_fan_role_compact_label(role)} {counts[role]}"
+            for role in FAN_ROLE_OVERVIEW_ORDER
+            if counts.get(role)
+        ]
+        role_parts.extend(
+            f"{_fan_role_compact_label(role)} {count}"
+            for role, count in sorted(counts.items())
+            if role not in FAN_ROLE_OVERVIEW_ORDER
+        )
+        active = len(self._active_fans)
+        if self._total_fans:
+            suffix = " · " + " · ".join(role_parts) if role_parts else ""
+            self._info_label.setText(f"检测到 {self._total_fans} 个可控通道 · {active} 个有转速{suffix}")
+        else:
+            self._info_label.setText("没有可写 PWM 通道；请查看总览或明细中的只读转速")
+
+    def _clear_rows(self) -> None:
+        self._clear_layout_widgets(self._fan_layout)
+        self._sliders = {}
+        self._fan_rows = {}
+        self._fan_roles = {}
+        self._section_rows = {}
+        self._section_widgets = {}
+        self._active_fans = set()
+
+    def _clear_layout_widgets(self, layout) -> None:  # noqa: ANN001
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+
+class EmbeddedFanBindingPanel(QWidget):
+    def __init__(self, parent=None) -> None:  # noqa: ANN001
+        super().__init__(parent)
+        self._rows: dict[str, QWidget] = {}
+        self._fan_roles: dict[str, str] = {}
+        self._section_rows: dict[str, list[QWidget]] = {}
+        self._section_widgets: dict[str, QWidget] = {}
+        self._active_fans: set[str] = set()
+        self._total_fans = 0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(10)
+
+        toolbar = QFrame()
+        toolbar.setObjectName("FanBindingToolbar")
+        top = QGridLayout(toolbar)
+        top.setContentsMargins(12, 10, 12, 10)
+        top.setHorizontalSpacing(10)
+        top.setVerticalSpacing(6)
+        self._info_label = QLabel("加载后按风扇角色显示温度源绑定")
+        self._info_label.setObjectName("FieldHint")
+        self._info_label.setWordWrap(True)
+        self._role_filter_combo = QComboBox()
+        self._role_filter_combo.setMinimumWidth(150)
+        self._role_filter_combo.currentIndexChanged.connect(self._apply_filter)
+        self._show_active_only_cb = QCheckBox("只看有转速")
+        self._show_active_only_cb.setMinimumWidth(118)
+        self._show_active_only_cb.toggled.connect(self._apply_filter)
+        filter_label = QLabel("筛选")
+        filter_label.setObjectName("SectionLabel")
+        top.addWidget(self._info_label, 0, 0, 2, 1)
+        top.addWidget(filter_label, 0, 1)
+        top.addWidget(self._role_filter_combo, 1, 1)
+        top.addWidget(self._show_active_only_cb, 1, 2, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        top.setColumnStretch(0, 1)
+        layout.addWidget(toolbar)
+
+        self._scroll = QScrollArea()
+        self._scroll.setObjectName("FanBindingScrollArea")
+        self._scroll.setWidgetResizable(True)
+        self._container = QWidget()
+        self._container.setObjectName("FanBindingContainer")
+        self._binding_layout = QVBoxLayout(self._container)
+        self._binding_layout.setContentsMargins(0, 0, 0, 0)
+        self._binding_layout.setSpacing(10)
+        self._scroll.setWidget(self._container)
+        layout.addWidget(self._scroll, 1)
+        self._rebuild_role_filter([])
+
+    def populate_fans(self, fans, temp_sensors) -> None:  # noqa: ANN001
+        self._clear_rows()
+        fans = sorted(list(fans), key=_fan_sort_key)
+        self._total_fans = len(fans)
+        roles = _ordered_fan_roles(fans)
+        self._rebuild_role_filter(roles)
+        for role in roles:
+            role_fans = [fan for fan in fans if str(getattr(fan, "type_label", "") or "未识别通道") == role]
+            if not role_fans:
+                continue
+            section = self._make_section(role, len(role_fans))
+            section_layout = section.layout()
+            for fan in role_fans:
+                row = self._make_binding_row(fan, temp_sensors)
+                section_layout.addWidget(row)
+                name = str(getattr(fan, "name", ""))
+                self._rows[name] = row
+                self._fan_roles[name] = role
+                self._section_rows.setdefault(role, []).append(row)
+            self._binding_layout.addWidget(section)
+            self._section_widgets[role] = section
+        self._binding_layout.addStretch(1)
+        self._apply_filter()
+        self._update_info()
+
+    def update_fan_rpm(self, fan_name: str, rpm: int) -> None:
+        if rpm > 0:
+            self._active_fans.add(fan_name)
+            if self._show_active_only_cb.isChecked():
+                self._apply_filter()
+        self._update_info()
+
+    def _rebuild_role_filter(self, roles: list[str]) -> None:
+        current = str(self._role_filter_combo.currentData() or "")
+        self._role_filter_combo.blockSignals(True)
+        self._role_filter_combo.clear()
+        self._role_filter_combo.addItem("全部角色", "")
+        for role in roles:
+            self._role_filter_combo.addItem(_fan_role_compact_label(role), role)
+        index = self._role_filter_combo.findData(current) if current else 0
+        self._role_filter_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._role_filter_combo.blockSignals(False)
+
+    def _make_section(self, role: str, count: int) -> QFrame:
+        section = QFrame()
+        section.setObjectName("FanBindingGroup")
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(14, 12, 14, 14)
+        layout.setSpacing(10)
+        title = QLabel(f"温度绑定 · {_fan_role_compact_label(role)} · {count} 通道")
+        title.setObjectName("SectionLabel")
+        layout.addWidget(title)
+        return section
+
     def _make_binding_row(self, fan, temp_sensors) -> QFrame:  # noqa: ANN001
         bind_block = QFrame()
-        bind_block.setObjectName("FanControlBindBlock")
+        bind_block.setObjectName("FanBindingRow")
         detail = str(getattr(fan, "detail_text", "") or "")
         bind_block.setToolTip(detail)
         bind_layout = QGridLayout(bind_block)
         bind_layout.setContentsMargins(12, 10, 12, 10)
-        bind_layout.setHorizontalSpacing(12)
+        bind_layout.setHorizontalSpacing(16)
         bind_layout.setVerticalSpacing(8)
 
         role = str(getattr(fan, "type_label", "") or "未识别通道")
@@ -1756,6 +1882,26 @@ class EmbeddedFanControlPanel(QWidget):
             f"color: {_fan_role_color(role)}; border: 1px solid {_fan_role_color(role)};"
             " border-radius: 5px; padding: 2px 6px;"
         )
+
+        identity_pane = QWidget()
+        identity_pane.setObjectName("FanBindingIdentityPane")
+        identity_layout = QVBoxLayout(identity_pane)
+        identity_layout.setContentsMargins(0, 0, 0, 0)
+        identity_layout.setSpacing(6)
+        badge_row = QHBoxLayout()
+        badge_row.setSpacing(6)
+        badge_row.addWidget(role_label)
+        badge_row.addStretch(1)
+        identity_layout.addWidget(title)
+        identity_layout.addWidget(channel_label)
+        identity_layout.addLayout(badge_row)
+
+        picker_pane = QWidget()
+        picker_pane.setObjectName("FanBindingPickerPane")
+        picker_layout = QGridLayout(picker_pane)
+        picker_layout.setContentsMargins(0, 0, 0, 0)
+        picker_layout.setHorizontalSpacing(10)
+        picker_layout.setVerticalSpacing(6)
         bind_label = QLabel("建议温度源")
         bind_label.setObjectName("FieldHint")
         combo = QComboBox()
@@ -1771,15 +1917,15 @@ class EmbeddedFanControlPanel(QWidget):
         hint_label.setObjectName("FieldHint")
         hint_label.setWordWrap(True)
 
-        bind_layout.addWidget(title, 0, 0)
-        bind_layout.addWidget(role_label, 0, 1, Qt.AlignmentFlag.AlignRight)
-        bind_layout.addWidget(channel_label, 1, 0)
-        bind_layout.addWidget(bind_label, 1, 1)
-        bind_layout.addWidget(combo, 1, 2)
-        bind_layout.addWidget(hint_label, 2, 0, 1, 3)
-        bind_layout.setColumnStretch(0, 1)
-        bind_layout.setColumnStretch(1, 0)
-        bind_layout.setColumnStretch(2, 1)
+        picker_layout.addWidget(bind_label, 0, 0)
+        picker_layout.addWidget(combo, 0, 1)
+        picker_layout.addWidget(hint_label, 1, 0, 1, 2)
+        picker_layout.setColumnStretch(1, 1)
+        bind_layout.addWidget(identity_pane, 0, 0)
+        bind_layout.addWidget(picker_pane, 0, 1)
+        bind_layout.setColumnMinimumWidth(0, 220)
+        bind_layout.setColumnStretch(0, 0)
+        bind_layout.setColumnStretch(1, 1)
         return bind_block
 
     def _default_sensor_index(self, combo: QComboBox, role: str) -> int:
@@ -1811,17 +1957,12 @@ class EmbeddedFanControlPanel(QWidget):
     def _apply_filter(self, *_args) -> None:  # noqa: ANN002
         role_filter = str(self._role_filter_combo.currentData() or "")
         active_only = self._show_active_only_cb.isChecked()
-        for name, row in self._fan_rows.items():
+        for name, row in self._rows.items():
             role = self._fan_roles.get(name, "")
             visible = (not role_filter or role == role_filter) and (not active_only or name in self._active_fans)
             row.setVisible(visible)
-            bind_row = self._bind_rows.get(name)
-            if bind_row is not None:
-                bind_row.setVisible(visible)
-        for role, sections in self._role_sections.items():
-            visible = any(not row.isHidden() for row in self._section_rows.get(role, []))
-            for section in sections:
-                section.setVisible(visible)
+        for role, section in self._section_widgets.items():
+            section.setVisible(any(not row.isHidden() for row in self._section_rows.get(role, [])))
 
     def _update_info(self) -> None:
         counts: dict[str, int] = {}
@@ -1845,15 +1986,11 @@ class EmbeddedFanControlPanel(QWidget):
             self._info_label.setText("没有可写 PWM 通道；请查看总览或明细中的只读转速")
 
     def _clear_rows(self) -> None:
-        self._clear_layout_widgets(self._fan_layout)
         self._clear_layout_widgets(self._binding_layout)
-        self._sliders = {}
-        self._fan_rows = {}
-        self._bind_rows = {}
+        self._rows = {}
         self._fan_roles = {}
         self._section_rows = {}
         self._section_widgets = {}
-        self._role_sections = {}
         self._active_fans = set()
 
     def _clear_layout_widgets(self, layout) -> None:  # noqa: ANN001
@@ -2534,6 +2671,13 @@ class FanControlHostPage(QWidget):
         self.control_placeholder = self._tab_placeholder("加载后显示风扇曲线和手动调速控件")
         self.control_layout.addWidget(self.control_placeholder, 1)
 
+        self.binding_tab = QWidget()
+        self.binding_layout = QVBoxLayout(self.binding_tab)
+        self.binding_layout.setContentsMargins(0, 0, 0, 0)
+        self.binding_layout.setSpacing(12)
+        self.binding_placeholder = self._tab_placeholder("加载后显示每个 PWM 通道的温度源绑定")
+        self.binding_layout.addWidget(self.binding_placeholder, 1)
+
         self.strategy_tab = QWidget()
         self.strategy_layout = QVBoxLayout(self.strategy_tab)
         self.strategy_layout.setContentsMargins(0, 0, 0, 0)
@@ -3007,6 +3151,7 @@ class FanControlHostPage(QWidget):
         self.workspace_tabs.addTab(self.overview_tab, "仪表盘")
         self.workspace_tabs.addTab(self.charts_tab, "曲线")
         self.workspace_tabs.addTab(self.control_tab, "调速")
+        self.workspace_tabs.addTab(self.binding_tab, "绑定")
         self.workspace_tabs.addTab(self.strategy_tab, "策略")
         self.workspace_tabs.addTab(self.details_tab, "标定")
         self.workspace_tabs.addTab(self.permission_tab, "权限")
@@ -3224,6 +3369,7 @@ class FanControlHostPage(QWidget):
         self.fan_cards_empty_label.setVisible(True)
         self.fan_cards_layout.addWidget(self.fan_cards_empty_label, 0, 0)
         self.control_placeholder.setVisible(True)
+        self.binding_placeholder.setVisible(True)
         self.strategy_placeholder.setVisible(True)
         self.history_placeholder.setVisible(True)
         self.strategy_tabs.setCurrentWidget(self.strategy_quick_tab)
@@ -3259,6 +3405,8 @@ class FanControlHostPage(QWidget):
             height = 560
         elif widget is self.control_tab:
             height = 680
+        elif widget is self.binding_tab:
+            height = 620
         elif widget is self.strategy_tab:
             height = 760 if self.strategy_tabs.currentWidget() is self.strategy_editor_tab else 400
         elif widget is self.details_tab:
@@ -3481,6 +3629,7 @@ class FanControlHostPage(QWidget):
             self._fans = self._display_fans_from_monitor(monitor.fans, self._sensors)
 
             fan_control = EmbeddedFanControlPanel(modules["fan_slider"].FanSlider)
+            fan_binding = EmbeddedFanBindingPanel()
             profile_editor = EmbeddedProfileEditor(
                 monitor.profiles,
                 modules["curve_editor"].CurveEditor,
@@ -3492,6 +3641,9 @@ class FanControlHostPage(QWidget):
             monitor.sensor_updated.connect(self._update_sensor_value)
             monitor.fan_rpm_updated.connect(
                 lambda name, rpm: fan_control.update_fan_rpm(self._display_fan_name(name), rpm)
+            )
+            monitor.fan_rpm_updated.connect(
+                lambda name, rpm: fan_binding.update_fan_rpm(self._display_fan_name(name), rpm)
             )
             monitor.fan_rpm_updated.connect(self._update_fan_rpm)
             monitor.fan_pwm_updated.connect(self._update_fan_pwm)
@@ -3509,12 +3661,14 @@ class FanControlHostPage(QWidget):
 
             self._start_nvidia_smi_fallback_if_needed()
             self._populate_fan_control(fan_control, monitor)
+            self._populate_fan_binding(fan_binding, monitor)
             self._refresh_profile_options()
             self._refresh_summary()
             self._refresh_fan_table()
 
             self._mount_embedded_widgets(
                 fan_control=fan_control,
+                fan_binding=fan_binding,
                 profile_editor=profile_editor,
                 history_view=history_view,
             )
@@ -3523,18 +3677,20 @@ class FanControlHostPage(QWidget):
             monitor.stop()
             raise
 
-    def _mount_embedded_widgets(self, *, fan_control, profile_editor, history_view) -> None:  # noqa: ANN001
+    def _mount_embedded_widgets(self, *, fan_control, fan_binding, profile_editor, history_view) -> None:  # noqa: ANN001
         self._clear_embedded_widgets()
         self.control_placeholder.setVisible(False)
+        self.binding_placeholder.setVisible(False)
         self.strategy_placeholder.setVisible(False)
         self.history_placeholder.setVisible(False)
 
         self._prepare_profile_editor_for_embedding(profile_editor)
         self.control_layout.addWidget(fan_control, 1)
+        self.binding_layout.addWidget(fan_binding, 1)
         self.strategy_editor_layout.addWidget(profile_editor, 1)
         self.history_layout.addWidget(history_view, 1)
         self.stress_panel.set_burner(self.burner)
-        self._embedded_widgets = [fan_control, profile_editor, history_view]
+        self._embedded_widgets = [fan_control, fan_binding, profile_editor, history_view]
         self.workspace_tabs.setCurrentWidget(self.overview_tab)
         self._tabs = None
 
@@ -3592,6 +3748,12 @@ class FanControlHostPage(QWidget):
         self._decorate_embedded_fan_control(fan_control)
         self._connect_display_fan_control(fan_control, monitor)
 
+    def _populate_fan_binding(self, fan_binding, monitor) -> None:  # noqa: ANN001
+        if getattr(fan_binding, "_rows", None):
+            return
+        temp_sensors = [sensor for sensor in monitor.sensors if getattr(sensor, "unit", "") == "°C"]
+        fan_binding.populate_fans(self._controllable_display_fans(), temp_sensors)
+
     def _controllable_display_fans(self) -> list[object]:
         return [fan for fan in self._fans if not self._fan_is_readonly(fan)]
 
@@ -3613,15 +3775,8 @@ class FanControlHostPage(QWidget):
                 name_label.setToolTip(detail)
             slider.setToolTip(detail)
             hint_label = getattr(slider, "_usb9_role_hint_label", None)
-            if hint_label is None:
-                hint_label = QLabel()
-                hint_label.setObjectName("FieldHint")
-                hint_label.setWordWrap(True)
-                layout = slider.layout()
-                if layout is not None:
-                    layout.insertWidget(1, hint_label)
-                setattr(slider, "_usb9_role_hint_label", hint_label)
-            hint_label.setText(f"{role} · {channel} · {_fan_role_control_hint(role, has_pwm=True)}")
+            if hint_label is not None:
+                hint_label.setText(f"{role} · {channel} · {_fan_role_control_hint(role, has_pwm=True)}")
 
     def _connect_display_fan_control(self, fan_control, monitor) -> None:  # noqa: ANN001
         if hasattr(monitor, "control_state_changed"):

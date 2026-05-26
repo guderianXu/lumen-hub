@@ -1911,6 +1911,7 @@ def test_fan_page_exposes_control_center_layout_before_loading():
         "仪表盘",
         "曲线",
         "调速",
+        "绑定",
         "策略",
         "标定",
         "权限",

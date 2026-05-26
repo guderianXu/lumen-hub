@@ -185,49 +185,63 @@ def gui_stylesheet() -> str:
         background: #24322e;
         border-color: #6fb6a0;
     }
-    QTabWidget#FanControlModeTabs::pane,
     QTabWidget#FanChannelDetailTabs::pane,
     QTabWidget#FanPermissionInfoTabs::pane,
     QTabWidget#FanProfileCurveTabs::pane {
         background: #151718;
         border-color: #303438;
     }
-    QTabWidget#FanControlModeTabs QTabBar::tab,
     QTabWidget#FanProfileCurveTabs QTabBar::tab {
         padding: 7px 12px;
         min-width: 84px;
     }
-    QScrollArea#FanControlScrollArea {
+    QScrollArea#FanControlScrollArea,
+    QScrollArea#FanBindingScrollArea {
         background: transparent;
         border: 0;
     }
-    QScrollArea#FanControlScrollArea > QWidget > QWidget {
+    QScrollArea#FanControlScrollArea > QWidget > QWidget,
+    QScrollArea#FanBindingScrollArea > QWidget > QWidget {
         background: transparent;
     }
-    QWidget#FanControlContainer { background: transparent; }
+    QWidget#FanControlContainer,
+    QWidget#FanBindingContainer { background: transparent; }
     QFrame#FanControlToolbar {
         background: #161819;
         border: 1px solid #303438;
         border-radius: 8px;
     }
-    QFrame#FanControlGroup {
+    QFrame#FanBindingToolbar {
+        background: #161819;
+        border: 1px solid #303438;
+        border-radius: 8px;
+    }
+    QFrame#FanControlGroup,
+    QFrame#FanBindingGroup {
         background: #151819;
         border: 1px solid #33373a;
         border-radius: 8px;
     }
-    QFrame#FanControlRow {
+    QFrame#FanControlRow,
+    QFrame#FanBindingRow {
         background: #181b1c;
         border: 1px solid #32393b;
         border-radius: 7px;
     }
     QFrame#FanControlRow:hover,
-    QFrame#FanControlBindBlock:hover {
+    QFrame#FanBindingRow:hover {
         border-color: #455052;
     }
-    QFrame#FanControlBindBlock {
-        background: #181b1c;
-        border: 1px solid #32393b;
-        border-radius: 7px;
+    QWidget#FanControlIdentityPane,
+    QWidget#FanControlWritePane,
+    QWidget#FanBindingIdentityPane,
+    QWidget#FanBindingPickerPane {
+        background: transparent;
+    }
+    QLabel#FanControlPaneTitle {
+        color: #aeb7b4;
+        font-size: 12px;
+        font-weight: 900;
     }
     QWidget#FanCurveCanvas {
         background: #111516;
