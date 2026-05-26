@@ -29,6 +29,7 @@ DIFF_MAX_RANGES = 16
 ARTIFACT_REPORT_OPERATIONS = {
     "analyze-artifact",
     "analyze-artifact-tree",
+    "analyze-changelog",
     "extract-hid-js",
     "extract-wireless-js",
     "diff-artifacts",
@@ -501,6 +502,10 @@ def artifact_evidence_matrix(path: Path) -> dict[str, Any]:
         if not isinstance(payload, dict) or payload.get("operation") not in ARTIFACT_REPORT_OPERATIONS:
             ignored_count += 1
             continue
+        if payload.get("operation") == "analyze-changelog":
+            if _merge_changelog_report(versions, report_path, payload) == 0:
+                ignored_count += 1
+            continue
         version = _artifact_report_version(report_path, payload)
         version_state = versions.setdefault(version, _empty_artifact_version_state(version))
         _merge_artifact_report(version_state, report_path, payload)
@@ -539,8 +544,86 @@ def _empty_artifact_version_state(version: str) -> dict[str, Any]:
         "hid_command_categories": Counter(),
         "nsis_file_count": 0,
         "high_entropy_nsis_count": 0,
+        "changelog_score": 0,
+        "changelog_release_date": "",
+        "changelog_download_urls": [],
+        "changelog_keywords": Counter(),
+        "changelog_category_scores": Counter(),
+        "changelog_evidence": [],
         "warnings": [],
     }
+
+
+def _merge_changelog_report(
+    versions: dict[str, dict[str, Any]],
+    path: Path,
+    payload: dict[str, Any],
+) -> int:
+    source = str(payload.get("source") or "")
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        entries = payload.get("top_entries")
+    if not isinstance(entries, list):
+        return 0
+    merged = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        version_text = str(entry.get("version") or "").strip()
+        if not version_text:
+            continue
+        score = _safe_int(entry.get("wireless_score"))
+        if score <= 0:
+            continue
+        version = version_text if version_text.startswith("v") else f"v{version_text}"
+        state = versions.setdefault(version, _empty_artifact_version_state(version))
+        state["operations"]["analyze-changelog"] += 1
+        state["reports"].append(
+            {
+                "path": str(path),
+                "operation": "analyze-changelog",
+                "source": source,
+            }
+        )
+        state["changelog_score"] = max(int(state.get("changelog_score") or 0), score)
+        release_date = str(entry.get("release_date") or "").strip()
+        if release_date:
+            state["changelog_release_date"] = release_date
+        for url in _strings_from_any_list(entry.get("download_urls")):
+            if url not in state["changelog_download_urls"]:
+                state["changelog_download_urls"].append(url)
+        for keyword in _strings_from_any_list(entry.get("matched_keywords")):
+            state["changelog_keywords"][keyword] += 1
+        state["changelog_category_scores"].update(_int_mapping(entry.get("category_scores")))
+        _merge_changelog_evidence(state, entry.get("matched_lines"))
+        merged += 1
+    return merged
+
+
+def _merge_changelog_evidence(state: dict[str, Any], matched_lines: Any) -> None:
+    if not isinstance(matched_lines, list):
+        return
+    existing = {
+        str(item.get("text") or "")
+        for item in state["changelog_evidence"]
+        if isinstance(item, dict)
+    }
+    for line in matched_lines:
+        if not isinstance(line, dict):
+            continue
+        text = str(line.get("text") or "").strip()
+        if not text or text in existing:
+            continue
+        state["changelog_evidence"].append(
+            {
+                "text": text,
+                "keywords": _strings_from_any_list(line.get("keywords")),
+                "score": _safe_int(line.get("score")),
+            }
+        )
+        existing.add(text)
+        if len(state["changelog_evidence"]) >= 8:
+            break
 
 
 def _artifact_report_version(path: Path, payload: dict[str, Any]) -> str:
@@ -681,6 +764,8 @@ def _artifact_version_payload(state: dict[str, Any]) -> dict[str, Any]:
     wireless_js = dict(sorted(state["wireless_js_clues"].items()))
     wireless_js_high = dict(sorted(state["wireless_js_high_confidence"].items()))
     hid_categories = dict(sorted(state["hid_command_categories"].items()))
+    changelog_score = int(state.get("changelog_score") or 0)
+    changelog_keywords = dict(sorted(state["changelog_keywords"].items()))
     assessment = _artifact_version_assessment(
         rf_static=rf_static,
         rf_high_static=rf_high_static,
@@ -709,6 +794,16 @@ def _artifact_version_payload(state: dict[str, Any]) -> dict[str, Any]:
         "hid_command_categories": hid_categories,
         "nsis_file_count": state["nsis_file_count"],
         "high_entropy_nsis_count": state["high_entropy_nsis_count"],
+        "changelog_score": changelog_score,
+        "changelog_release_date": str(state.get("changelog_release_date") or ""),
+        "changelog_download_urls": list(state.get("changelog_download_urls") or []),
+        "changelog_keywords": changelog_keywords,
+        "changelog_category_scores": dict(sorted(state["changelog_category_scores"].items())),
+        "changelog_evidence": list(state.get("changelog_evidence") or []),
+        "capture_recommendation_score": _artifact_capture_recommendation_score(
+            assessment,
+            changelog_score,
+        ),
         "recommended_next_steps": _artifact_version_next_steps(
             assessment,
             rf_static=rf_static,
@@ -718,6 +813,8 @@ def _artifact_version_payload(state: dict[str, Any]) -> dict[str, Any]:
             hid_categories=hid_categories,
             nsis_file_count=state["nsis_file_count"],
             high_entropy_nsis_count=state["high_entropy_nsis_count"],
+            changelog_score=changelog_score,
+            changelog_keywords=changelog_keywords,
         ),
         "warnings": list(state["warnings"]),
         "reports": list(state["reports"]),
@@ -754,6 +851,16 @@ def _artifact_capture_priority(assessment: str) -> str:
     }.get(assessment, "low")
 
 
+def _artifact_capture_recommendation_score(assessment: str, changelog_score: int) -> int:
+    static_score = {
+        "rf-usb-protocol-lead": 1000,
+        "rf-usb-low-confidence-lead": 500,
+        "wireless-adjacent-lead": 300,
+        "wired-hid-fan-lead": 80,
+    }.get(assessment, 0)
+    return static_score + max(0, int(changelog_score))
+
+
 def _artifact_version_next_steps(
     assessment: str,
     *,
@@ -764,8 +871,11 @@ def _artifact_version_next_steps(
     hid_categories: dict[str, int],
     nsis_file_count: int,
     high_entropy_nsis_count: int,
+    changelog_score: int = 0,
+    changelog_keywords: dict[str, int] | None = None,
 ) -> list[str]:
     steps: list[str] = []
+    changelog_keywords = changelog_keywords or {}
     if assessment == "rf-usb-protocol-lead":
         steps.append("Prioritize this version for Windows VM USBPcap capture of 0416:8040/0416:8041 traffic.")
         if rf_high_static:
@@ -782,6 +892,10 @@ def _artifact_version_next_steps(
         steps.append("Use these official HID command templates for AL/SL V2 wired fan support, but do not treat them as L-Wireless RF proof.")
     else:
         steps.append("No actionable static L-Wireless evidence was found; rely on USBPcap captures or deeper installer extraction.")
+    if changelog_score > 0:
+        keywords = ", ".join(sorted(changelog_keywords)[:6])
+        suffix = f" ({keywords})" if keywords else ""
+        steps.append(f"Official changelog wireless score is {changelog_score}; use it to prioritize scenario coverage{suffix}.")
     if hid_categories and assessment != "wired-hid-fan-lead":
         steps.append("Separate wired HID fan-controller leads from L-Wireless RF protocol evidence.")
     if nsis_file_count and high_entropy_nsis_count:
@@ -790,6 +904,17 @@ def _artifact_version_next_steps(
 
 
 def _artifact_matrix_summary(versions: list[dict[str, Any]]) -> dict[str, Any]:
+    recommended = [
+        item
+        for item in sorted(
+            versions,
+            key=lambda value: (
+                -int(value.get("capture_recommendation_score") or 0),
+                _artifact_version_sort_key(value),
+            ),
+        )
+        if int(item.get("capture_recommendation_score") or 0) > 0
+    ]
     return {
         "rf_protocol_versions": [
             item["version"] for item in versions if item["assessment"] == "rf-usb-protocol-lead"
@@ -808,6 +933,21 @@ def _artifact_matrix_summary(versions: list[dict[str, Any]]) -> dict[str, Any]:
         ],
         "nsis_static_blocked_versions": [
             item["version"] for item in versions if int(item["high_entropy_nsis_count"]) > 0
+        ],
+        "changelog_top_versions": [
+            item["version"]
+            for item in sorted(versions, key=lambda value: -int(value.get("changelog_score") or 0))
+            if int(item.get("changelog_score") or 0) > 0
+        ][:12],
+        "recommended_capture_versions": [
+            {
+                "version": item["version"],
+                "score": int(item.get("capture_recommendation_score") or 0),
+                "assessment": str(item.get("assessment") or ""),
+                "changelog_score": int(item.get("changelog_score") or 0),
+                "release_date": str(item.get("changelog_release_date") or ""),
+            }
+            for item in recommended[:12]
         ],
     }
 
@@ -829,6 +969,13 @@ def _int_mapping(value: Any) -> Counter[str]:
         except (TypeError, ValueError):
             continue
     return counter
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _strings_from_any_list(value: Any) -> list[str]:

@@ -58,6 +58,10 @@ def lianli_validation_gate(
         "artifact_target_version": str(target_artifact.get("version") or ""),
         "artifact_target_assessment": str(target_artifact.get("assessment") or ""),
         "artifact_target_capture_priority": str(target_artifact.get("capture_priority") or ""),
+        "artifact_target_changelog_score": _int_value(target_artifact.get("changelog_score")),
+        "artifact_target_capture_recommendation_score": _int_value(
+            target_artifact.get("capture_recommendation_score")
+        ),
         "capture_status": str(capture.get("status") or ""),
         "receiver_evidence_status": str(evidence.get("status") or ""),
         "receiver_next_action_status": _receiver_next_action_status(evidence),
@@ -349,7 +353,10 @@ def _artifact_checks(artifact: dict[str, Any], target_artifact: dict[str, Any]) 
         message = "Official static reports contain high-confidence RF sender/receiver evidence for the target version."
     elif assessment == "rf-usb-low-confidence-lead":
         status = "warning"
-        message = "Only low-confidence raw RF VID/PID static hits are present; confirm through installed files or USBPcap."
+        if _int_value(target_artifact.get("changelog_score")) > 0:
+            message = "Low-confidence raw RF VID/PID static hits plus official changelog relevance are present; confirm through installed files or USBPcap."
+        else:
+            message = "Only low-confidence raw RF VID/PID static hits are present; confirm through installed files or USBPcap."
     elif assessment == "wireless-adjacent-lead":
         status = "warning"
         message = "Static reports show wireless-adjacent clues, but not enough direct RF USB protocol evidence."
@@ -369,6 +376,9 @@ def _artifact_checks(artifact: dict[str, Any], target_artifact: dict[str, Any]) 
                 "version": str(target_artifact.get("version") or ""),
                 "capture_priority": str(target_artifact.get("capture_priority") or ""),
                 "report_count": _int_value(target_artifact.get("report_count")),
+                "changelog_score": _int_value(target_artifact.get("changelog_score")),
+                "capture_recommendation_score": _int_value(target_artifact.get("capture_recommendation_score")),
+                "changelog_keywords": _mapping_keys(target_artifact.get("changelog_keywords")),
             },
         )
     ]
@@ -604,6 +614,12 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if isinstance(item, str) and item]
+
+
+def _mapping_keys(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    return sorted(str(key) for key in value if str(key))
 
 
 def _tool_command(*parts: object) -> str:

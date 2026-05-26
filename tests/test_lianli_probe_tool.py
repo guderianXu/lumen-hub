@@ -569,6 +569,31 @@ def test_probe_artifact_evidence_matrix_summarizes_saved_reports(tmp_path):
         ),
         encoding="utf-8",
     )
+    (tmp_path / "analyze-changelog-official.json").write_text(
+        json.dumps(
+            {
+                "operation": "analyze-changelog",
+                "source": "fixture.html",
+                "entries": [
+                    {
+                        "version": "2.0.34",
+                        "release_date": "2025-09-19",
+                        "wireless_score": 24,
+                        "matched_keywords": ["motherboard-sync", "rpm-pwm"],
+                        "category_scores": {"fan": 19},
+                        "matched_lines": [
+                            {
+                                "text": "Fixed wireless fan MB RPM sync.",
+                                "keywords": ["motherboard-sync", "rpm-pwm"],
+                                "score": 19,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     payload = _run_probe("artifact-evidence-matrix", str(tmp_path))
     versions = {item["version"]: item for item in payload["versions"]}
@@ -576,7 +601,11 @@ def test_probe_artifact_evidence_matrix_summarizes_saved_reports(tmp_path):
     assert payload["operation"] == "artifact-evidence-matrix"
     assert payload["version_count"] == 2
     assert payload["summary"]["high_priority_capture_versions"] == ["v2.0.34"]
+    assert payload["summary"]["changelog_top_versions"] == ["v2.0.34"]
+    assert payload["summary"]["recommended_capture_versions"][0]["version"] == "v2.0.34"
     assert versions["v2.0.34"]["assessment"] == "rf-usb-protocol-lead"
+    assert versions["v2.0.34"]["changelog_score"] == 24
+    assert versions["v2.0.34"]["changelog_evidence"][0]["text"] == "Fixed wireless fan MB RPM sync."
     assert versions["v2.0.34"]["rf_static_labels"] == {
         "RF receiver VID:PID text": 2,
         "RF sender VID:PID text": 2,
@@ -1467,6 +1496,26 @@ def test_probe_lianli_validation_gate_includes_optional_artifact_matrix(tmp_path
         + "\n",
         encoding="utf-8",
     )
+    (artifact_dir / "analyze-changelog-official.json").write_text(
+        json.dumps(
+            {
+                "operation": "analyze-changelog",
+                "source": "fixture.html",
+                "entries": [
+                    {
+                        "version": "2.1.17",
+                        "release_date": "2026-03-02",
+                        "wireless_score": 48,
+                        "matched_keywords": ["rf", "binding", "rpm-pwm"],
+                        "category_scores": {"transport": 14, "binding": 12, "fan": 10},
+                        "matched_lines": [],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     payload = _run_probe(
         "lianli-validation-gate",
@@ -1486,7 +1535,12 @@ def test_probe_lianli_validation_gate_includes_optional_artifact_matrix(tmp_path
     assert payload["artifact_status"] == "matrix-ready"
     assert payload["artifact_target_version"] == "v2.1.17"
     assert payload["artifact_target_assessment"] == "rf-usb-protocol-lead"
+    assert payload["artifact_target_changelog_score"] == 48
+    assert payload["artifact_target_capture_recommendation_score"] == 1048
     assert checks["official-static-artifact-evidence"]["status"] == "ok"
+    assert checks["official-static-artifact-evidence"]["detail"]["changelog_score"] == 48
+    assert checks["official-static-artifact-evidence"]["detail"]["capture_recommendation_score"] == 1048
+    assert checks["official-static-artifact-evidence"]["detail"]["changelog_keywords"] == ["binding", "rf", "rpm-pwm"]
     assert "artifact-evidence-matrix" in " ".join(payload["recommended_commands"])
 
 

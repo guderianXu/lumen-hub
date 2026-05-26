@@ -851,25 +851,67 @@ def test_artifact_evidence_matrix_ranks_versions_by_protocol_value(tmp_path):
         ),
         encoding="utf-8",
     )
+    (tmp_path / "analyze-changelog-official.json").write_text(
+        json.dumps(
+            {
+                "operation": "analyze-changelog",
+                "source": "fixture-changelog.html",
+                "entries": [
+                    {
+                        "version": "2.1.17",
+                        "release_date": "2026-03-02",
+                        "wireless_score": 48,
+                        "download_urls": ["https://example.invalid/L-Connect-v2.1.17.exe"],
+                        "matched_keywords": ["rf", "binding", "rpm-pwm"],
+                        "category_scores": {"transport": 14, "binding": 12, "fan": 10},
+                        "matched_lines": [
+                            {
+                                "text": "RF unbind/rebind fan speed settings behavior changed.",
+                                "keywords": ["rf", "binding", "rpm-pwm"],
+                                "score": 18,
+                            }
+                        ],
+                    },
+                    {
+                        "version": "2.0.34",
+                        "release_date": "2025-09-19",
+                        "wireless_score": 24,
+                        "matched_keywords": ["motherboard-sync", "rpm-pwm"],
+                        "category_scores": {"fan": 19},
+                        "matched_lines": [],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     matrix = artifact_evidence_matrix(tmp_path)
     versions = {item["version"]: item for item in matrix["versions"]}
 
     assert matrix["operation"] == "artifact-evidence-matrix"
-    assert matrix["version_count"] == 3
+    assert matrix["version_count"] == 4
     assert matrix["summary"]["high_priority_capture_versions"] == ["v2.1.17"]
     assert matrix["summary"]["rf_low_confidence_versions"] == ["v2.0.32"]
+    assert matrix["summary"]["changelog_top_versions"][:2] == ["v2.1.17", "v2.0.34"]
+    assert matrix["summary"]["recommended_capture_versions"][0]["version"] == "v2.1.17"
     assert versions["v2.0.32"]["assessment"] == "rf-usb-low-confidence-lead"
     assert versions["v2.0.32"]["capture_priority"] == "medium"
     assert versions["v2.0.32"]["rf_high_confidence_static_labels"] == {}
     assert versions["v2.0.32"]["rf_low_confidence_static_labels"] == {"RF sender VID/PID little-endian": 1}
     assert versions["v2.1.17"]["assessment"] == "rf-usb-protocol-lead"
     assert versions["v2.1.17"]["capture_priority"] == "high"
+    assert versions["v2.1.17"]["changelog_score"] == 48
+    assert versions["v2.1.17"]["changelog_keywords"] == {"binding": 1, "rf": 1, "rpm-pwm": 1}
+    assert versions["v2.1.17"]["capture_recommendation_score"] == 1048
+    assert versions["v2.1.17"]["changelog_evidence"][0]["score"] == 18
     assert set(versions["v2.1.17"]["rf_static_labels"]) == {
         "RF receiver VID:PID text",
         "RF sender VID:PID text",
     }
     assert any("USBPcap" in step for step in versions["v2.1.17"]["recommended_next_steps"])
+    assert any("Official changelog wireless score is 48" in step for step in versions["v2.1.17"]["recommended_next_steps"])
+    assert versions["v2.0.34"]["changelog_score"] == 24
     assert versions["v2.1.23"]["assessment"] == "wired-hid-fan-lead"
     assert versions["v2.1.23"]["hid_command_categories"] == {"discovery": 1, "sync": 1}
     assert "v2.1.23" in matrix["summary"]["wired_hid_fan_versions"]

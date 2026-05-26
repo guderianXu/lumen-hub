@@ -528,10 +528,15 @@ Practical interpretation:
   - New artifact evidence matrix helper:
     `python tools/lianli_wireless_probe.py artifact-evidence-matrix <report-dir>`
     reads saved `analyze-artifact`, `analyze-artifact-tree`, `extract-hid-js`,
-    `extract-wireless-js`, and `diff-artifacts` JSON reports, groups them by
-    L-Connect version, and separates high-priority L-Wireless RF USB leads from
-    low-confidence raw VID/PID hits, adjacent wireless assets, and wired AL/SL
-    V2 HID fan-controller evidence.
+    `extract-wireless-js`, `diff-artifacts`, and `analyze-changelog` JSON
+    reports, groups them by L-Connect version, and separates high-priority
+    L-Wireless RF USB leads from low-confidence raw VID/PID hits, adjacent
+    wireless assets, wired AL/SL V2 HID fan-controller evidence, and official
+    changelog relevance. The matrix now emits `changelog_score`,
+    `changelog_keywords`, per-version changelog evidence snippets, and
+    `summary.recommended_capture_versions`, so versions like v2.1.17 can be
+    prioritized when low-confidence RF static hits align with official
+    RF/bind/fan-setting changelog lines.
   - New transport-layer capture helper:
     `python tools/lianli_wireless_probe.py capture-transport-report <capture>`
     keeps USBPcap/tshark metadata such as frame number, source field, endpoint

@@ -53,6 +53,7 @@
 - [x] `capture-set-report.capture_note_operator_summary` 会统计 sidecar 的 Windows 动作确认状态；`lianli-validation-gate` 会把未确认动作显示为 `capture-note-operator-status` warning。
 - [x] sidecar 已支持记录场景操作参数，后续 `compare-capture` 命令可自动填充 PWM tuple、fallback PWM、主板 PWM、彩虹帧数、间隔和效果索引等占位符。
 - [x] 新增 `lianli-validation-gate`，用于把可选 `artifact-evidence-matrix`、`capture-gap-report`、`receiver-evidence-report` 和 `receiver-pairing-risk-report` 合并成一个 readiness JSON，优先暴露 blocker、warning 和下一步命令。
+- [x] `artifact-evidence-matrix` 已消费官方 `analyze-changelog` 报告，把 changelog 分数、关键词和证据行合并到同版本静态证据，并输出推荐抓包版本排序。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并只在身份一致、写入门禁通过时自动填入唯一可用 MAC。
 
 ## 待完成
