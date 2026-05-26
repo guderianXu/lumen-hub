@@ -129,6 +129,16 @@ def gui_stylesheet() -> str:
         background: #24322e;
         border-color: #6fb6a0;
     }
+    QTabWidget#FanControlModeTabs::pane,
+    QTabWidget#FanChannelDetailTabs::pane,
+    QTabWidget#FanPermissionInfoTabs::pane {
+        background: #151718;
+        border-color: #303438;
+    }
+    QTabWidget#FanControlModeTabs QTabBar::tab {
+        padding: 7px 12px;
+        min-width: 84px;
+    }
     QScrollArea#FanControlScrollArea {
         background: transparent;
         border: 0;
@@ -157,6 +167,15 @@ def gui_stylesheet() -> str:
         background: #141617;
         border: 1px solid #303438;
         border-radius: 7px;
+    }
+    QFrame#FanChannelEditorSection,
+    QFrame#FanChannelEvidenceSection {
+        background: #151718;
+        border: 1px solid #303438;
+        border-radius: 7px;
+    }
+    QFrame#FanChannelEvidenceSection {
+        background: #121516;
     }
     QFrame#EmbeddedFanSlider {
         background: transparent;

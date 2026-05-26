@@ -2354,6 +2354,13 @@ def test_embedded_profile_editor_uses_compact_profile_selector():
     assert manager.saved.name == "performance"
     assert manager.saved.curves["CPU"] == [(40, 30), (80, 90)]
 
+    for index in range(1, 6):
+        editor.update_fan_pwm(f"主板 PWM{index}", 128)
+        editor.update_fan_rpm(f"主板 PWM{index}", 900 + index)
+
+    assert "另 2 路" in editor._fan_rpm_label.text()
+    assert "PWM5/FAN5" in editor._fan_rpm_label.toolTip()
+
     editor.close()
     app.quit()
 

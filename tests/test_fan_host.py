@@ -95,6 +95,10 @@ def test_fan_host_layout_separates_dense_sections():
         "标定",
         "全部通道",
     ]
+    assert page.channel_selector_section.objectName() == "FanChannelEditorSection"
+    assert page.channel_properties_section.objectName() == "FanChannelEditorSection"
+    assert page.channel_actions_section.objectName() == "FanChannelEditorSection"
+    assert page.channel_evidence_section.objectName() == "FanChannelEvidenceSection"
     assert page.permission_info_tabs.count() == 2
     assert [page.permission_info_tabs.tabText(index) for index in range(page.permission_info_tabs.count())] == [
         "权限明细",
@@ -149,10 +153,16 @@ def test_fan_host_control_rows_keep_identity_control_and_binding_separate():
         [],
     )
 
+    assert [panel._mode_tabs.tabText(index) for index in range(panel._mode_tabs.count())] == [
+        "手动调速",
+        "温度绑定",
+    ]
     assert panel.findChildren(QFrame, "FanControlRow")
-    assert panel.findChildren(QFrame, "FanControlBindBlock")
+    bind_blocks = panel.findChildren(QFrame, "FanControlBindBlock")
+    assert bind_blocks
+    assert bind_blocks[0].parentWidget().objectName() == "FanControlGroup"
     path_labels = panel.findChildren(QLabel, "FanControlPathLabel")
-    assert [label.text() for label in path_labels] == ["PWM1/FAN1"]
+    assert [label.text() for label in path_labels].count("PWM1/FAN1") == 2
     assert panel._sliders["CPU_FAN · PWM1/FAN1"]._name_label.text() == "CPU_FAN · CPU"
 
     panel.close()
