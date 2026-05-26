@@ -1022,6 +1022,64 @@ def test_probe_summarize_experiments_recommends_one_safe_pwm_after_write_gate(tm
     assert action["recommended_commands"][1] == f"python tools/lianli_wireless_probe.py summarize-experiments {tmp_path}"
 
 
+def test_probe_summarize_experiments_requires_observation_before_expanding_writes(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    _write_receiver_safe_pwm_evidence(tmp_path)
+
+    payload = _run_probe("summarize-experiments", str(tmp_path))
+    action = payload["receiver_control_next_action"]
+
+    assert action["status"] == "write-validation-needs-observation"
+    assert action["can_run_safe_pwm"] is False
+    assert action["can_run_safe_lighting"] is False
+    assert action["write_evidence_pending_observation_count"] == 1
+    assert action["confirmed_pwm_write_count"] == 0
+    assert "receiver-observation" in action["recommended_commands"][0]
+    assert not any("safe-rgb-experiment" in command for command in action["recommended_commands"])
+
+
+def test_probe_summarize_experiments_recommends_safe_lighting_after_confirmed_pwm(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    _run_probe(
+        "--save-json",
+        str(output_dir / "observation.json"),
+        "receiver-observation",
+        str(output_dir),
+        "--effect",
+        "changed",
+        "--target",
+        "aa:bb:cc:dd:ee:ff",
+        "--observed-pwm",
+        "120",
+        "--note",
+        "fan speed visibly changed after guarded PWM write",
+    )
+
+    payload = _run_probe("summarize-experiments", str(tmp_path))
+    action = payload["receiver_control_next_action"]
+    expansion = action["safe_expansion_candidate"]
+
+    assert action["status"] == "ready-for-safe-lighting-validation"
+    assert action["can_run_safe_pwm"] is False
+    assert action["can_run_safe_lighting"] is True
+    assert action["confirmed_pwm_write_count"] == 1
+    assert action["write_evidence_pending_observation_count"] == 0
+    assert expansion["status"] == "ready"
+    assert expansion["mac"] == "aa:bb:cc:dd:ee:ff"
+    assert len(expansion["safe_lighting_commands"]) == 2
+    assert "safe-rgb-experiment --mac aa:bb:cc:dd:ee:ff --color 0,0,0" in expansion["safe_lighting_commands"][0]
+    assert "experiments/safe-rgb-aa-bb-cc-dd-ee-ff" in expansion["safe_lighting_commands"][0]
+    assert "safe-rainbow-experiment --mac aa:bb:cc:dd:ee:ff --frame-count 24 --interval-ms 50" in (
+        expansion["safe_lighting_commands"][1]
+    )
+    assert "safe-unbind-experiment --mac aa:bb:cc:dd:ee:ff --channel 8" in (
+        expansion["deferred_pairing_commands"][0]
+    )
+    assert action["recommended_commands"][0] == expansion["safe_lighting_commands"][0]
+    assert "receiver-evidence-report" in action["recommended_commands"][1]
+
+
 def test_probe_summarize_experiments_blocks_safe_pwm_on_identity_conflict(tmp_path):
     _write_receiver_evidence_required_payloads(tmp_path)
     readonly_live_list = tmp_path / "readonly" / "live-list.json"

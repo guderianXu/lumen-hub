@@ -86,6 +86,8 @@ RECEIVER_EVIDENCE_WRITE_SPECS = {
 RECEIVER_EVIDENCE_FALLBACK_WRITE_DIR = "experiments/safe-pwm-001"
 RECEIVER_OBSERVATION_FILE_NAME = "observation.json"
 RECEIVER_OBSERVATION_EFFECTS = ("changed", "unchanged", "unclear")
+RECEIVER_PWM_WRITE_OPERATIONS = {"live-pwm", "live-pwm-sync", "live-pwm-mirror"}
+RECEIVER_LIGHTING_WRITE_OPERATIONS = {"live-rgb", "live-rainbow"}
 RECEIVER_IDENTITY_SNAPSHOT_FILES = ("live-list.json", "readonly/live-list.json")
 RECEIVER_IDENTITY_MASTER_FILES = ("live-master.json", "readonly/live-master.json")
 RECEIVER_IDENTITY_FIELDS = ("master_mac", "is_bound", "channel", "rx_type", "device_type", "fan_count")
@@ -1514,12 +1516,108 @@ def receiver_control_next_action(
     hardware_status = str(hardware_validation.get("status") or "")
     identity_consistency = identity_consistency or {}
     identity_status = str(identity_consistency.get("status") or "")
+    write_sets = _receiver_actual_write_sets(path)
+    write_conflict_sets = [
+        item
+        for item in write_sets
+        if str(item.get("control_proof_status") or "")
+        in {
+            "machine-evidence-conflict",
+            "visual-observation-conflicts",
+            "invalid-observation",
+        }
+    ]
+    write_incomplete_sets = [
+        item
+        for item in write_sets
+        if str(item.get("control_proof_status") or "") == "machine-evidence-incomplete"
+    ]
+    pending_observation_sets = [
+        item
+        for item in write_sets
+        if str(item.get("control_proof_status") or "")
+        in {
+            "machine-evidence-complete-needs-observation",
+            "needs-clear-observation",
+        }
+    ]
+    confirmed_pwm_sets = [
+        item
+        for item in write_sets
+        if str(item.get("control_proof_status") or "") == "visually-confirmed"
+        and str(item.get("write_operation") or "") in RECEIVER_PWM_WRITE_OPERATIONS
+    ]
+    expansion_candidate: dict[str, Any] = {}
     recommended_commands: list[str] = []
+    can_run_safe_lighting = False
 
     if hardware_status == "errors":
         status = "validation-errors"
         reason = "Inspect validation_errors and receiver_validation_bundles before any write."
         can_run_safe_pwm = False
+    elif write_conflict_sets:
+        status = "write-validation-conflict"
+        reason = "At least one guarded write evidence set conflicts; inspect receiver-evidence-report before any more writes."
+        can_run_safe_pwm = False
+        recommended_commands.append(_tool_command("receiver-evidence-report", str(path)))
+    elif write_incomplete_sets:
+        status = "write-validation-incomplete"
+        reason = "At least one guarded write evidence set is incomplete; finish or remove that evidence before any more writes."
+        can_run_safe_pwm = False
+        recommended_commands.append(_tool_command("receiver-evidence-report", str(path)))
+    elif pending_observation_sets:
+        status = "write-validation-needs-observation"
+        reason = "A guarded write has complete machine logs, but still needs a clear visual/audible observation record."
+        can_run_safe_pwm = False
+        recommended_commands.extend(receiver_observation_commands(path))
+        recommended_commands.append(_tool_command("receiver-evidence-report", str(path)))
+    elif confirmed_pwm_sets and identity_status == "conflict":
+        status = "receiver-identity-conflict"
+        reason = "A PWM write was confirmed, but receiver identity logs now disagree; recapture the receiver bundle before extending control."
+        can_run_safe_pwm = False
+        recommended_commands.append(
+            _tool_command(
+                "--save-json",
+                str(path / "receiver-validation-bundle.json"),
+                "receiver-validation-bundle",
+                "--output-dir",
+                str(path),
+                "--capture-dir",
+                ".cache/lianli",
+            )
+        )
+    elif confirmed_pwm_sets and identity_status in {"missing", "incomplete"}:
+        status = "needs-receiver-identity-validation"
+        reason = "A PWM write was confirmed, but receiver identity evidence is incomplete; rerun the validation bundle before extending control."
+        can_run_safe_pwm = False
+        recommended_commands.append(
+            _tool_command(
+                "--save-json",
+                str(path / "receiver-validation-bundle.json"),
+                "receiver-validation-bundle",
+                "--output-dir",
+                str(path),
+                "--capture-dir",
+                ".cache/lianli",
+            )
+        )
+    elif confirmed_pwm_sets:
+        target = str(confirmed_pwm_sets[0].get("target") or "")
+        device = live_snapshot_devices.get(target.lower(), {}) if target else {}
+        expansion_candidate = receiver_safe_expansion_candidate(path, target, device, write_sets)
+        lighting_commands = _string_list(expansion_candidate.get("safe_lighting_commands"))
+        if lighting_commands:
+            status = "ready-for-safe-lighting-validation"
+            reason = "A single-target PWM write has been visually confirmed; the next safe expansion is one guarded lighting experiment."
+            can_run_safe_pwm = False
+            can_run_safe_lighting = True
+            recommended_commands.append(lighting_commands[0])
+            recommended_commands.append(_tool_command("receiver-evidence-report", str(path)))
+        else:
+            status = "write-validation-already-observed"
+            reason = "Confirmed PWM evidence is present and no unrun safe lighting validation command remains in this directory."
+            can_run_safe_pwm = False
+            recommended_commands.append(_tool_command("receiver-evidence-report", str(path)))
     elif hardware_status == "readonly-and-write-observed":
         status = "write-validation-already-observed"
         reason = "A guarded write experiment is already represented in this log directory."
@@ -1598,14 +1696,29 @@ def receiver_control_next_action(
         "status": status,
         "reason": reason,
         "can_run_safe_pwm": can_run_safe_pwm,
+        "can_run_safe_lighting": can_run_safe_lighting,
         "candidate_count": len(candidates),
         "ready_candidate_count": len(ready_candidates),
+        "write_evidence_set_count": len(write_sets),
+        "write_evidence_conflict_count": len(write_conflict_sets),
+        "write_evidence_incomplete_count": len(write_incomplete_sets),
+        "write_evidence_pending_observation_count": len(pending_observation_sets),
+        "confirmed_pwm_write_count": len(confirmed_pwm_sets),
         "hardware_status": hardware_status,
         "receiver_identity_status": identity_status,
         "receiver_identity_consistency": identity_consistency,
+        "safe_expansion_candidate": expansion_candidate,
         "recommended_commands": recommended_commands,
         "candidates": candidates,
     }
+
+
+def _receiver_actual_write_sets(path: Path) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in receiver_evidence_write_sets(path, {})
+        if str(item.get("status") or "") != "missing"
+    ]
 
 
 def receiver_safe_pwm_candidates(path: Path, live_snapshot_devices: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1653,6 +1766,99 @@ def receiver_safe_pwm_candidate(path: Path, mac: str, device: dict[str, Any]) ->
         "raw_hex_available": bool(device.get("raw_hex")),
         "safe_pwm_argv": argv,
         "safe_pwm_command": _tool_command(*argv),
+    }
+
+
+def receiver_safe_expansion_candidate(
+    path: Path,
+    target: str,
+    device: dict[str, Any],
+    write_sets: list[dict[str, Any]],
+) -> dict[str, Any]:
+    normalized_mac = _normalize_mac(target)
+    if not normalized_mac:
+        return {
+            "status": "missing-target",
+            "mac": "",
+            "safe_lighting_commands": [],
+            "deferred_pairing_commands": [],
+        }
+    present_operations = {
+        str(item.get("write_operation") or "")
+        for item in write_sets
+        if str(item.get("status") or "") != "missing"
+    }
+    lighting_commands = []
+    token = _path_token(normalized_mac)
+    if "live-rgb" not in present_operations:
+        argv = [
+            "safe-rgb-experiment",
+            "--mac",
+            normalized_mac,
+            "--color",
+            "0,0,0",
+            "--output-dir",
+            str(path / "experiments" / f"safe-rgb-{token}"),
+            "--confirm",
+            "WRITE-LIANLI",
+        ]
+        lighting_commands.append(_tool_command(*argv))
+    if "live-rainbow" not in present_operations:
+        argv = [
+            "safe-rainbow-experiment",
+            "--mac",
+            normalized_mac,
+            "--frame-count",
+            "24",
+            "--interval-ms",
+            "50",
+            "--output-dir",
+            str(path / "experiments" / f"safe-rainbow-{token}"),
+            "--confirm",
+            "WRITE-LIANLI",
+        ]
+        lighting_commands.append(_tool_command(*argv))
+
+    pairing_commands = []
+    is_bound = device.get("is_bound")
+    if is_bound is True and "live-unbind" not in present_operations:
+        argv = [
+            "safe-unbind-experiment",
+            "--mac",
+            normalized_mac,
+            "--output-dir",
+            str(path / "experiments" / f"safe-unbind-{token}"),
+            "--confirm",
+            "WRITE-LIANLI",
+        ]
+        channel = device.get("channel")
+        if isinstance(channel, int):
+            argv[3:3] = ["--channel", str(channel)]
+        pairing_commands.append(_tool_command(*argv))
+    elif is_bound is False and "live-bind" not in present_operations and isinstance(device.get("rx_type"), int):
+        argv = [
+            "safe-bind-experiment",
+            "--mac",
+            normalized_mac,
+            "--rx-type",
+            str(device["rx_type"]),
+            "--output-dir",
+            str(path / "experiments" / f"safe-bind-{token}"),
+            "--confirm",
+            "WRITE-LIANLI",
+        ]
+        channel = device.get("channel")
+        if isinstance(channel, int):
+            argv[5:5] = ["--channel", str(channel)]
+        pairing_commands.append(_tool_command(*argv))
+
+    return {
+        "status": "ready" if lighting_commands else "lighting-covered",
+        "mac": normalized_mac,
+        "completed_operations": sorted(present_operations),
+        "safe_lighting_commands": lighting_commands,
+        "deferred_pairing_commands": pairing_commands,
+        "note": "Run one lighting command at a time and record receiver-observation before trying pairing commands.",
     }
 
 

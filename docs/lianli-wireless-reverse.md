@@ -1094,6 +1094,14 @@ Risks:
   Conflicting machine logs become
   `write-evidence-machine-conflict`, so a manual observation cannot promote a
   mixed log set to validated control.
+  `receiver_control_next_action` now consumes those write evidence sets too:
+  complete machine logs without `observation.json` return
+  `write-validation-needs-observation`; a visually confirmed single-target PWM
+  write returns `ready-for-safe-lighting-validation` and recommends exactly one
+  guarded lighting experiment, starting with `safe-rgb-experiment --color
+  0,0,0`. The same payload exposes deferred bind/unbind commands under
+  `safe_expansion_candidate.deferred_pairing_commands`, but they are kept out of
+  the primary recommendation because pairing changes receiver ownership state.
   Negative, malformed, or ambiguous observations now produce explicit
   conflict/invalid/unclear statuses instead of being treated as merely missing
   observation. Confirmed observations also have to match the `live-pwm.json`

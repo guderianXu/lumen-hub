@@ -15,6 +15,7 @@
 - 已有 `receiver-observation`，用于把安全 PWM 后肉眼/听感确认的风扇变化，或 RGB/绑定实验后的实际变化，保存成 `observation.json`。
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
 - `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令；如果 receiver 身份证据冲突或不完整，会先要求重新采集整包验证日志。
+- `receiver_control_next_action` 会在安全 PWM 机器日志完整但缺少观察时要求先补 `receiver-observation`；只有 PWM 已经视觉/听感确认后，才会推荐下一步安全 RGB / rainbow 灯光实验。
 - GUI 的“汇总实验”会显示同一个下一步结论，并且只在 `receiver_control_next_action` 真正允许安全 PWM 时自动填入唯一候选 MAC。
 - 已有抓包驱动的安全写入门禁：`linux-control-write-gate`。
 - GUI 联力页已接入写入门禁；真实主窗口默认要求 write-gate 通过后才解锁写入。
@@ -36,6 +37,7 @@
 - [x] 新增 `receiver-observation`，用于把实际风扇变化记录进证据目录；`receiver-evidence-report` 会区分只收集机器日志和已经肉眼确认。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
+- [x] `receiver_control_next_action` 会在已确认 PWM 后给出下一阶段安全灯光实验建议，并把 bind/unbind 保留为延后验证命令。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并只在身份一致、写入门禁通过时自动填入唯一可用 MAC。
 
 ## 待完成
@@ -183,6 +185,20 @@ RGB/彩虹实验的 receiver 快照可能不会改变；如果分析日志带有
 不会因为 `likely_effective=false` 直接判定机器冲突。此时按报告推荐的
 `receiver-observation` 命令记录灯光实际变化即可。
 
+安全 PWM 已经有 `observation.json` 且 `receiver-evidence-report` 显示
+`write-evidence-confirmed` 后，再运行：
+
+```bash
+python tools/lianli_wireless_probe.py summarize-experiments .cache/lianli/hardware
+```
+
+如果 `receiver_control_next_action.status` 变为
+`ready-for-safe-lighting-validation`，只复制
+`receiver_control_next_action.recommended_commands[0]` 运行一个灯光实验。
+该命令会优先使用 `safe-rgb-experiment --color 0,0,0`；完成后仍然先记录
+对应 `observation.json`，再考虑 rainbow。`safe_expansion_candidate` 里也会列出
+`deferred_pairing_commands`，但 bind/unbind 会改变接收器绑定状态，必须等 PWM 和灯光证据都归档后再单独评估。
+
 ## 还没有做
 
 - 没有真实 L-Wireless 接收器枚举证据。
@@ -241,6 +257,12 @@ RGB/彩虹实验的 receiver 快照可能不会改变；如果分析日志带有
 - `experiments/safe-pwm-<mac>/analyze-live-pwm.json`
 - `experiments/safe-pwm-<mac>/summary.json`
 - `experiments/safe-pwm-<mac>/observation.json`
+- 如果 `receiver_control_next_action.status` 进入
+  `ready-for-safe-lighting-validation`，再追加
+  `experiments/safe-rgb-<mac>/live-rgb.json` /
+  `analyze-live-rgb.json` 和对应 `observation.json`；rainbow 同理保存
+  `experiments/safe-rainbow-<mac>/live-rainbow.json` /
+  `analyze-live-rainbow.json` 和对应 `observation.json`。
 - 如果测试主板 PWM 联动，则同样保存
   `experiments/safe-sync-<mac>/live-pwm-sync.json` /
   `analyze-live-pwm-sync.json`，或
