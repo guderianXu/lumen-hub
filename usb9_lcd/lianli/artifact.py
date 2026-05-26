@@ -540,6 +540,8 @@ def _empty_artifact_version_state(version: str) -> dict[str, Any]:
         "wireless_static_labels": Counter(),
         "wireless_js_clues": Counter(),
         "wireless_js_high_confidence": Counter(),
+        "wireless_js_ipc_events": Counter(),
+        "wireless_js_settings_keys": Counter(),
         "hid_product_ids": Counter(),
         "hid_command_categories": Counter(),
         "nsis_file_count": 0,
@@ -715,6 +717,18 @@ def _merge_wireless_js_report(state: dict[str, Any], payload: dict[str, Any]) ->
             state["wireless_js_clues"][name] += count
     for clue_name in _strings_from_any_list(summary.get("high_confidence_clues")):
         state["wireless_js_high_confidence"][clue_name] += 1
+    for item in payload.get("ipc_events", []) if isinstance(payload.get("ipc_events"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("key") or "")
+        if name:
+            state["wireless_js_ipc_events"][name] += int(item.get("count", 1) or 1)
+    for item in payload.get("settings_keys", []) if isinstance(payload.get("settings_keys"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("key") or "")
+        if name:
+            state["wireless_js_settings_keys"][name] += int(item.get("count", 1) or 1)
 
 
 def _merge_hid_js_report(state: dict[str, Any], payload: dict[str, Any]) -> None:
@@ -763,6 +777,8 @@ def _artifact_version_payload(state: dict[str, Any]) -> dict[str, Any]:
     wireless_static = dict(sorted(state["wireless_static_labels"].items()))
     wireless_js = dict(sorted(state["wireless_js_clues"].items()))
     wireless_js_high = dict(sorted(state["wireless_js_high_confidence"].items()))
+    wireless_js_ipc_events = dict(sorted(state["wireless_js_ipc_events"].items()))
+    wireless_js_settings_keys = dict(sorted(state["wireless_js_settings_keys"].items()))
     hid_categories = dict(sorted(state["hid_command_categories"].items()))
     changelog_score = int(state.get("changelog_score") or 0)
     changelog_keywords = dict(sorted(state["changelog_keywords"].items()))
@@ -773,6 +789,8 @@ def _artifact_version_payload(state: dict[str, Any]) -> dict[str, Any]:
         wireless_static=wireless_static,
         wireless_js=wireless_js,
         wireless_js_high=wireless_js_high,
+        wireless_js_ipc_events=wireless_js_ipc_events,
+        wireless_js_settings_keys=wireless_js_settings_keys,
         hid_categories=hid_categories,
     )
     return {
@@ -790,6 +808,8 @@ def _artifact_version_payload(state: dict[str, Any]) -> dict[str, Any]:
         "wireless_static_labels": wireless_static,
         "wireless_js_clues": wireless_js,
         "wireless_js_high_confidence": wireless_js_high,
+        "wireless_js_ipc_events": wireless_js_ipc_events,
+        "wireless_js_settings_keys": wireless_js_settings_keys,
         "hid_product_ids": dict(sorted(state["hid_product_ids"].items())),
         "hid_command_categories": hid_categories,
         "nsis_file_count": state["nsis_file_count"],
@@ -810,6 +830,8 @@ def _artifact_version_payload(state: dict[str, Any]) -> dict[str, Any]:
             rf_high_static=rf_high_static,
             rf_low_static=rf_low_static,
             wireless_js=wireless_js,
+            wireless_js_ipc_events=wireless_js_ipc_events,
+            wireless_js_settings_keys=wireless_js_settings_keys,
             hid_categories=hid_categories,
             nsis_file_count=state["nsis_file_count"],
             high_entropy_nsis_count=state["high_entropy_nsis_count"],
@@ -829,6 +851,8 @@ def _artifact_version_assessment(
     wireless_static: dict[str, int],
     wireless_js: dict[str, int],
     wireless_js_high: dict[str, int],
+    wireless_js_ipc_events: dict[str, int],
+    wireless_js_settings_keys: dict[str, int],
     hid_categories: dict[str, int],
 ) -> str:
     if rf_high_static or (RF_JS_CLUE_NAMES & set(wireless_js)):
@@ -868,6 +892,8 @@ def _artifact_version_next_steps(
     rf_high_static: dict[str, int],
     rf_low_static: dict[str, int],
     wireless_js: dict[str, int],
+    wireless_js_ipc_events: dict[str, int],
+    wireless_js_settings_keys: dict[str, int],
     hid_categories: dict[str, int],
     nsis_file_count: int,
     high_entropy_nsis_count: int,
@@ -888,6 +914,10 @@ def _artifact_version_next_steps(
             steps.append("Inspect surrounding bytes and entropy before using this version to prioritize a capture.")
     elif assessment == "wireless-adjacent-lead":
         steps.append("Treat this as adjacent wireless evidence; inspect JS/native bridge code before assuming RF control semantics.")
+        if wireless_js_ipc_events:
+            steps.append("Use extracted Electron message-queue events to drive Windows-side action tracing and USBPcap capture labels.")
+        if wireless_js_settings_keys:
+            steps.append("Use extracted settings keys to correlate L-Connect UI state with native bridge writes and persisted fan/light profiles.")
     elif assessment == "wired-hid-fan-lead":
         steps.append("Use these official HID command templates for AL/SL V2 wired fan support, but do not treat them as L-Wireless RF proof.")
     else:
@@ -927,6 +957,11 @@ def _artifact_matrix_summary(versions: list[dict[str, Any]]) -> dict[str, Any]:
         ],
         "wired_hid_fan_versions": [
             item["version"] for item in versions if item["assessment"] == "wired-hid-fan-lead"
+        ],
+        "wireless_js_interface_versions": [
+            item["version"]
+            for item in versions
+            if item.get("wireless_js_ipc_events") or item.get("wireless_js_settings_keys")
         ],
         "high_priority_capture_versions": [
             item["version"] for item in versions if item["capture_priority"] == "high"
@@ -1120,6 +1155,8 @@ def extract_wireless_js_clues(
 ) -> dict[str, Any]:
     root, root_type, candidates = _hid_js_candidates(path)
     clues: dict[str, dict[str, Any]] = {}
+    ipc_events: dict[str, dict[str, Any]] = {}
+    settings_keys: dict[str, dict[str, Any]] = {}
     files: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
 
@@ -1152,8 +1189,12 @@ def extract_wireless_js_clues(
         if file_entry["match_count"]:
             files.append(file_entry)
             _merge_js_clue_aggregates(clues, file_entry["clues"])
+            _merge_js_clue_aggregates(ipc_events, file_entry["ipc_events"])
+            _merge_js_clue_aggregates(settings_keys, file_entry["settings_keys"])
 
     clue_list = _sorted_hid_js_aggregates(clues)
+    ipc_event_list = _sorted_hid_js_aggregates(ipc_events)
+    settings_key_list = _sorted_hid_js_aggregates(settings_keys)
     return {
         "operation": "extract-wireless-js",
         "root": str(path),
@@ -1164,13 +1205,19 @@ def extract_wireless_js_clues(
         "skipped_file_count": len(skipped),
         "matched_file_count": len(files),
         "clues": clue_list,
+        "ipc_events": ipc_event_list,
+        "settings_keys": settings_key_list,
         "summary": {
             "clue_occurrences": sum(int(item["count"]) for item in clue_list),
+            "ipc_event_occurrences": sum(int(item["count"]) for item in ipc_event_list),
+            "settings_key_occurrences": sum(int(item["count"]) for item in settings_key_list),
             "categories": _js_clue_categories(clue_list),
             "confidence": _js_clue_confidence(clue_list),
             "high_confidence_clues": [
                 item["name"] for item in clue_list if item.get("confidence") == "high"
             ],
+            "top_ipc_events": [item["name"] for item in ipc_event_list[:12]],
+            "top_settings_keys": [item["name"] for item in settings_key_list[:12]],
         },
         "files": files,
         "skipped": skipped,
@@ -1269,13 +1316,105 @@ def _extract_wireless_js_file(root: Path, path: Path, text: str) -> dict[str, An
                 "note": pattern.note,
             }
         )
+    ipc_events = _extract_js_ipc_events(root, path, text)
+    settings_keys = _extract_js_settings_keys(root, path, text)
     return {
         "path": str(path),
         "relative_path": _relative_path(root, path),
         "size": path.stat().st_size,
-        "match_count": sum(item["count"] for item in clues),
+        "match_count": sum(item["count"] for item in clues)
+        + sum(item["count"] for item in ipc_events)
+        + sum(item["count"] for item in settings_keys),
         "clues": clues,
+        "ipc_events": ipc_events,
+        "settings_keys": settings_keys,
     }
+
+
+def _extract_js_ipc_events(root: Path, path: Path, text: str) -> list[dict[str, Any]]:
+    events: dict[str, list[re.Match[str]]] = {}
+    patterns = (
+        re.compile(r"\bevent\s*:\s*['\"]([^'\"]+)['\"]"),
+        re.compile(r"\bipcRenderer\.send\(\s*['\"]message-queue['\"]\s*,\s*['\"]([^'\"]+)['\"]"),
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            name = str(match.group(1)).strip()
+            if name:
+                events.setdefault(name, []).append(match)
+    return _js_named_match_items(
+        root,
+        path,
+        text,
+        events,
+        category="ipc-event",
+        note="Electron message-queue event observed in official front-end JS.",
+    )
+
+
+def _extract_js_settings_keys(root: Path, path: Path, text: str) -> list[dict[str, Any]]:
+    keys: dict[str, dict[str, Any]] = {}
+    pattern = re.compile(r"\bpipe\.(readSettingsLike|writeSettings)\(\s*['\"]([^'\"]+)['\"]")
+    for match in pattern.finditer(text):
+        operation = str(match.group(1)).strip()
+        settings_key = str(match.group(2)).strip()
+        if not operation or not settings_key:
+            continue
+        name = f"{operation}:{settings_key}"
+        entry = keys.setdefault(
+            name,
+            {
+                "operation": operation,
+                "settings_key": settings_key,
+                "matches": [],
+            },
+        )
+        entry["matches"].append(match)
+
+    relative = _relative_path(root, path)
+    return [
+        {
+            "key": name,
+            "name": name,
+            "category": "settings-key",
+            "operation": str(entry["operation"]),
+            "settings_key": str(entry["settings_key"]),
+            "count": len(entry["matches"]),
+            "file_count": 1,
+            "files": [relative],
+            "contexts": [
+                _hid_js_context(text, match.start(), match.end())
+                for match in entry["matches"][:4]
+            ],
+            "note": "L-Connect settings pipe key observed in official front-end JS.",
+        }
+        for name, entry in sorted(keys.items())
+    ]
+
+
+def _js_named_match_items(
+    root: Path,
+    path: Path,
+    text: str,
+    matches_by_name: dict[str, list[re.Match[str]]],
+    *,
+    category: str,
+    note: str,
+) -> list[dict[str, Any]]:
+    relative = _relative_path(root, path)
+    return [
+        {
+            "key": name,
+            "name": name,
+            "category": category,
+            "count": len(matches),
+            "file_count": 1,
+            "files": [relative],
+            "contexts": [_hid_js_context(text, match.start(), match.end()) for match in matches[:4]],
+            "note": note,
+        }
+        for name, matches in sorted(matches_by_name.items())
+    ]
 
 
 def _merge_hid_js_aggregates(target: dict[Any, dict[str, Any]], items: list[dict[str, Any]]) -> None:

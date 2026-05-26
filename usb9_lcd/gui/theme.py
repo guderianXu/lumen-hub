@@ -128,6 +128,24 @@ def gui_stylesheet() -> str:
         padding: 10px 12px;
     }
     QWidget#FanSummaryPanel { background: transparent; }
+    QFrame#FanProfileSidebar {
+        background: transparent;
+        border: 0;
+    }
+    QFrame#FanCurveEditorPanel,
+    QFrame#FanPermissionPanel,
+    QFrame#FanPermissionDetailPanel,
+    QFrame#FanStressCard {
+        background: #171a1b;
+        border: 1px solid #394145;
+        border-radius: 8px;
+    }
+    QFrame#FanCurveEditorPanel:hover,
+    QFrame#FanPermissionPanel:hover,
+    QFrame#FanPermissionDetailPanel:hover,
+    QFrame#FanStressCard:hover {
+        border-color: #4b5559;
+    }
     QWidget#FanPermissionStatus { background: transparent; }
     QFrame#FanPermissionStatusChip {
         background: #151819;
@@ -169,11 +187,13 @@ def gui_stylesheet() -> str:
     }
     QTabWidget#FanControlModeTabs::pane,
     QTabWidget#FanChannelDetailTabs::pane,
-    QTabWidget#FanPermissionInfoTabs::pane {
+    QTabWidget#FanPermissionInfoTabs::pane,
+    QTabWidget#FanProfileCurveTabs::pane {
         background: #151718;
         border-color: #303438;
     }
-    QTabWidget#FanControlModeTabs QTabBar::tab {
+    QTabWidget#FanControlModeTabs QTabBar::tab,
+    QTabWidget#FanProfileCurveTabs QTabBar::tab {
         padding: 7px 12px;
         min-width: 84px;
     }

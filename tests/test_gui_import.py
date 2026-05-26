@@ -1909,11 +1909,11 @@ def test_fan_page_exposes_control_center_layout_before_loading():
     assert page.fan_table.horizontalHeaderItem(3).text() == "关联传感器"
     assert [page.workspace_tabs.tabText(index) for index in range(page.workspace_tabs.count())] == [
         "仪表盘",
-        "曲线",
-        "调速",
-        "策略",
-        "通道",
-        "权限",
+        "实时曲线",
+        "手动调速",
+        "策略曲线",
+        "通道标定",
+        "权限维护",
         "压力测试",
         "历史",
     ]

@@ -1023,8 +1023,12 @@ Risks:
   `extract_hid_js_commands()` for turning minified L-Connect JS assets into
   structured AL V2 / SL V2 product ID, function, and HID report-template maps,
   and `extract_wireless_js_clues()` for summarizing wireless/USB/IPC clue
-  contexts in official JS bundles, plus warnings for high-entropy data where
-  isolated 4-byte VID/PID hits may be accidental.
+  contexts in official JS bundles. The wireless JS extractor now also emits
+  structured `ipc_events` and `settings_keys`, so Windows-side USBPcap actions
+  can be labeled from the official Electron message queue and settings pipe
+  keys without treating those interface hints as confirmed RF protocol proof.
+  High-entropy data still gets warnings where isolated 4-byte VID/PID hits may
+  be accidental.
 - `usb9_lcd.lianli.changelog`: official L-Connect 3 changelog analyzer. It
   accepts the live LIAN LI URL or saved HTML/text, extracts L3 versions, release
   dates, download links, wireless/RF/binding/fan-control evidence lines, and

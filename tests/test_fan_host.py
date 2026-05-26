@@ -77,11 +77,11 @@ def test_fan_host_layout_separates_dense_sections():
 
     assert [page.workspace_tabs.tabText(index) for index in range(page.workspace_tabs.count())] == [
         "仪表盘",
-        "曲线",
-        "调速",
-        "策略",
-        "通道",
-        "权限",
+        "实时曲线",
+        "手动调速",
+        "策略曲线",
+        "通道标定",
+        "权限维护",
         "压力测试",
         "历史",
     ]
@@ -101,6 +101,8 @@ def test_fan_host_layout_separates_dense_sections():
         "权限明细",
         "诊断建议",
     ]
+    assert page.permission_status_panel.objectName() == "FanPermissionPanel"
+    assert page.permission_detail_panel.objectName() == "FanPermissionDetailPanel"
     assert page.fan_count_value.objectName() == "FanSummaryValue"
     assert page.overview_rpm_chart.parentWidget().objectName() == "FanOverviewCharts"
     assert page.overview_temperature_chart.parentWidget().objectName() == "FanOverviewCharts"
@@ -169,6 +171,61 @@ def test_fan_host_control_rows_keep_identity_control_and_binding_separate():
     assert panel._sliders["CPU_FAN · PWM1/FAN1"]._name_label.text() == "CPU_FAN · CPU"
 
     panel.close()
+    app.quit()
+
+
+def test_embedded_profile_editor_splits_profile_state_from_curve_canvas(tmp_path: Path):
+    from PySide6.QtWidgets import QApplication, QFrame
+
+    from usb9_lcd.gui.fan_host import EmbeddedProfileEditor
+
+    class DummyCurve:
+        def __init__(self, points=None) -> None:
+            self.points = points or []
+
+    class DummyProfile:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.curves = {
+                "CPU": [(30, 25), (60, 70)],
+                "GPU": [(35, 30), (75, 85)],
+            }
+
+    class DummyProfileManager:
+        config_dir = tmp_path
+
+        def __init__(self) -> None:
+            self.profile = DummyProfile("quiet")
+
+        def list_names(self) -> list[str]:
+            return ["quiet"]
+
+        def load(self, _name: str) -> DummyProfile:
+            return self.profile
+
+        def get_active(self) -> DummyProfile:
+            return self.profile
+
+    class DummyCurveEditor(QFrame):
+        def __init__(self) -> None:
+            super().__init__()
+            self.curve = DummyCurve()
+
+        def set_curve(self, curve: DummyCurve) -> None:
+            self.curve = curve
+
+        def get_curve(self) -> DummyCurve:
+            return self.curve
+
+    app = QApplication.instance() or QApplication([])
+    editor = EmbeddedProfileEditor(DummyProfileManager(), DummyCurveEditor, DummyCurve, DummyProfile)
+
+    assert editor.findChild(QFrame, "FanProfileSidebar") is not None
+    assert editor.findChild(QFrame, "FanCurveEditorPanel") is not None
+    assert editor._curve_tabs.objectName() == "FanProfileCurveTabs"
+    assert editor._curve_tabs.minimumHeight() >= 540
+
+    editor.close()
     app.quit()
 
 

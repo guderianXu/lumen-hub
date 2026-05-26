@@ -796,12 +796,20 @@ def test_wireless_js_extractor_summarizes_usb_ipc_and_product_clues(tmp_path):
 
     analysis = extract_wireless_js_clues(path)
     clue_names = {item["name"] for item in analysis["clues"]}
+    ipc_names = {item["name"] for item in analysis["ipc_events"]}
+    settings_by_key = {item["settings_key"]: item for item in analysis["settings_keys"]}
 
     assert analysis["operation"] == "extract-wireless-js"
     assert analysis["matched_file_count"] == 1
     assert {"rf-sender-usb-id", "rf-receiver-usb-id", "l-wireless-product", "wireless-lcd-des-key"} <= clue_names
+    assert ipc_names == {"scanWireless"}
+    assert settings_by_key["WirelessConfig"]["operation"] == "writeSettings"
     assert analysis["summary"]["categories"]["usb-id"] == 2
     assert analysis["summary"]["categories"]["ipc"] == 3
+    assert analysis["summary"]["ipc_event_occurrences"] == 1
+    assert analysis["summary"]["settings_key_occurrences"] == 1
+    assert analysis["summary"]["top_ipc_events"] == ["scanWireless"]
+    assert analysis["summary"]["top_settings_keys"] == ["writeSettings:WirelessConfig"]
     assert analysis["summary"]["confidence"]["high"] >= 4
     assert analysis["warnings"] == [
         "Generic wireless/receiver/sender terms may come from UI or library code; prioritize high-confidence USB/product/API clues."
@@ -818,12 +826,22 @@ def test_artifact_evidence_matrix_ranks_versions_by_protocol_value(tmp_path):
         "syncSLV2FanRpm2MotherBoard(){x.write(t,[[224,16,98,r?17:16]])}",
         encoding="utf-8",
     )
+    wireless_js = tmp_path / "assets-v2.1.23-wireless.js"
+    wireless_js.write_text(
+        "ipcRenderer.send('message-queue', JSON.stringify({event:'updateControllerVersion'}));"
+        "pipe.readSettingsLike('ALV2Controller-%');",
+        encoding="utf-8",
+    )
     (tmp_path / "analyze-artifact-v2.1.17-exe.json").write_text(
         json.dumps(analyze_artifact_file(rf_artifact)),
         encoding="utf-8",
     )
     (tmp_path / "extract-hid-js-v2.1.23.json").write_text(
         json.dumps(extract_hid_js_commands(hid_js)),
+        encoding="utf-8",
+    )
+    (tmp_path / "extract-wireless-js-v2.1.23.json").write_text(
+        json.dumps(extract_wireless_js_clues(wireless_js)),
         encoding="utf-8",
     )
     (tmp_path / "analyze-artifact-v2.0.32-nsis-payload.json").write_text(
@@ -914,7 +932,10 @@ def test_artifact_evidence_matrix_ranks_versions_by_protocol_value(tmp_path):
     assert versions["v2.0.34"]["changelog_score"] == 24
     assert versions["v2.1.23"]["assessment"] == "wired-hid-fan-lead"
     assert versions["v2.1.23"]["hid_command_categories"] == {"discovery": 1, "sync": 1}
+    assert versions["v2.1.23"]["wireless_js_ipc_events"] == {"updateControllerVersion": 1}
+    assert versions["v2.1.23"]["wireless_js_settings_keys"] == {"readSettingsLike:ALV2Controller-%": 1}
     assert "v2.1.23" in matrix["summary"]["wired_hid_fan_versions"]
+    assert matrix["summary"]["wireless_js_interface_versions"] == ["v2.1.23"]
 
 
 def test_artifact_analyzer_finds_slv3_sensor_asset_models(tmp_path):

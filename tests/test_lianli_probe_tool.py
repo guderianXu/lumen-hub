@@ -651,13 +651,19 @@ def test_probe_extract_wireless_js_reports_usb_ipc_clues(tmp_path):
 
     payload = _run_probe("extract-wireless-js", str(root))
     clue_names = {item["name"] for item in payload["clues"]}
+    ipc_names = {item["name"] for item in payload["ipc_events"]}
+    settings_by_key = {item["settings_key"]: item for item in payload["settings_keys"]}
 
     assert payload["operation"] == "extract-wireless-js"
     assert payload["js_file_count"] == 1
     assert payload["matched_file_count"] == 1
     assert {"rf-sender-usb-id", "rf-receiver-usb-id", "l-wireless-product"} <= clue_names
+    assert ipc_names == {"scan"}
+    assert settings_by_key["WirelessConfig"]["operation"] == "writeSettings"
     assert payload["summary"]["categories"]["usb-id"] == 2
     assert payload["summary"]["categories"]["ipc"] == 3
+    assert payload["summary"]["top_ipc_events"] == ["scan"]
+    assert payload["summary"]["top_settings_keys"] == ["writeSettings:WirelessConfig"]
 
 
 def test_probe_analyze_changelog_reports_wireless_versions(tmp_path):

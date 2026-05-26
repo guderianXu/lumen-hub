@@ -1335,6 +1335,7 @@ class StressTestPanel(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+        self.setObjectName("FanStressPanel")
         self.burner = None
         self._tool_available: dict[str, bool] = {key: False for key in self._LABELS}
         self._buttons: dict[str, QPushButton] = {}
@@ -1365,7 +1366,7 @@ class StressTestPanel(QWidget):
         cards.setVerticalSpacing(12)
         for column, (kind, (title_text, tool_text)) in enumerate(self._LABELS.items()):
             card = QFrame()
-            card.setObjectName("MetricCard")
+            card.setObjectName("FanStressCard")
             card.setMinimumHeight(156)
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(14, 12, 14, 12)
@@ -1380,6 +1381,7 @@ class StressTestPanel(QWidget):
             state.setObjectName("FanStressState")
             state.setAlignment(Qt.AlignmentFlag.AlignCenter)
             button = QPushButton("启动")
+            button.setObjectName("PrimaryButton")
             button.setCheckable(True)
             button.setEnabled(False)
             button.clicked.connect(lambda _checked=False, current=kind: self.toggle(current))
@@ -1462,10 +1464,14 @@ class StressTestPanel(QWidget):
     def _set_kind_state(self, kind: str, running: bool) -> None:
         if kind not in self._buttons:
             return
-        self._buttons[kind].blockSignals(True)
-        self._buttons[kind].setChecked(running)
-        self._buttons[kind].setText("停止" if running else "启动")
-        self._buttons[kind].blockSignals(False)
+        button = self._buttons[kind]
+        button.blockSignals(True)
+        button.setChecked(running)
+        button.setText("停止" if running else "启动")
+        button.setObjectName("DangerButton" if running else "PrimaryButton")
+        button.style().unpolish(button)
+        button.style().polish(button)
+        button.blockSignals(False)
         self._state_labels[kind].setText("运行中" if running else "未运行")
         self._state_labels[kind].setStyleSheet("color: #d9847a;" if running else "color: #f2f3f0;")
         card = self._cards.get(kind)
@@ -1891,9 +1897,17 @@ class EmbeddedProfileEditor(QWidget):
         self._cpu_power = ""
         self._gpu_power = ""
 
-        layout = QVBoxLayout(self)
+        layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
+
+        sidebar = QFrame()
+        sidebar.setObjectName("FanProfileSidebar")
+        sidebar.setMinimumWidth(300)
+        sidebar.setMaximumWidth(420)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(12)
 
         top_card = QFrame()
         top_card.setObjectName("MetricCard")
@@ -1931,7 +1945,7 @@ class EmbeddedProfileEditor(QWidget):
             profile_layout.addWidget(button, 1, index)
             profile_layout.setColumnStretch(index, 1)
         top_layout.addLayout(profile_layout)
-        layout.addWidget(top_card)
+        sidebar_layout.addWidget(top_card)
 
         status = QFrame()
         status.setObjectName("MetricCard")
@@ -1947,15 +1961,38 @@ class EmbeddedProfileEditor(QWidget):
         status_layout.addWidget(self._fan_rpm_label, 1, 0, 1, 2)
         status_layout.setColumnStretch(0, 1)
         status_layout.setColumnStretch(1, 1)
-        layout.addWidget(status)
+        sidebar_layout.addWidget(status)
+        sidebar_layout.addStretch(1)
+
+        curve_panel = QFrame()
+        curve_panel.setObjectName("FanCurveEditorPanel")
+        curve_layout = QVBoxLayout(curve_panel)
+        curve_layout.setContentsMargins(14, 12, 14, 14)
+        curve_layout.setSpacing(10)
+        curve_header = QHBoxLayout()
+        curve_title = QLabel("曲线编辑")
+        curve_title.setObjectName("SectionLabel")
+        curve_hint = QLabel("CPU/GPU 曲线分开编辑，保存后再激活配置。")
+        curve_hint.setObjectName("FieldHint")
+        curve_hint.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        curve_header.addWidget(curve_title)
+        curve_header.addWidget(curve_hint, 1)
+        curve_layout.addLayout(curve_header)
 
         self._curve_tabs = QTabWidget()
-        self._curve_tabs.setMinimumHeight(430)
+        self._curve_tabs.setObjectName("FanProfileCurveTabs")
+        self._curve_tabs.setMinimumHeight(540)
         self._cpu_editor = self._make_curve_editor(curve_editor_cls)
         self._gpu_editor = self._make_curve_editor(curve_editor_cls)
         self._curve_tabs.addTab(self._curve_page("CPU 风扇曲线", self._cpu_editor), "CPU 曲线")
         self._curve_tabs.addTab(self._curve_page("GPU 风扇曲线", self._gpu_editor), "GPU 曲线")
-        layout.addWidget(self._curve_tabs, 1)
+        curve_layout.addWidget(self._curve_tabs, 1)
+
+        layout.addWidget(sidebar, 0, 0)
+        layout.addWidget(curve_panel, 0, 1)
+        layout.setColumnStretch(0, 0)
+        layout.setColumnStretch(1, 1)
+        layout.setRowStretch(0, 1)
 
         self._populate_list()
         self._btn_new.clicked.connect(self._new_profile)
@@ -1971,7 +2008,7 @@ class EmbeddedProfileEditor(QWidget):
 
     def _make_curve_editor(self, curve_editor_cls):  # noqa: ANN001
         editor = curve_editor_cls()
-        editor.setMinimumSize(560, 360)
+        editor.setMinimumSize(560, 420)
         editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         editor.setAutoFillBackground(True)
         editor.setStyleSheet("background: #eef0ed; border: 1px solid #62686c; border-radius: 6px;")
@@ -2509,12 +2546,21 @@ class FanControlHostPage(QWidget):
         self.strategy_quick_layout.addWidget(strategy_panel)
         self.strategy_quick_layout.addStretch(1)
 
+        permission_content = QWidget()
+        permission_content.setObjectName("FanPermissionContent")
+        permission_content_layout = QGridLayout(permission_content)
+        permission_content_layout.setContentsMargins(0, 0, 0, 0)
+        permission_content_layout.setHorizontalSpacing(12)
+        permission_content_layout.setVerticalSpacing(12)
+
         permission_panel = QFrame()
-        permission_panel.setObjectName("MetricCard")
-        permission_layout = QGridLayout(permission_panel)
+        permission_panel.setObjectName("FanPermissionPanel")
+        self.permission_status_panel = permission_panel
+        permission_panel.setMinimumWidth(300)
+        permission_panel.setMaximumWidth(440)
+        permission_layout = QVBoxLayout(permission_panel)
         permission_layout.setContentsMargins(14, 12, 14, 12)
-        permission_layout.setHorizontalSpacing(10)
-        permission_layout.setVerticalSpacing(8)
+        permission_layout.setSpacing(12)
         permission_title = QLabel("PWM 权限管理")
         permission_title.setObjectName("SectionLabel")
         permission_hint = QLabel("点击“请求系统权限”会调用 pkexec，并由系统弹窗要求输入密码。")
@@ -2548,8 +2594,8 @@ class FanControlHostPage(QWidget):
                 ("策略目录", self.permission_profile_value),
             )
         ):
-            permission_status_layout.addWidget(self._permission_status_chip(label, value), index // 3, index % 3)
-            permission_status_layout.setColumnStretch(index % 3, 1)
+            permission_status_layout.addWidget(self._permission_status_chip(label, value), index, 0)
+            permission_status_layout.setRowStretch(index, 1)
 
         permission_actions = QWidget()
         permission_actions.setObjectName("FanPermissionActions")
@@ -2571,13 +2617,24 @@ class FanControlHostPage(QWidget):
             permission_actions_layout.setColumnStretch(index % 2, 1)
         self.permission_detail_text = QTextEdit()
         self.permission_detail_text.setReadOnly(True)
-        self.permission_detail_text.setMinimumHeight(220)
+        self.permission_detail_text.setMinimumHeight(300)
         self.permission_wizard_text = QTextEdit()
         self.permission_wizard_text.setReadOnly(True)
-        self.permission_wizard_text.setMinimumHeight(220)
+        self.permission_wizard_text.setMinimumHeight(300)
         self.permission_info_tabs = QTabWidget()
         self.permission_info_tabs.setObjectName("FanPermissionInfoTabs")
-        self.permission_info_tabs.setMinimumHeight(280)
+        self.permission_info_tabs.setMinimumHeight(360)
+        permission_detail_panel = QFrame()
+        permission_detail_panel.setObjectName("FanPermissionDetailPanel")
+        self.permission_detail_panel = permission_detail_panel
+        permission_detail_panel_layout = QVBoxLayout(permission_detail_panel)
+        permission_detail_panel_layout.setContentsMargins(14, 12, 14, 14)
+        permission_detail_panel_layout.setSpacing(10)
+        permission_detail_title = QLabel("权限明细与诊断")
+        permission_detail_title.setObjectName("SectionLabel")
+        permission_detail_hint = QLabel("左侧只处理授权动作，这里单独显示文件状态、修复命令和诊断建议。")
+        permission_detail_hint.setObjectName("FieldHint")
+        permission_detail_hint.setWordWrap(True)
         permission_detail_page = QWidget()
         permission_detail_page_layout = QVBoxLayout(permission_detail_page)
         permission_detail_page_layout.setContentsMargins(0, 0, 0, 0)
@@ -2588,15 +2645,19 @@ class FanControlHostPage(QWidget):
         permission_wizard_page_layout.addWidget(self.permission_wizard_text)
         self.permission_info_tabs.addTab(permission_detail_page, "权限明细")
         self.permission_info_tabs.addTab(permission_wizard_page, "诊断建议")
-        permission_layout.addWidget(permission_title, 0, 0, 1, 2)
-        permission_layout.addWidget(permission_hint, 1, 0, 1, 2)
-        permission_layout.addWidget(permission_status, 2, 0)
-        permission_layout.addWidget(permission_actions, 2, 1)
-        permission_layout.addWidget(self.permission_info_tabs, 3, 0, 1, 2)
-        permission_layout.setColumnStretch(0, 1)
-        permission_layout.setColumnStretch(1, 1)
-        permission_layout.setRowStretch(3, 1)
-        self.permission_layout.addWidget(permission_panel)
+        permission_layout.addWidget(permission_title)
+        permission_layout.addWidget(permission_hint)
+        permission_layout.addWidget(permission_status)
+        permission_layout.addWidget(permission_actions)
+        permission_layout.addStretch(1)
+        permission_detail_panel_layout.addWidget(permission_detail_title)
+        permission_detail_panel_layout.addWidget(permission_detail_hint)
+        permission_detail_panel_layout.addWidget(self.permission_info_tabs, 1)
+        permission_content_layout.addWidget(permission_panel, 0, 0)
+        permission_content_layout.addWidget(permission_detail_panel, 0, 1)
+        permission_content_layout.setColumnStretch(0, 0)
+        permission_content_layout.setColumnStretch(1, 1)
+        self.permission_layout.addWidget(permission_content, 1)
         self.permission_layout.addStretch(1)
         self._update_permission_summary()
         self.run_permission_diagnostics(initial=True)
@@ -2765,11 +2826,11 @@ class FanControlHostPage(QWidget):
         self._refresh_channel_label_editor()
 
         self.workspace_tabs.addTab(self.overview_tab, "仪表盘")
-        self.workspace_tabs.addTab(self.charts_tab, "曲线")
-        self.workspace_tabs.addTab(self.control_tab, "调速")
-        self.workspace_tabs.addTab(self.strategy_tab, "策略")
-        self.workspace_tabs.addTab(self.details_tab, "通道")
-        self.workspace_tabs.addTab(self.permission_tab, "权限")
+        self.workspace_tabs.addTab(self.charts_tab, "实时曲线")
+        self.workspace_tabs.addTab(self.control_tab, "手动调速")
+        self.workspace_tabs.addTab(self.strategy_tab, "策略曲线")
+        self.workspace_tabs.addTab(self.details_tab, "通道标定")
+        self.workspace_tabs.addTab(self.permission_tab, "权限维护")
         self.workspace_tabs.addTab(self.test_tab, "压力测试")
         self.workspace_tabs.addTab(self.history_tab, "历史")
         self._workspace_tab_changed(0)
@@ -3020,7 +3081,7 @@ class FanControlHostPage(QWidget):
         elif widget is self.control_tab:
             height = 680
         elif widget is self.strategy_tab:
-            height = 860 if self.strategy_tabs.currentWidget() is self.strategy_editor_tab else 380
+            height = 760 if self.strategy_tabs.currentWidget() is self.strategy_editor_tab else 400
         elif widget is self.details_tab:
             height = 640
         elif widget is self.permission_tab:
@@ -3299,15 +3360,15 @@ class FanControlHostPage(QWidget):
         self._tabs = None
 
     def _prepare_profile_editor_for_embedding(self, profile_editor) -> None:  # noqa: ANN001
-        profile_editor.setMinimumHeight(820)
+        profile_editor.setMinimumHeight(640)
         profile_list = getattr(profile_editor, "_profile_list", None)
         if profile_list is not None:
             profile_list.setMaximumHeight(72)
         for attr in ("_cpu_editor", "_gpu_editor"):
             editor = getattr(profile_editor, attr, None)
             if editor is not None:
-                editor.setMinimumSize(520, 360)
-                editor.setMaximumHeight(460)
+                editor.setMinimumSize(560, 420)
+                editor.setMaximumHeight(16777215)
         status_frame = getattr(profile_editor, "_status_frame", None)
         if status_frame is not None:
             status_frame.setStyleSheet("background: #1a1b1c; border: 1px solid #33363a; border-radius: 6px;")
