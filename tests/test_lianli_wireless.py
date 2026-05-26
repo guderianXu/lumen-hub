@@ -2938,6 +2938,31 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
     assert report["status_counts"] == {"missing-capture": 7}
     assert report["capture_note_status_counts"] == {"missing": 6, "ok": 1}
     assert report["capture_note_present_count"] == 1
+    note_context = report["capture_note_context_summary"]
+    assert note_context["status"] == "consistent-target-context"
+    assert note_context["target_context_count"] == 1
+    assert note_context["complete_target_context_count"] == 1
+    assert note_context["common_target_context"] == {
+        "receiver_mac": "aa:bb:cc:dd:ee:ff",
+        "master_mac": "10:20:30:40:50:60",
+        "channel": "8",
+        "rx_type": "3",
+        "device_type": "2",
+        "fan_count": "3",
+        "led_count": "132",
+    }
+    assert note_context["common_target_args"] == [
+        "--mac",
+        "aa:bb:cc:dd:ee:ff",
+        "--master-mac",
+        "10:20:30:40:50:60",
+        "--channel",
+        "8",
+        "--rx-type",
+        "3",
+        "--device-type",
+        "2",
+    ]
     assert scenarios["direct-fan-speed"]["found"] is False
     assert scenarios["direct-fan-speed"]["status"] == "missing-capture"
     assert note["status"] == "ok"
@@ -2945,6 +2970,53 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
     assert note["target_context"]["receiver_mac"] == "aa:bb:cc:dd:ee:ff"
     assert note["usbpcap_interfaces"] == ["0416:8040", "0416:8041"]
     assert note["observations"] == ["Fans audibly changed after apply."]
+
+
+def test_capture_set_report_flags_capture_note_target_context_conflicts(tmp_path):
+    base = "lianli-v2117"
+    baseline_note = windows_capture_note(
+        "baseline",
+        capture_base=base,
+        receiver_mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=132,
+        mark_actions_done=True,
+    )
+    direct_note = windows_capture_note(
+        "direct-fan-speed",
+        capture_base=base,
+        receiver_mac="aa:bb:cc:dd:ee:00",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=132,
+        mark_actions_done=True,
+    )
+    (tmp_path / baseline_note["capture_note_file"]).write_text(json.dumps(baseline_note), encoding="utf-8")
+    (tmp_path / direct_note["capture_note_file"]).write_text(json.dumps(direct_note), encoding="utf-8")
+
+    report = capture_set_report(tmp_path, capture_base=base)
+    note_context = report["capture_note_context_summary"]
+
+    assert note_context["status"] == "target-context-conflict"
+    assert note_context["target_context_count"] == 2
+    assert note_context["conflicts"] == [
+        {
+            "field": "receiver_mac",
+            "values": [
+                {"value": "aa:bb:cc:dd:ee:00", "scenario_ids": ["direct-fan-speed"]},
+                {"value": "aa:bb:cc:dd:ee:ff", "scenario_ids": ["baseline"]},
+            ],
+        }
+    ]
+    assert "receiver_mac" not in note_context["common_target_context"]
+    assert note_context["common_target_context"]["channel"] == "8"
 
 
 def test_capture_set_report_feeds_static_rgb_observed_parameters_to_packet_preview(tmp_path):

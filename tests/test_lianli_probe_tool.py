@@ -3160,6 +3160,26 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
         packets,
         product_ids=["0x8040"] * len(packets),
     )
+    (tmp_path / f"{base}-01-direct-fan-speed.notes.json").write_text(
+        json.dumps(
+            {
+                "operation": "windows-capture-note",
+                "schema_version": "lianli-windows-capture-note/v1",
+                "scenario_id": "direct-fan-speed",
+                "capture_file": f"{base}-01-direct-fan-speed.pcapng",
+                "target_context": {
+                    "receiver_mac": "aa:bb:cc:dd:ee:ff",
+                    "master_mac": "10:20:30:40:50:60",
+                    "channel": 8,
+                    "rx_type": 3,
+                    "device_type": 2,
+                    "fan_count": 3,
+                    "led_count": 132,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     experiment_dir = tmp_path / "linux-experiments"
     _write_linux_experiment_summary_inputs(experiment_dir)
 
@@ -3179,6 +3199,11 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
     assert payload["found_capture_count"] == 1
     assert payload["evidence_found_count"] == 1
     assert payload["status_counts"] == {"evidence-found": 1, "missing-capture": 6}
+    assert payload["capture_note_context_summary"]["status"] == "consistent-target-context"
+    assert payload["capture_note_context_summary"]["common_target_args"][:2] == [
+        "--mac",
+        "aa:bb:cc:dd:ee:ff",
+    ]
     assert payload["aggregate_rf_operations"] == {"live-pwm": 1}
     assert payload["aggregate_matched_signatures"] == {"pwm": 1}
     deltas = payload["cross_scenario_deltas"]

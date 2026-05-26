@@ -88,6 +88,15 @@ CAPTURE_SUMMARY_SUFFIXES = {
     ".tsv",
 }
 CAPTURE_NOTE_SCHEMA_VERSION = "lianli-windows-capture-note/v1"
+_CAPTURE_NOTE_TARGET_CONTEXT_FIELDS = (
+    "receiver_mac",
+    "master_mac",
+    "channel",
+    "rx_type",
+    "device_type",
+    "fan_count",
+    "led_count",
+)
 TINYUZ_CTRL_LITERAL_LINE = 1
 TINYUZ_CTRL_CLIP_END = 2
 TINYUZ_CTRL_STREAM_END = 3
@@ -1111,6 +1120,7 @@ def capture_set_report(
         experiment_summary,
     )
     cross_scenario_deltas = _capture_set_cross_scenario_deltas(scenario_reports)
+    capture_note_context_summary = _capture_set_capture_note_context_summary(scenario_reports)
     return {
         "operation": "capture-set-report",
         "path": str(root),
@@ -1134,6 +1144,7 @@ def capture_set_report(
         "receiver_seen_count": receiver_seen_count,
         "aggregate_rf_operations": dict(sorted(aggregate_operations.items())),
         "aggregate_matched_signatures": dict(sorted(aggregate_matched_signatures.items())),
+        "capture_note_context_summary": capture_note_context_summary,
         "cross_scenario_deltas": cross_scenario_deltas,
         "linux_live_write_targets": live_write_targets,
         "hardware_validation": hardware_validation,
@@ -5412,6 +5423,171 @@ def _capture_set_cross_scenario_deltas(scenario_reports: list[dict[str, Any]]) -
         "scenario_deltas": scenario_deltas,
         "notes": notes,
     }
+
+
+def _capture_set_capture_note_context_summary(scenario_reports: list[dict[str, Any]]) -> dict[str, Any]:
+    contexts: list[dict[str, Any]] = []
+    status_counts: Counter[str] = Counter()
+    for report in scenario_reports:
+        if not isinstance(report, dict):
+            continue
+        note = report.get("capture_note")
+        if not isinstance(note, dict):
+            continue
+        note_status = str(note.get("status") or "missing")
+        status_counts[note_status] += 1
+        if note_status not in {"ok", "mismatch"}:
+            continue
+        context = _capture_note_context_item(report, note)
+        if context:
+            contexts.append(context)
+
+    present_contexts = [item for item in contexts if item.get("has_target_context")]
+    complete_contexts = [item for item in present_contexts if not item.get("missing_fields")]
+    conflicts = _capture_note_context_conflicts(present_contexts)
+    common_context = _capture_note_common_target_context(present_contexts, conflicts)
+    common_args = _capture_note_common_target_args(common_context)
+    return {
+        "status": _capture_note_context_summary_status(contexts, present_contexts, complete_contexts, conflicts),
+        "note_status_counts": dict(sorted(status_counts.items())),
+        "note_count": len(contexts),
+        "target_context_count": len(present_contexts),
+        "complete_target_context_count": len(complete_contexts),
+        "conflicts": conflicts,
+        "common_target_context": common_context,
+        "common_target_args": common_args,
+        "scenario_target_contexts": contexts,
+        "notes": _capture_note_context_summary_notes(contexts, present_contexts, conflicts, common_args),
+    }
+
+
+def _capture_note_context_item(report: dict[str, Any], note: dict[str, Any]) -> dict[str, Any]:
+    context = note.get("target_context") if isinstance(note.get("target_context"), dict) else {}
+    normalized = {
+        field: _capture_note_context_value(context.get(field))
+        for field in _CAPTURE_NOTE_TARGET_CONTEXT_FIELDS
+    }
+    missing = [field for field, value in normalized.items() if value == ""]
+    return {
+        "scenario_id": str(report.get("id") or note.get("scenario_id") or ""),
+        "capture_file": str(report.get("capture_file") or note.get("capture_file") or ""),
+        "capture_note_status": str(note.get("status") or ""),
+        "capture_note_path": str(note.get("path") or ""),
+        "target_context": normalized,
+        "has_target_context": any(value != "" for value in normalized.values()),
+        "missing_fields": missing,
+        "observations": _ordered_strings_from_list(note.get("observations")),
+        "warnings": _ordered_strings_from_list(note.get("warnings")),
+    }
+
+
+def _capture_note_context_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return str(value).lower()
+    text = str(value).strip()
+    return text.lower() if ":" in text else text
+
+
+def _capture_note_context_conflicts(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    conflicts: list[dict[str, Any]] = []
+    for field in _CAPTURE_NOTE_TARGET_CONTEXT_FIELDS:
+        by_value: dict[str, list[str]] = {}
+        for context in contexts:
+            target = context.get("target_context") if isinstance(context.get("target_context"), dict) else {}
+            value = _capture_note_context_value(target.get(field))
+            if not value:
+                continue
+            by_value.setdefault(value, []).append(str(context.get("scenario_id") or ""))
+        if len(by_value) <= 1:
+            continue
+        conflicts.append(
+            {
+                "field": field,
+                "values": [
+                    {
+                        "value": value,
+                        "scenario_ids": sorted(scenario_id for scenario_id in scenario_ids if scenario_id),
+                    }
+                    for value, scenario_ids in sorted(by_value.items())
+                ],
+            }
+        )
+    return conflicts
+
+
+def _capture_note_common_target_context(
+    contexts: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    conflict_fields = {str(item.get("field") or "") for item in conflicts if isinstance(item, dict)}
+    common: dict[str, Any] = {}
+    for field in _CAPTURE_NOTE_TARGET_CONTEXT_FIELDS:
+        if field in conflict_fields:
+            continue
+        values = {
+            _capture_note_context_value(
+                (context.get("target_context") if isinstance(context.get("target_context"), dict) else {}).get(field)
+            )
+            for context in contexts
+        }
+        values.discard("")
+        if len(values) == 1:
+            common[field] = next(iter(values))
+    return common
+
+
+def _capture_note_common_target_args(common_context: dict[str, Any]) -> list[str]:
+    args: list[str] = []
+    for field, option in (
+        ("receiver_mac", "--mac"),
+        ("master_mac", "--master-mac"),
+        ("channel", "--channel"),
+        ("rx_type", "--rx-type"),
+        ("device_type", "--device-type"),
+    ):
+        value = str(common_context.get(field) or "")
+        if value:
+            args.extend([option, value])
+    return args
+
+
+def _capture_note_context_summary_status(
+    contexts: list[dict[str, Any]],
+    present_contexts: list[dict[str, Any]],
+    complete_contexts: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
+) -> str:
+    if not contexts:
+        return "no-capture-notes"
+    if not present_contexts:
+        return "needs-target-context"
+    if conflicts:
+        return "target-context-conflict"
+    if len(complete_contexts) < len(present_contexts):
+        return "partial-target-context"
+    return "consistent-target-context"
+
+
+def _capture_note_context_summary_notes(
+    contexts: list[dict[str, Any]],
+    present_contexts: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
+    common_args: list[str],
+) -> list[str]:
+    if not contexts:
+        return ["No usable Windows capture note sidecars were found."]
+    if conflicts:
+        fields = ", ".join(str(item.get("field") or "") for item in conflicts)
+        return [f"Capture notes disagree on target context fields: {fields}."]
+    missing_items = [item for item in present_contexts if item.get("missing_fields")]
+    notes = []
+    if missing_items:
+        notes.append("Some capture notes are missing target context fields; regenerate them with windows-capture-note.")
+    if common_args:
+        notes.append("common_target_args can be copied into compare-capture or dry-run commands, but it is not write permission.")
+    return notes
 
 
 def _capture_set_cross_scenario_index(

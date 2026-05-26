@@ -391,6 +391,11 @@ Practical interpretation:
     animation. Each row shows Windows evidence status, Linux sender/endpoint
     confidence, attached experiment status, and operation-specific next
     commands instead of collapsing every target into a generic PWM experiment.
+    The same report now emits `capture_note_context_summary`, which aggregates
+    `<capture-stem>.notes.json` target context fields, flags MAC/channel/rx_type
+    conflicts across sidecars, and exposes `common_target_args` for no-write
+    `compare-capture` / dry-run commands. This is operator context only; it
+    does not unlock guarded writes.
     `capture-gap-report <capture-dir> --capture-base lianli-v2117` is the
     compact operator view of the same data: it sorts missing/partial scenarios
     by priority, names the next capture file to produce, lists proof gates such
