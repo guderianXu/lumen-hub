@@ -3003,6 +3003,7 @@ def test_capture_set_report_flags_capture_note_target_context_conflicts(tmp_path
 
     report = capture_set_report(tmp_path, capture_base=base)
     note_context = report["capture_note_context_summary"]
+    gap_report = capture_gap_report(tmp_path, capture_base=base)
 
     assert note_context["status"] == "target-context-conflict"
     assert note_context["target_context_count"] == 2
@@ -3017,6 +3018,8 @@ def test_capture_set_report_flags_capture_note_target_context_conflicts(tmp_path
     ]
     assert "receiver_mac" not in note_context["common_target_context"]
     assert note_context["common_target_context"]["channel"] == "8"
+    assert gap_report["capture_note_context_status"] == "target-context-conflict"
+    assert gap_report["capture_note_context_summary"]["conflicts"] == note_context["conflicts"]
 
 
 def test_capture_set_report_feeds_static_rgb_observed_parameters_to_packet_preview(tmp_path):

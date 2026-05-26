@@ -1408,6 +1408,9 @@ Risks:
   capture-set report as the source of truth but returns only actionable gaps:
   missing or partial scenario captures, operation-level blockers, the next
   capture to run, and proof gates for baseline, PWM, lighting, and pairing.
+  It now also carries `capture_note_context_summary`, so the compact report and
+  the validation gate both see sidecar target conflicts without opening the
+  full capture-set report.
   With no captures it prioritizes `lianli-v2117-00-baseline.pcapng`; with
   baseline/direct PWM already present it moves on to motherboard PWM sync before
   lighting, sort/quick-sync, and RF rebind.
@@ -1431,7 +1434,9 @@ Risks:
   the operator does not have to compare separate official-static, Windows
   capture, Linux hardware, and pairing-risk JSON files by hand. If
   `--artifact-dir` is omitted, the gate still works from capture and hardware
-  evidence only.
+  evidence only. A sidecar target conflict is reported as
+  `capture-note-target-context` and makes the gate status
+  `needs-capture-note-context-fix`.
 - `python tools/lianli_wireless_probe.py linux-interface-contract <capture-dir> --capture-base lianli-v2117 --experiment-dir <linux-log-dir>`:
   added and covered by direct/CLI tests; exports the stable
   `lianli-linux-interface-contract/v1` implementation contract directly. Use

@@ -1192,6 +1192,11 @@ def capture_gap_report(
     operation_gaps = _capture_gap_operation_items(matrix if isinstance(matrix, list) else [])
     next_capture = scenario_gaps[0] if scenario_gaps else {}
     status = _capture_gap_status(capture_report, scenario_gaps, operation_gaps)
+    capture_note_context_summary = (
+        capture_report.get("capture_note_context_summary")
+        if isinstance(capture_report.get("capture_note_context_summary"), dict)
+        else {}
+    )
     return {
         "operation": "capture-gap-report",
         "path": str(path.expanduser()),
@@ -1212,6 +1217,8 @@ def capture_gap_report(
         "error_count": int(capture_report.get("error_count") or 0),
         "sender_seen_count": int(capture_report.get("sender_seen_count") or 0),
         "receiver_seen_count": int(capture_report.get("receiver_seen_count") or 0),
+        "capture_note_context_status": str(capture_note_context_summary.get("status") or ""),
+        "capture_note_context_summary": capture_note_context_summary,
         "next_capture": next_capture,
         "scenario_gaps": scenario_gaps,
         "operation_gaps": operation_gaps,

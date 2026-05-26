@@ -205,6 +205,7 @@ def _validation_checklist(
 
     checks = [
         *_artifact_checks(artifact, target_artifact),
+        _capture_note_context_check(capture),
         _check(
             "windows-baseline-capture",
             "ok"
@@ -251,6 +252,41 @@ def _validation_checklist(
         _pairing_check(pairing, next_status),
     ]
     return checks
+
+
+def _capture_note_context_check(capture: dict[str, Any]) -> dict[str, Any]:
+    summary = capture.get("capture_note_context_summary")
+    if not isinstance(summary, dict):
+        return _check(
+            "capture-note-target-context",
+            "ok",
+            "No Windows capture note target context has been recorded yet.",
+            value="not-evaluated",
+        )
+    status = str(summary.get("status") or "")
+    if status == "target-context-conflict":
+        return _check(
+            "capture-note-target-context",
+            "blocker",
+            "Windows capture sidecars disagree on receiver MAC, master MAC, channel, rx_type, or related target fields.",
+            value=status,
+            detail={"conflicts": summary.get("conflicts", [])},
+        )
+    if status in {"partial-target-context", "needs-target-context"}:
+        return _check(
+            "capture-note-target-context",
+            "warning",
+            "Some Windows capture sidecars are missing target context; regenerate them before packet compare/write-gate review.",
+            value=status,
+            detail={"target_context_count": _int_value(summary.get("target_context_count"))},
+        )
+    return _check(
+        "capture-note-target-context",
+        "ok",
+        "Windows capture note target context is either absent or internally consistent.",
+        value=status or "unknown",
+        detail={"common_target_args": _string_list(summary.get("common_target_args"))},
+    )
 
 
 def _artifact_checks(artifact: dict[str, Any], target_artifact: dict[str, Any]) -> list[dict[str, Any]]:
@@ -405,6 +441,8 @@ def _validation_status(
     evidence_status = str(evidence.get("status") or "")
     next_status = _receiver_next_action_status(evidence)
     if blockers:
+        if any(str(item.get("name") or "") == "capture-note-target-context" for item in blockers):
+            return "needs-capture-note-context-fix"
         if capture_status == "analysis-errors":
             return "needs-capture-analysis-fix"
         if capture_status in {"needs-all-windows-captures", "needs-baseline-capture"}:
