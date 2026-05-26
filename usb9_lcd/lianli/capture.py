@@ -5312,6 +5312,7 @@ def _capture_set_scenario_report(
     capture_file = str(scenario.get("capture_file") or "")
     match = _capture_set_find_scenario_file(root, capture_files, scenario_id, capture_file)
     capture_note = _capture_set_scenario_note(root, capture_file, scenario_id)
+    planned_linux_commands = list(scenario.get("linux_commands", []) if isinstance(scenario.get("linux_commands"), list) else [])
     requirements = _capture_set_scenario_requirements(scenario_id)
     base_report: dict[str, Any] = {
         "id": scenario_id,
@@ -5320,7 +5321,8 @@ def _capture_set_scenario_report(
         "goal": scenario.get("goal", ""),
         "expected_evidence": list(scenario.get("expected_evidence", []) if isinstance(scenario.get("expected_evidence"), list) else []),
         "windows_actions": list(scenario.get("windows_actions", []) if isinstance(scenario.get("windows_actions"), list) else []),
-        "planned_linux_commands": list(scenario.get("linux_commands", []) if isinstance(scenario.get("linux_commands"), list) else []),
+        "planned_linux_commands": planned_linux_commands,
+        "contextual_planned_linux_commands": _capture_note_contextual_commands(planned_linux_commands, capture_note),
         "required_evidence": [requirement["label"] for requirement in requirements],
         "found": match is not None,
     }
@@ -5595,6 +5597,45 @@ def _capture_note_context_summary_notes(
     if common_args:
         notes.append("common_target_args can be copied into compare-capture or dry-run commands, but it is not write permission.")
     return notes
+
+
+def _capture_note_contextual_commands(commands: Iterable[str], capture_note: dict[str, Any]) -> list[str]:
+    if not isinstance(capture_note, dict) or str(capture_note.get("status") or "") != "ok":
+        return []
+    context = capture_note.get("target_context")
+    if not isinstance(context, dict):
+        return []
+    replacements = _capture_note_context_replacements(context)
+    if not replacements:
+        return []
+    contextual: list[str] = []
+    for command in commands:
+        if not isinstance(command, str):
+            continue
+        rewritten = command
+        for placeholder, value in replacements.items():
+            rewritten = rewritten.replace(placeholder, value)
+        if rewritten != command:
+            contextual.append(rewritten)
+    return _unique_preserve_order(contextual)
+
+
+def _capture_note_context_replacements(context: dict[str, Any]) -> dict[str, str]:
+    placeholders = {
+        "receiver_mac": "<receiver-mac>",
+        "master_mac": "<master-mac>",
+        "channel": "<channel>",
+        "rx_type": "<rx-type>",
+        "device_type": "<device-type>",
+        "fan_count": "<fan-count>",
+        "led_count": "<led-count>",
+    }
+    replacements: dict[str, str] = {}
+    for field, placeholder in placeholders.items():
+        value = _capture_note_context_value(context.get(field))
+        if value:
+            replacements[placeholder] = shlex.quote(value)
+    return replacements
 
 
 def _capture_set_cross_scenario_index(
@@ -9708,6 +9749,9 @@ def _capture_gap_scenario_items(scenarios: list[dict[str, Any]]) -> list[dict[st
                 "expected_evidence": _ordered_strings_from_list(scenario.get("expected_evidence")),
                 "windows_actions": _ordered_strings_from_list(scenario.get("windows_actions")),
                 "planned_linux_commands": _ordered_strings_from_list(scenario.get("planned_linux_commands")),
+                "contextual_planned_linux_commands": _ordered_strings_from_list(
+                    scenario.get("contextual_planned_linux_commands")
+                ),
                 "recommended_commands": _ordered_strings_from_list(scenario.get("recommended_commands")),
             }
         )
@@ -9870,12 +9914,28 @@ def _capture_gap_recommended_commands(
         capture_file = str(next_capture.get("capture_file") or "")
         if capture_file:
             commands.append(f"capture next scenario: {capture_file}")
-        commands.extend(_ordered_strings_from_list(next_capture.get("planned_linux_commands")))
+        commands.extend(
+            _capture_contextual_command_set(
+                _ordered_strings_from_list(next_capture.get("planned_linux_commands")),
+                _ordered_strings_from_list(next_capture.get("contextual_planned_linux_commands")),
+            )
+        )
     for gap in scenario_gaps[:2]:
         commands.extend(_ordered_strings_from_list(gap.get("recommended_commands")))
     for gap in operation_gaps[:2]:
         commands.extend(_ordered_strings_from_list(gap.get("recommended_commands")))
     return _unique_preserve_order(commands)
+
+
+def _capture_contextual_command_set(planned: list[str], contextual: list[str]) -> list[str]:
+    if not contextual:
+        return planned
+    retained = [command for command in planned if not _capture_command_has_placeholder(command)]
+    return _unique_preserve_order([*retained, *contextual])
+
+
+def _capture_command_has_placeholder(command: str) -> bool:
+    return bool(re.search(r"<[A-Za-z0-9_-]+>", command))
 
 
 def _windows_capture_runbook_tasks(
@@ -9898,7 +9958,11 @@ def _windows_capture_runbook_tasks(
         capture_path = root / capture_file if capture_file else root
         meta = _capture_gap_scenario_meta(scenario_id)
         priority = meta.get("priority")
-        linux_commands = _ordered_strings_from_list(scenario.get("linux_commands"))
+        planned_linux_commands = _ordered_strings_from_list(scenario.get("linux_commands"))
+        linux_commands = _capture_contextual_command_set(
+            planned_linux_commands,
+            _ordered_strings_from_list(report.get("contextual_planned_linux_commands")),
+        )
         tasks.append(
             {
                 "order": order,

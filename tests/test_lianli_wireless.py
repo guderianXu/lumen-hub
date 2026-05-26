@@ -2835,6 +2835,44 @@ def test_capture_gap_report_prioritizes_baseline_when_no_captures_exist(tmp_path
     )
 
 
+def test_capture_gap_report_fills_next_compare_command_from_capture_note(tmp_path):
+    base = "lianli-v2117"
+    baseline_packets = [
+        build_wireless_list_request(),
+        build_master_query_request(8),
+        _snapshot_payload(),
+    ]
+    _write_tshark_json_capture(
+        tmp_path / f"{base}-00-baseline.json",
+        baseline_packets,
+        product_ids=["0x8041", "0x8040", "0x8041"],
+    )
+    note = windows_capture_note(
+        "direct-fan-speed",
+        capture_base=base,
+        receiver_mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=132,
+        mark_actions_done=True,
+    )
+    (tmp_path / note["capture_note_file"]).write_text(json.dumps(note), encoding="utf-8")
+
+    report = capture_gap_report(tmp_path, capture_base=base)
+    compare_commands = [
+        command for command in report["recommended_commands"] if "compare-capture" in command
+    ]
+
+    assert report["next_capture"]["id"] == "direct-fan-speed"
+    assert compare_commands
+    assert any("aa:bb:cc:dd:ee:ff" in command for command in compare_commands)
+    assert all("<receiver-mac>" not in command for command in compare_commands)
+    assert any("--channel '8'" in command and "--rx-type '3'" in command for command in compare_commands)
+
+
 def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
     base = "lianli-v2117"
     report = windows_capture_runbook(tmp_path, capture_base=base)
@@ -2932,8 +2970,13 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
     )
 
     report = capture_set_report(tmp_path, capture_base=base)
+    gap_report = capture_gap_report(tmp_path, capture_base=base)
+    runbook = windows_capture_runbook(tmp_path, capture_base=base)
     scenarios = {scenario["id"]: scenario for scenario in report["scenarios"]}
     note = scenarios["direct-fan-speed"]["capture_note"]
+    direct_contextual = scenarios["direct-fan-speed"]["contextual_planned_linux_commands"]
+    direct_gap = next(item for item in gap_report["scenario_gaps"] if item["id"] == "direct-fan-speed")
+    direct_task = next(item for item in runbook["tasks"] if item["id"] == "direct-fan-speed")
 
     assert report["status_counts"] == {"missing-capture": 7}
     assert report["capture_note_status_counts"] == {"missing": 6, "ok": 1}
@@ -2965,6 +3008,13 @@ def test_capture_set_report_reads_capture_note_sidecar_without_treating_it_as_ca
     ]
     assert scenarios["direct-fan-speed"]["found"] is False
     assert scenarios["direct-fan-speed"]["status"] == "missing-capture"
+    assert any("aa:bb:cc:dd:ee:ff" in command and "<receiver-mac>" not in command for command in direct_contextual)
+    assert any("--channel '8'" in command and "--rx-type '3'" in command for command in direct_contextual)
+    assert direct_gap["contextual_planned_linux_commands"] == direct_contextual
+    assert direct_task["linux_analysis_commands"][-1] == direct_contextual[-1].replace(
+        f"{base}-01-direct-fan-speed.pcapng",
+        str(tmp_path / f"{base}-01-direct-fan-speed.pcapng"),
+    )
     assert note["status"] == "ok"
     assert note["operator"] == "xjw"
     assert note["target_context"]["receiver_mac"] == "aa:bb:cc:dd:ee:ff"

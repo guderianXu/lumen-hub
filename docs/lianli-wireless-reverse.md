@@ -1410,7 +1410,10 @@ Risks:
   capture to run, and proof gates for baseline, PWM, lighting, and pairing.
   It now also carries `capture_note_context_summary`, so the compact report and
   the validation gate both see sidecar target conflicts without opening the
-  full capture-set report.
+  full capture-set report. Scenario gaps also include
+  `contextual_planned_linux_commands`: when a sidecar has a consistent target
+  context, planned no-write `compare-capture` commands are emitted with
+  receiver MAC, master MAC, channel, rx_type, device_type, and LED count filled.
   With no captures it prioritizes `lianli-v2117-00-baseline.pcapng`; with
   baseline/direct PWM already present it moves on to motherboard PWM sync before
   lighting, sort/quick-sync, and RF rebind.
@@ -1425,7 +1428,10 @@ Risks:
   post-capture verification commands are explicit. `capture-set-report` reads
   `<capture-stem>.notes.json` sidecars back into each scenario and ignores them
   as capture inputs, so target MAC, master MAC, channel, rx_type, device_type,
-  fan count, LED count, and operator observations remain machine-readable.
+  fan count, LED count, and operator observations remain machine-readable. When
+  those fields are present, the runbook keeps the normal triage/protocol
+  commands and fills target placeholders in the per-scenario `compare-capture`
+  command.
 - `python tools/lianli_wireless_probe.py lianli-validation-gate --capture-dir <capture-dir> --hardware-dir <hardware-log-dir> --artifact-dir <artifact-report-dir> --capture-base lianli-v2117`:
   added as the top-level no-write readiness report. It composes
   optional `artifact-evidence-matrix`, `capture-gap-report`, `receiver-evidence-report`, and

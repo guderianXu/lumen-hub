@@ -3238,6 +3238,7 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
         str(experiment_dir),
     )
     scenarios = {scenario["id"]: scenario for scenario in payload["scenarios"]}
+    direct_contextual = scenarios["direct-fan-speed"]["contextual_planned_linux_commands"]
 
     assert payload["operation"] == "capture-set-report"
     assert payload["status"] == "partial-capture-set"
@@ -3250,6 +3251,8 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
         "--mac",
         "aa:bb:cc:dd:ee:ff",
     ]
+    assert any("aa:bb:cc:dd:ee:ff" in command and "<receiver-mac>" not in command for command in direct_contextual)
+    assert any("--channel '8'" in command and "--rx-type '3'" in command for command in direct_contextual)
     assert payload["aggregate_rf_operations"] == {"live-pwm": 1}
     assert payload["aggregate_matched_signatures"] == {"pwm": 1}
     deltas = payload["cross_scenario_deltas"]
