@@ -27,6 +27,7 @@ from usb9_lcd.lianli.artifact import (
 )
 from usb9_lcd.lianli.capture import (
     analyze_capture_file,
+    capture_gap_report,
     capture_protocol_report_file,
     capture_replay_plan_file,
     capture_signature_match_file,
@@ -339,6 +340,23 @@ def _build_parser() -> argparse.ArgumentParser:
     capture_set.add_argument("--rainbow-frames", type=int, default=3)
     capture_set.add_argument("--interval-ms", type=int, default=40)
     capture_set.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+
+    capture_gap = subparsers.add_parser(
+        "capture-gap-report",
+        help="Summarize missing Windows USBPcap scenarios and the next capture to run",
+    )
+    capture_gap.add_argument("path", type=Path)
+    capture_gap.add_argument("--version", default="2.1.17")
+    capture_gap.add_argument("--capture-base", default=None)
+    capture_gap.add_argument(
+        "--experiment-dir",
+        type=Path,
+        help="Attach summarize-experiments output from a Linux validation/experiment directory",
+    )
+    capture_gap.add_argument("--led-count", type=int, default=12)
+    capture_gap.add_argument("--rainbow-frames", type=int, default=3)
+    capture_gap.add_argument("--interval-ms", type=int, default=40)
+    capture_gap.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
 
     linux_contract = subparsers.add_parser(
         "linux-interface-contract",
@@ -1904,6 +1922,17 @@ def main(argv: list[str] | None = None) -> int:
         payload = summarize_capture_dir(args.path)
     elif command == "capture-set-report":
         payload = capture_set_report(
+            args.path,
+            version=args.version,
+            capture_base=args.capture_base,
+            experiment_dir=args.experiment_dir,
+            led_count=args.led_count,
+            rainbow_frames=args.rainbow_frames,
+            interval_ms=args.interval_ms,
+            effect_index=args.effect_index,
+        )
+    elif command == "capture-gap-report":
+        payload = capture_gap_report(
             args.path,
             version=args.version,
             capture_base=args.capture_base,

@@ -49,6 +49,7 @@ from usb9_lcd.lianli.capture import (
     analyze_capture_packets,
     capture_protocol_report_from_analysis,
     capture_protocol_report_file,
+    capture_gap_report,
     capture_replay_plan_from_analysis,
     capture_signature_match_packets,
     capture_set_report,
@@ -2168,6 +2169,36 @@ def test_capture_set_report_audits_planned_windows_scenarios(tmp_path):
     assert pwm_fields["pwm_values"]["kind"] == "pwm-tuple"
     assert operations["live-rgb"]["safety"]["visual_confirmation_required"] is True
     assert operations["live-bind"]["safety"]["pairing_recovery_required"] is True
+
+    gap_report = capture_gap_report(
+        tmp_path,
+        capture_base=base,
+        experiment_dir=experiment_dir,
+        led_count=12,
+        rainbow_frames=3,
+        interval_ms=40,
+    )
+
+    assert gap_report["operation"] == "capture-gap-report"
+    assert gap_report["status"] == "needs-windows-capture"
+    assert gap_report["source_capture_set_status"] == "partial-capture-set"
+    assert gap_report["missing_capture_count"] == 5
+    assert gap_report["next_capture"]["id"] == "motherboard-pwm-sync"
+    assert gap_report["next_capture"]["priority"] == 20
+    assert gap_report["next_capture"]["risk"] == "guarded fan-speed write"
+    assert gap_report["scenario_gaps"][-1]["id"] == "rf-rebind"
+    assert gap_report["scenario_gaps"][-1]["priority"] == 90
+    gate_statuses = {item["name"]: item["status"] for item in gap_report["proof_gates"]}
+    assert gate_statuses["baseline-before-writes"] == "ok"
+    assert gate_statuses["pwm-before-lighting"] == "ok"
+    assert gate_statuses["lighting-before-pairing"] == "blocked"
+    assert any(
+        command == f"capture next scenario: {base}-02-mb-pwm-sync.pcapng"
+        for command in gap_report["recommended_commands"]
+    )
+    operation_gaps = {item["operation"]: item for item in gap_report["operation_gaps"]}
+    assert "live-pwm" not in operation_gaps
+    assert operation_gaps["live-rgb"]["missing_scenarios"][0]["id"] == "lighting-static-and-off"
     sys_root = tmp_path / "sys"
     dev_root = tmp_path / "dev"
     _write_lianli_usb_sysfs_and_dev(sys_root, dev_root)
@@ -2778,6 +2809,28 @@ def test_pre_write_validation_requires_each_source_capture_to_pass(tmp_path):
     assert complete["validation_status"] == "passed"
     assert complete["allows_guarded_write"] is True
     assert complete["source_capture_coverage"]["missing_source_capture_paths"] == []
+
+
+def test_capture_gap_report_prioritizes_baseline_when_no_captures_exist(tmp_path):
+    base = "lianli-v2117"
+    report = capture_gap_report(tmp_path, capture_base=base)
+
+    assert report["operation"] == "capture-gap-report"
+    assert report["status"] == "needs-all-windows-captures"
+    assert report["source_capture_set_status"] == "no-captures-found"
+    assert report["scenario_count"] == 7
+    assert report["found_capture_count"] == 0
+    assert report["missing_capture_count"] == 7
+    assert report["next_capture"]["id"] == "baseline"
+    assert report["next_capture"]["phase"] == "identity-and-readonly"
+    assert report["next_capture"]["capture_file"] == f"{base}-00-baseline.pcapng"
+    assert report["proof_gates"][0]["name"] == "baseline-before-writes"
+    assert report["proof_gates"][0]["status"] == "blocked"
+    assert report["operation_gaps"][0]["operation"] == "receiver-snapshot"
+    assert any(
+        command == f"capture next scenario: {base}-00-baseline.pcapng"
+        for command in report["recommended_commands"]
+    )
 
 
 def test_capture_set_report_feeds_static_rgb_observed_parameters_to_packet_preview(tmp_path):

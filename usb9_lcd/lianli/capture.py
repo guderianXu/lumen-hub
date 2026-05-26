@@ -1136,6 +1136,67 @@ def capture_set_report(
     }
 
 
+def capture_gap_report(
+    path: Path,
+    *,
+    version: str = "2.1.17",
+    capture_base: str | None = None,
+    experiment_dir: Path | None = None,
+    led_count: int = 12,
+    rainbow_frames: int = 3,
+    interval_ms: int = 40,
+    effect_index: int = 1,
+) -> dict[str, Any]:
+    capture_report = capture_set_report(
+        path,
+        version=version,
+        capture_base=capture_base,
+        experiment_dir=experiment_dir,
+        led_count=led_count,
+        rainbow_frames=rainbow_frames,
+        interval_ms=interval_ms,
+        effect_index=effect_index,
+    )
+    scenarios = capture_report.get("scenarios")
+    matrix = capture_report.get("linux_control_matrix")
+    scenario_gaps = _capture_gap_scenario_items(scenarios if isinstance(scenarios, list) else [])
+    operation_gaps = _capture_gap_operation_items(matrix if isinstance(matrix, list) else [])
+    next_capture = scenario_gaps[0] if scenario_gaps else {}
+    status = _capture_gap_status(capture_report, scenario_gaps, operation_gaps)
+    return {
+        "operation": "capture-gap-report",
+        "path": str(path.expanduser()),
+        "version": version,
+        "capture_base": str(capture_report.get("capture_base") or capture_base or f"l-connect-v{version}"),
+        "experiment_dir": str(experiment_dir.expanduser()) if experiment_dir is not None else "",
+        "status": status,
+        "source_capture_set_status": str(capture_report.get("status") or ""),
+        "scenario_count": int(capture_report.get("scenario_count") or 0),
+        "found_capture_count": int(capture_report.get("found_capture_count") or 0),
+        "evidence_found_count": int(capture_report.get("evidence_found_count") or 0),
+        "missing_capture_count": int(
+            (capture_report.get("status_counts") or {}).get("missing-capture", 0)
+            if isinstance(capture_report.get("status_counts"), dict)
+            else 0
+        ),
+        "partial_evidence_count": int(capture_report.get("partial_evidence_count") or 0),
+        "error_count": int(capture_report.get("error_count") or 0),
+        "sender_seen_count": int(capture_report.get("sender_seen_count") or 0),
+        "receiver_seen_count": int(capture_report.get("receiver_seen_count") or 0),
+        "next_capture": next_capture,
+        "scenario_gaps": scenario_gaps,
+        "operation_gaps": operation_gaps,
+        "proof_gates": _capture_gap_proof_gates(capture_report, scenario_gaps, operation_gaps),
+        "recommended_commands": _capture_gap_recommended_commands(
+            path.expanduser(),
+            str(capture_report.get("capture_base") or capture_base or f"l-connect-v{version}"),
+            next_capture,
+            scenario_gaps,
+            operation_gaps,
+        ),
+    }
+
+
 def linux_interface_contract_report(
     path: Path,
     *,
@@ -9255,6 +9316,219 @@ def _capture_set_recommended_commands(root: Path, base: str, scenario_reports: l
                 commands.append(f"capture missing scenario: {capture_file}")
             continue
         commands.extend(str(command) for command in report.get("recommended_commands", []) if isinstance(command, str))
+    return _unique_preserve_order(commands)
+
+
+def _capture_gap_status(
+    capture_report: dict[str, Any],
+    scenario_gaps: list[dict[str, Any]],
+    operation_gaps: list[dict[str, Any]],
+) -> str:
+    if int(capture_report.get("error_count") or 0):
+        return "analysis-errors"
+    if int(capture_report.get("found_capture_count") or 0) == 0:
+        return "needs-all-windows-captures"
+    if any(item.get("id") == "baseline" for item in scenario_gaps):
+        return "needs-baseline-capture"
+    if scenario_gaps:
+        return "needs-windows-capture"
+    if operation_gaps:
+        return "windows-captures-complete-needs-linux-validation"
+    return "capture-matrix-complete"
+
+
+def _capture_gap_scenario_items(scenarios: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    gaps: list[dict[str, Any]] = []
+    for scenario in scenarios:
+        if not isinstance(scenario, dict):
+            continue
+        status = str(scenario.get("status") or "")
+        if status == "evidence-found":
+            continue
+        scenario_id = str(scenario.get("id") or "")
+        meta = _capture_gap_scenario_meta(scenario_id)
+        gaps.append(
+            {
+                "id": scenario_id,
+                "status": status,
+                "priority": int(meta["priority"]),
+                "phase": str(meta["phase"]),
+                "risk": str(meta["risk"]),
+                "capture_file": str(scenario.get("capture_file") or ""),
+                "path": str(scenario.get("path") or ""),
+                "goal": str(scenario.get("goal") or ""),
+                "missing_evidence": _ordered_strings_from_list(scenario.get("missing_evidence")),
+                "matched_evidence": _ordered_strings_from_list(scenario.get("matched_evidence")),
+                "expected_evidence": _ordered_strings_from_list(scenario.get("expected_evidence")),
+                "windows_actions": _ordered_strings_from_list(scenario.get("windows_actions")),
+                "planned_linux_commands": _ordered_strings_from_list(scenario.get("planned_linux_commands")),
+                "recommended_commands": _ordered_strings_from_list(scenario.get("recommended_commands")),
+            }
+        )
+    return sorted(gaps, key=lambda item: (int(item["priority"]), str(item["capture_file"])))
+
+
+def _capture_gap_scenario_meta(scenario_id: str) -> dict[str, Any]:
+    return {
+        "baseline": {
+            "priority": 0,
+            "phase": "identity-and-readonly",
+            "risk": "readonly",
+        },
+        "direct-fan-speed": {
+            "priority": 10,
+            "phase": "core-fan-speed-write",
+            "risk": "guarded fan-speed write",
+        },
+        "motherboard-pwm-sync": {
+            "priority": 20,
+            "phase": "motherboard-pwm-sync",
+            "risk": "guarded fan-speed write",
+        },
+        "lighting-static-and-off": {
+            "priority": 30,
+            "phase": "static-lighting-write",
+            "risk": "visual lighting write",
+        },
+        "lighting-generated-rainbow": {
+            "priority": 40,
+            "phase": "animated-lighting-write",
+            "risk": "visual lighting write",
+        },
+        "sort-quick-sync": {
+            "priority": 50,
+            "phase": "utility-settings-and-sort",
+            "risk": "settings rewrite",
+        },
+        "rf-rebind": {
+            "priority": 90,
+            "phase": "pairing-state-change",
+            "risk": "bind/unbind changes receiver pairing state",
+        },
+    }.get(
+        scenario_id,
+        {
+            "priority": 100,
+            "phase": "unknown",
+            "risk": "unknown",
+        },
+    )
+
+
+def _capture_gap_operation_items(matrix: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    gaps: list[dict[str, Any]] = []
+    for operation in matrix:
+        if not isinstance(operation, dict):
+            continue
+        overall = str(operation.get("overall_status") or "")
+        if overall == "linux-validated":
+            continue
+        name = str(operation.get("operation") or "")
+        gaps.append(
+            {
+                "operation": name,
+                "label": str(operation.get("label") or ""),
+                "risk": str(operation.get("risk") or ""),
+                "priority": _capture_gap_operation_priority(name),
+                "overall_status": overall,
+                "windows_evidence_status": str(operation.get("windows_evidence_status") or ""),
+                "linux_target_status": str(operation.get("linux_target_status") or ""),
+                "experiment_status": str(operation.get("experiment_status") or ""),
+                "required_runtime_fields": _ordered_strings_from_list(operation.get("required_runtime_fields")),
+                "missing_scenarios": [
+                    _capture_gap_operation_scenario_payload(item)
+                    for item in operation.get("scenario_statuses", [])
+                    if isinstance(item, dict) and str(item.get("status") or "") != "evidence-found"
+                ],
+                "recommended_commands": _ordered_strings_from_list(operation.get("recommended_commands")),
+            }
+        )
+    return sorted(gaps, key=lambda item: (int(item["priority"]), str(item["operation"])))
+
+
+def _capture_gap_operation_scenario_payload(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(item.get("id") or ""),
+        "status": str(item.get("status") or ""),
+        "capture_file": str(item.get("capture_file") or ""),
+        "goal": str(item.get("goal") or ""),
+        "missing_evidence": _ordered_strings_from_list(item.get("missing_evidence")),
+    }
+
+
+def _capture_gap_operation_priority(operation: str) -> int:
+    return {
+        "receiver-snapshot": 0,
+        "live-pwm": 10,
+        "live-pwm-sync": 20,
+        "live-pwm-mirror": 25,
+        "live-rgb": 30,
+        "live-rainbow": 40,
+        "live-bind": 90,
+        "live-unbind": 90,
+    }.get(operation, 100)
+
+
+def _capture_gap_proof_gates(
+    capture_report: dict[str, Any],
+    scenario_gaps: list[dict[str, Any]],
+    operation_gaps: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    gap_ids = {str(item.get("id") or "") for item in scenario_gaps}
+    operation_status = {
+        str(item.get("operation") or ""): str(item.get("overall_status") or "")
+        for item in operation_gaps
+    }
+    found_capture_count = int(capture_report.get("found_capture_count") or 0)
+    return [
+        {
+            "name": "baseline-before-writes",
+            "status": "ok" if "baseline" not in gap_ids and found_capture_count else "blocked",
+            "reason": "Receiver identity, master MAC, channel, rx_type, and idle snapshots must be captured before trusting write traffic.",
+        },
+        {
+            "name": "pwm-before-lighting",
+            "status": "ok" if operation_status.get("live-pwm", "linux-validated") == "linux-validated" else "blocked",
+            "reason": "Direct PWM is the lowest-risk write path and should be matched before RGB/rainbow writes are treated as actionable.",
+        },
+        {
+            "name": "lighting-before-pairing",
+            "status": (
+                "ok"
+                if operation_status.get("live-rgb", "linux-validated") == "linux-validated"
+                and operation_status.get("live-rainbow", "linux-validated") == "linux-validated"
+                else "blocked"
+            ),
+            "reason": "Bind/unbind should remain deferred until PWM plus both static and generated lighting writes have evidence.",
+        },
+        {
+            "name": "pairing-last",
+            "status": "blocked" if {"rf-rebind", "baseline"} & gap_ids else "manual-review",
+            "reason": "RF bind/unbind changes receiver pairing state; execute it only after lower-risk capture scenarios are complete.",
+        },
+    ]
+
+
+def _capture_gap_recommended_commands(
+    root: Path,
+    base: str,
+    next_capture: dict[str, Any],
+    scenario_gaps: list[dict[str, Any]],
+    operation_gaps: list[dict[str, Any]],
+) -> list[str]:
+    commands = [
+        _tool_command("windows-capture-plan", "--capture-base", base),
+        _tool_command("capture-set-report", str(root), "--capture-base", base),
+    ]
+    if next_capture:
+        capture_file = str(next_capture.get("capture_file") or "")
+        if capture_file:
+            commands.append(f"capture next scenario: {capture_file}")
+        commands.extend(_ordered_strings_from_list(next_capture.get("planned_linux_commands")))
+    for gap in scenario_gaps[:2]:
+        commands.extend(_ordered_strings_from_list(gap.get("recommended_commands")))
+    for gap in operation_gaps[:2]:
+        commands.extend(_ordered_strings_from_list(gap.get("recommended_commands")))
     return _unique_preserve_order(commands)
 
 

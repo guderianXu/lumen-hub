@@ -3117,6 +3117,23 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
     assert matrix["live-pwm"]["linux_target_status"] == "high-confidence"
     assert matrix["live-pwm"]["experiment_status"] == "validated"
     assert matrix["live-rgb"]["overall_status"] == "needs-windows-capture"
+    gap_payload = _run_probe(
+        "capture-gap-report",
+        str(tmp_path),
+        "--capture-base",
+        base,
+        "--experiment-dir",
+        str(experiment_dir),
+    )
+    assert gap_payload["operation"] == "capture-gap-report"
+    assert gap_payload["status"] == "needs-baseline-capture"
+    assert gap_payload["missing_capture_count"] == 6
+    assert gap_payload["next_capture"]["id"] == "baseline"
+    assert gap_payload["next_capture"]["capture_file"] == f"{base}-00-baseline.pcapng"
+    assert any(
+        command == f"capture next scenario: {base}-00-baseline.pcapng"
+        for command in gap_payload["recommended_commands"]
+    )
     contract = payload["linux_interface_contract"]
     assert contract["transport"]["sender"]["confidence"] == "high"
     assert contract["transport"]["sender"]["write_endpoint"] == "0x01"

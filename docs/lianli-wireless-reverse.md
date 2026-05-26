@@ -386,6 +386,11 @@ Practical interpretation:
     animation. Each row shows Windows evidence status, Linux sender/endpoint
     confidence, attached experiment status, and operation-specific next
     commands instead of collapsing every target into a generic PWM experiment.
+    `capture-gap-report <capture-dir> --capture-base lianli-v2117` is the
+    compact operator view of the same data: it sorts missing/partial scenarios
+    by priority, names the next capture file to produce, lists proof gates such
+    as baseline-before-write and lighting-before-pairing, and includes the
+    exact post-capture analyzer commands.
     `linux_interface_contract` then turns the same evidence into implementation
     inputs: PyUSB sender/receiver VID/PID and endpoints, `LianLiWirelessBackend`
     builder/send method names, required runtime fields, dry-run/safe CLI names,
@@ -1388,6 +1393,14 @@ Risks:
   `linux-control-preflight`, and `linux-control-action-plan`; each operation
   entry carries its relevant `protocol_deltas` so GUI/action-plan code can show
   the exact capture-derived parameter evidence next to the safe command.
+- `python tools/lianli_wireless_probe.py capture-gap-report <capture-dir> --capture-base lianli-v2117`:
+  added as a smaller companion to `capture-set-report`. It keeps the full
+  capture-set report as the source of truth but returns only actionable gaps:
+  missing or partial scenario captures, operation-level blockers, the next
+  capture to run, and proof gates for baseline, PWM, lighting, and pairing.
+  With no captures it prioritizes `lianli-v2117-00-baseline.pcapng`; with
+  baseline/direct PWM already present it moves on to motherboard PWM sync before
+  lighting, sort/quick-sync, and RF rebind.
 - `python tools/lianli_wireless_probe.py linux-interface-contract <capture-dir> --capture-base lianli-v2117 --experiment-dir <linux-log-dir>`:
   added and covered by direct/CLI tests; exports the stable
   `lianli-linux-interface-contract/v1` implementation contract directly. Use
