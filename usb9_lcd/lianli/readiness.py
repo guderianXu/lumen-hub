@@ -32,6 +32,7 @@ def lianli_validation_gate(
         capture_dir,
         version=version,
         capture_base=capture_base,
+        artifact_dir=artifact_dir,
         experiment_dir=experiment_dir,
         led_count=led_count,
         rainbow_frames=rainbow_frames,
@@ -547,6 +548,7 @@ def _validation_recommended_commands(
             str(capture_dir),
             "--hardware-dir",
             str(hardware_dir),
+            *(_artifact_dir_command_args(artifact_dir) if artifact_dir is not None else []),
             "--version",
             version,
             "--capture-base",
@@ -624,6 +626,12 @@ def _mapping_keys(value: Any) -> list[str]:
 
 def _tool_command(*parts: object) -> str:
     return "python tools/lianli_wireless_probe.py " + " ".join(shlex.quote(str(part)) for part in parts)
+
+
+def _artifact_dir_command_args(artifact_dir: Path | None) -> list[object]:
+    if artifact_dir is None:
+        return []
+    return ["--artifact-dir", str(artifact_dir)]
 
 
 def _unique_preserve_order(items: list[str]) -> list[str]:

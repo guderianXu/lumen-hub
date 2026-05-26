@@ -2947,6 +2947,67 @@ def test_windows_capture_runbook_combines_plan_with_current_gaps(tmp_path):
     assert "windows-capture-note baseline" in report["recommended_commands"][4]
 
 
+def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
+    base = "lianli-v2117"
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    (artifact_dir / "analyze-changelog-official.json").write_text(
+        json.dumps(
+            {
+                "operation": "analyze-changelog",
+                "source": "fixture-changelog.html",
+                "entries": [
+                    {
+                        "version": "2.1.17",
+                        "release_date": "2026-03-02",
+                        "wireless_score": 48,
+                        "matched_keywords": ["rf", "binding", "rpm-pwm", "l-wireless", "lighting"],
+                        "category_scores": {"transport": 14, "binding": 12, "fan": 10},
+                        "matched_lines": [
+                            {
+                                "text": "L-Wireless Utility fan settings switch to quick sync after sort settings.",
+                                "keywords": ["l-wireless", "lighting"],
+                                "score": 20,
+                            },
+                            {
+                                "text": "RF unbind/rebind fan speed settings behavior changed.",
+                                "keywords": ["rf", "binding", "rpm-pwm"],
+                                "score": 18,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runbook = windows_capture_runbook(tmp_path, capture_base=base, artifact_dir=artifact_dir)
+    tasks = {item["id"]: item for item in runbook["tasks"]}
+    gap_report = capture_gap_report(tmp_path, capture_base=base, artifact_dir=artifact_dir)
+    gap_ids = [item["id"] for item in gap_report["scenario_gaps"]]
+
+    assert runbook["artifact_capture_context_status"] == "target-found"
+    assert runbook["artifact_capture_changelog_score"] == 48
+    assert tasks["sort-quick-sync"]["base_priority"] == 50
+    assert tasks["sort-quick-sync"]["priority"] == 15
+    assert tasks["sort-quick-sync"]["changelog_focus"]["matched"] is True
+    assert "quick sync" in tasks["sort-quick-sync"]["changelog_focus"]["evidence"][0]["text"]
+    assert tasks["rf-rebind"]["base_priority"] == 90
+    assert tasks["rf-rebind"]["priority"] == 70
+    assert tasks["rf-rebind"]["changelog_focus"]["matched_keywords"] == ["binding", "rf"]
+    assert [item["id"] for item in runbook["tasks"][:4]] == [
+        "baseline",
+        "direct-fan-speed",
+        "sort-quick-sync",
+        "motherboard-pwm-sync",
+    ]
+    assert runbook["tasks"][0]["priority_order"] == 1
+    assert gap_ids[:4] == ["baseline", "direct-fan-speed", "sort-quick-sync", "motherboard-pwm-sync"]
+    assert gap_report["artifact_capture_context_status"] == "target-found"
+    assert "--artifact-dir" in gap_report["recommended_commands"][0]
+
+
 def test_windows_capture_note_generates_filled_sidecar_template():
     base = "lianli-v2117"
     note = windows_capture_note(

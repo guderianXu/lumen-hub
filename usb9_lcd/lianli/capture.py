@@ -1184,6 +1184,7 @@ def capture_gap_report(
     *,
     version: str = "2.1.17",
     capture_base: str | None = None,
+    artifact_dir: Path | None = None,
     experiment_dir: Path | None = None,
     led_count: int = 12,
     rainbow_frames: int = 3,
@@ -1200,9 +1201,13 @@ def capture_gap_report(
         interval_ms=interval_ms,
         effect_index=effect_index,
     )
+    artifact_context = _capture_artifact_context(version, artifact_dir)
     scenarios = capture_report.get("scenarios")
     matrix = capture_report.get("linux_control_matrix")
-    scenario_gaps = _capture_gap_scenario_items(scenarios if isinstance(scenarios, list) else [])
+    scenario_gaps = _capture_gap_scenario_items(
+        scenarios if isinstance(scenarios, list) else [],
+        artifact_context=artifact_context,
+    )
     operation_gaps = _capture_gap_operation_items(matrix if isinstance(matrix, list) else [])
     next_capture = scenario_gaps[0] if scenario_gaps else {}
     status = _capture_gap_status(capture_report, scenario_gaps, operation_gaps)
@@ -1240,6 +1245,13 @@ def capture_gap_report(
         "capture_note_context_summary": capture_note_context_summary,
         "capture_note_operator_status": str(capture_note_operator_summary.get("status") or ""),
         "capture_note_operator_summary": capture_note_operator_summary,
+        "artifact_capture_context": artifact_context,
+        "artifact_capture_context_status": str(artifact_context.get("status") or ""),
+        "artifact_capture_target_version": str(artifact_context.get("target_version") or ""),
+        "artifact_capture_changelog_score": _int_value(artifact_context.get("changelog_score")),
+        "artifact_capture_recommendation_score": _int_value(
+            artifact_context.get("capture_recommendation_score")
+        ),
         "next_capture": next_capture,
         "scenario_gaps": scenario_gaps,
         "operation_gaps": operation_gaps,
@@ -1250,6 +1262,7 @@ def capture_gap_report(
             next_capture,
             scenario_gaps,
             operation_gaps,
+            artifact_dir=artifact_dir,
         ),
     }
 
@@ -1260,6 +1273,7 @@ def windows_capture_runbook(
     version: str = "2.1.17",
     installer: Path | None = None,
     capture_base: str | None = None,
+    artifact_dir: Path | None = None,
     environment: str = "auto",
     experiment_dir: Path | None = None,
     led_count: int = 12,
@@ -1274,6 +1288,7 @@ def windows_capture_runbook(
         installer=installer,
         capture_base=base,
         environment=environment,
+        artifact_dir=artifact_dir,
     )
     capture_report = capture_set_report(
         root,
@@ -1288,10 +1303,11 @@ def windows_capture_runbook(
     scenarios = capture_report.get("scenarios")
     matrix = capture_report.get("linux_control_matrix")
     scenario_reports = scenarios if isinstance(scenarios, list) else []
-    scenario_gaps = _capture_gap_scenario_items(scenario_reports)
+    artifact_context = _capture_artifact_context(version, artifact_dir)
+    scenario_gaps = _capture_gap_scenario_items(scenario_reports, artifact_context=artifact_context)
     operation_gaps = _capture_gap_operation_items(matrix if isinstance(matrix, list) else [])
     next_gap = scenario_gaps[0] if scenario_gaps else {}
-    tasks = _windows_capture_runbook_tasks(root, plan, scenario_reports)
+    tasks = _windows_capture_runbook_tasks(root, plan, scenario_reports, artifact_context=artifact_context)
     next_task = next((task for task in tasks if task["capture_file"] == next_gap.get("capture_file")), {})
     status = _capture_gap_status(capture_report, scenario_gaps, operation_gaps)
     return {
@@ -1305,16 +1321,44 @@ def windows_capture_runbook(
         "complete_task_count": sum(1 for task in tasks if task["status"] == "evidence-found"),
         "missing_task_count": sum(1 for task in tasks if task["status"] == "missing-capture"),
         "partial_task_count": sum(1 for task in tasks if task["status"] == "partial-evidence"),
+        "artifact_capture_context": artifact_context,
+        "artifact_capture_context_status": str(artifact_context.get("status") or ""),
+        "artifact_capture_target_version": str(artifact_context.get("target_version") or ""),
+        "artifact_capture_changelog_score": _int_value(artifact_context.get("changelog_score")),
+        "artifact_capture_recommendation_score": _int_value(
+            artifact_context.get("capture_recommendation_score")
+        ),
         "next_task": next_task,
         "operator_rules": _windows_capture_runbook_operator_rules(),
         "windows_setup": _windows_capture_runbook_setup(plan),
         "tasks": tasks,
         "post_batch_commands": [
             _tool_command("capture-set-report", str(root), "--capture-base", base),
-            _tool_command("capture-gap-report", str(root), "--capture-base", base),
-            _tool_command("lianli-validation-gate", "--capture-dir", str(root), "--hardware-dir", ".cache/lianli/hardware", "--capture-base", base),
+            _tool_command(
+                "capture-gap-report",
+                str(root),
+                "--capture-base",
+                base,
+                *_artifact_dir_command_args(artifact_dir),
+            ),
+            _tool_command(
+                "lianli-validation-gate",
+                "--capture-dir",
+                str(root),
+                "--hardware-dir",
+                ".cache/lianli/hardware",
+                "--capture-base",
+                base,
+                *_artifact_dir_command_args(artifact_dir),
+            ),
         ],
-        "recommended_commands": _windows_capture_runbook_recommended_commands(root, base, version, next_task),
+        "recommended_commands": _windows_capture_runbook_recommended_commands(
+            root,
+            base,
+            version,
+            next_task,
+            artifact_dir=artifact_dir,
+        ),
         "capture_gap_summary": {
             "scenario_gap_count": len(scenario_gaps),
             "operation_gap_count": len(operation_gaps),
@@ -2199,10 +2243,12 @@ def windows_capture_plan(
     installer: Path | None = None,
     capture_base: str | None = None,
     environment: str = "auto",
+    artifact_dir: Path | None = None,
 ) -> dict[str, Any]:
     base = capture_base or f"l-connect-v{version}"
     installer_path = installer.expanduser() if installer is not None else None
     tools = _local_windows_capture_tools()
+    artifact_context = _capture_artifact_context(version, artifact_dir)
     return {
         "operation": "windows-capture-plan",
         "version": version,
@@ -2220,7 +2266,14 @@ def windows_capture_plan(
         ],
         "environment_matrix": _windows_capture_environment_matrix(tools),
         "host_setup": _windows_capture_host_setup_commands(base),
-        "scenarios": _windows_capture_scenarios(base),
+        "artifact_capture_context": artifact_context,
+        "artifact_capture_context_status": str(artifact_context.get("status") or ""),
+        "artifact_capture_target_version": str(artifact_context.get("target_version") or ""),
+        "artifact_capture_changelog_score": _int_value(artifact_context.get("changelog_score")),
+        "artifact_capture_recommendation_score": _int_value(
+            artifact_context.get("capture_recommendation_score")
+        ),
+        "scenarios": _windows_capture_plan_scenarios(base, artifact_context=artifact_context),
         "post_capture": {
             "preferred_linux_flow": [
                 f"python tools/lianli_wireless_probe.py analyze-capture {base}-00-baseline.pcapng",
@@ -9862,7 +9915,11 @@ def _capture_gap_status(
     return "capture-matrix-complete"
 
 
-def _capture_gap_scenario_items(scenarios: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _capture_gap_scenario_items(
+    scenarios: list[dict[str, Any]],
+    *,
+    artifact_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     gaps: list[dict[str, Any]] = []
     for scenario in scenarios:
         if not isinstance(scenario, dict):
@@ -9871,14 +9928,17 @@ def _capture_gap_scenario_items(scenarios: list[dict[str, Any]]) -> list[dict[st
         if status == "evidence-found":
             continue
         scenario_id = str(scenario.get("id") or "")
-        meta = _capture_gap_scenario_meta(scenario_id)
+        meta = _capture_gap_scenario_priority_meta(scenario_id, artifact_context)
+        focus = meta.get("changelog_focus") if isinstance(meta.get("changelog_focus"), dict) else {}
         gaps.append(
             {
                 "id": scenario_id,
                 "status": status,
                 "priority": int(meta["priority"]),
+                "base_priority": int(meta.get("base_priority") or meta["priority"]),
                 "phase": str(meta["phase"]),
                 "risk": str(meta["risk"]),
+                "changelog_focus": focus,
                 "capture_file": str(scenario.get("capture_file") or ""),
                 "path": str(scenario.get("path") or ""),
                 "goal": str(scenario.get("goal") or ""),
@@ -9894,6 +9954,26 @@ def _capture_gap_scenario_items(scenarios: list[dict[str, Any]]) -> list[dict[st
             }
         )
     return sorted(gaps, key=lambda item: (int(item["priority"]), str(item["capture_file"])))
+
+
+def _capture_gap_scenario_priority_meta(
+    scenario_id: str,
+    artifact_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    meta = dict(_capture_gap_scenario_meta(scenario_id))
+    raw_priority = meta.get("priority")
+    base_priority = int(raw_priority if raw_priority is not None else 100)
+    focus = _capture_changelog_scenario_focus(scenario_id, artifact_context)
+    priority = base_priority
+    if focus:
+        target_priority = int(focus.get("target_priority") or base_priority)
+        safety_floor = int(focus.get("safety_floor") or target_priority)
+        priority = max(safety_floor, min(base_priority, target_priority))
+        focus = {**focus, "base_priority": base_priority, "priority": priority}
+    meta["base_priority"] = base_priority
+    meta["priority"] = priority
+    meta["changelog_focus"] = focus
+    return meta
 
 
 def _capture_gap_scenario_meta(scenario_id: str) -> dict[str, Any]:
@@ -9941,6 +10021,215 @@ def _capture_gap_scenario_meta(scenario_id: str) -> dict[str, Any]:
             "risk": "unknown",
         },
     )
+
+
+def _capture_artifact_context(version: str, artifact_dir: Path | None) -> dict[str, Any]:
+    if artifact_dir is None:
+        return {"status": "not-configured", "version": version}
+    root = artifact_dir.expanduser()
+    try:
+        from usb9_lcd.lianli.artifact import artifact_evidence_matrix
+
+        matrix = artifact_evidence_matrix(root)
+    except Exception as error:  # noqa: BLE001 - artifact context should not hide capture gaps.
+        return {
+            "status": "missing-artifact-reports" if not root.exists() else "analysis-error",
+            "path": str(root),
+            "version": version,
+            "error": str(error),
+        }
+    target = _capture_artifact_target_version(matrix, version)
+    if not target:
+        return {
+            "status": "target-missing",
+            "path": str(root),
+            "version": version,
+            "matrix_status": str(matrix.get("status") or ""),
+            "summary": matrix.get("summary") if isinstance(matrix.get("summary"), dict) else {},
+        }
+    return {
+        "status": "target-found",
+        "path": str(root),
+        "version": version,
+        "matrix_status": str(matrix.get("status") or ""),
+        "target_version": str(target.get("version") or ""),
+        "assessment": str(target.get("assessment") or ""),
+        "capture_priority": str(target.get("capture_priority") or ""),
+        "changelog_score": _int_value(target.get("changelog_score")),
+        "capture_recommendation_score": _int_value(target.get("capture_recommendation_score")),
+        "changelog_keywords": _int_mapping(target.get("changelog_keywords")),
+        "changelog_category_scores": _int_mapping(target.get("changelog_category_scores")),
+        "changelog_evidence": _capture_changelog_evidence(target.get("changelog_evidence")),
+    }
+
+
+def _capture_artifact_target_version(matrix: dict[str, Any], version: str) -> dict[str, Any]:
+    wanted = _normalize_lconnect_version(version)
+    versions = matrix.get("versions")
+    if not isinstance(versions, list):
+        return {}
+    for item in versions:
+        if isinstance(item, dict) and _normalize_lconnect_version(str(item.get("version") or "")) == wanted:
+            return item
+    return {}
+
+
+def _capture_changelog_evidence(value: Any) -> list[dict[str, Any]]:
+    evidence = []
+    if not isinstance(value, list):
+        return evidence
+    for item in value[:8]:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "")
+        if not text:
+            continue
+        evidence.append(
+            {
+                "text": text,
+                "keywords": _ordered_strings_from_list(item.get("keywords")),
+                "score": _int_value(item.get("score")),
+            }
+        )
+    return evidence
+
+
+def _capture_changelog_scenario_focus(
+    scenario_id: str,
+    artifact_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not artifact_context or str(artifact_context.get("status") or "") != "target-found":
+        return {}
+    if _int_value(artifact_context.get("changelog_score")) <= 0:
+        return {}
+    spec = _capture_changelog_scenario_focus_spec(scenario_id)
+    if not spec:
+        return {}
+    keywords = {str(key).lower() for key in _int_mapping(artifact_context.get("changelog_keywords"))}
+    categories = {str(key).lower() for key in _int_mapping(artifact_context.get("changelog_category_scores"))}
+    evidence = artifact_context.get("changelog_evidence")
+    evidence_items = [item for item in evidence if isinstance(item, dict)] if isinstance(evidence, list) else []
+    evidence_text = " ".join(str(item.get("text") or "").lower() for item in evidence_items)
+    evidence_keywords = {
+        str(keyword).lower()
+        for item in evidence_items
+        for keyword in _ordered_strings_from_list(item.get("keywords"))
+    }
+    matched_keywords = sorted(
+        (keywords | categories | evidence_keywords)
+        & {str(item).lower() for item in spec.get("keywords", set())}
+    )
+    matched_phrases = [
+        phrase
+        for phrase in spec.get("phrases", ())
+        if str(phrase).lower() in evidence_text
+    ]
+    if not matched_keywords and not matched_phrases:
+        return {}
+    return {
+        "matched": True,
+        "reason": str(spec.get("reason") or "Target changelog mentions this scenario."),
+        "target_priority": int(spec.get("target_priority") or 100),
+        "safety_floor": int(spec.get("safety_floor") or spec.get("target_priority") or 100),
+        "matched_keywords": matched_keywords,
+        "matched_phrases": matched_phrases,
+        "changelog_score": _int_value(artifact_context.get("changelog_score")),
+        "evidence": _capture_focus_evidence(evidence_items, matched_keywords, matched_phrases),
+    }
+
+
+def _capture_changelog_scenario_focus_spec(scenario_id: str) -> dict[str, Any]:
+    return {
+        "direct-fan-speed": {
+            "target_priority": 10,
+            "safety_floor": 10,
+            "keywords": {"rpm-pwm", "wireless-fan", "fan"},
+            "phrases": ("fan speed", "rpm", "pwm", "风扇", "風扇", "转速", "轉速"),
+            "reason": "Target changelog mentions fan speed/PWM behavior; direct PWM remains the first write proof.",
+        },
+        "motherboard-pwm-sync": {
+            "target_priority": 15,
+            "safety_floor": 15,
+            "keywords": {"motherboard-sync"},
+            "phrases": ("motherboard", "mb rpm", "pwm sync", "主板"),
+            "reason": "Target changelog mentions motherboard/RPM/PWM sync behavior.",
+        },
+        "sort-quick-sync": {
+            "target_priority": 15,
+            "safety_floor": 15,
+            "keywords": {"l-wireless", "lighting", "wireless-fan"},
+            "phrases": ("quick sync", "quick-sync", "sort", "sorting", "utility", "settings", "快速同步", "排序"),
+            "reason": "Target changelog mentions L-Wireless Utility sorting or quick-sync behavior.",
+        },
+        "lighting-static-and-off": {
+            "target_priority": 25,
+            "safety_floor": 25,
+            "keywords": {"lighting", "wireless-fan"},
+            "phrases": ("lighting", "rgb", "light", "led", "灯效", "燈效"),
+            "reason": "Target changelog mentions wireless lighting behavior; capture static/off before animation.",
+        },
+        "lighting-generated-rainbow": {
+            "target_priority": 35,
+            "safety_floor": 35,
+            "keywords": {"lighting", "wireless-fan"},
+            "phrases": ("rainbow", "spectrum", "animation", "effect", "灯效", "燈效"),
+            "reason": "Target changelog mentions wireless lighting effects; animation stays after static/off.",
+        },
+        "rf-rebind": {
+            "target_priority": 70,
+            "safety_floor": 70,
+            "keywords": {"rf", "binding"},
+            "phrases": ("unbind", "rebind", "bind", "binding", "pairing", "配对", "绑定", "解除绑定"),
+            "reason": "Target changelog mentions RF binding; priority is raised but pairing remains after lower-risk writes.",
+        },
+    }.get(scenario_id, {})
+
+
+def _capture_focus_evidence(
+    evidence_items: list[dict[str, Any]],
+    matched_keywords: list[str],
+    matched_phrases: list[str],
+) -> list[dict[str, Any]]:
+    matched = []
+    keyword_set = {keyword.lower() for keyword in matched_keywords}
+    phrase_set = {phrase.lower() for phrase in matched_phrases}
+    for item in evidence_items:
+        text = str(item.get("text") or "")
+        text_lower = text.lower()
+        item_keywords = {keyword.lower() for keyword in _ordered_strings_from_list(item.get("keywords"))}
+        if keyword_set & item_keywords or any(phrase in text_lower for phrase in phrase_set):
+            matched.append(
+                {
+                    "text": text,
+                    "keywords": sorted(item_keywords),
+                    "score": _int_value(item.get("score")),
+                }
+            )
+        if len(matched) >= 3:
+            break
+    return matched
+
+
+def _normalize_lconnect_version(version: str) -> str:
+    text = str(version or "").strip().lower()
+    return text[1:] if text.startswith("v") else text
+
+
+def _int_mapping(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): _int_value(raw)
+        for key, raw in sorted(value.items(), key=lambda item: str(item[0]))
+        if _int_value(raw) > 0
+    }
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _capture_gap_operation_items(matrix: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -10043,10 +10332,13 @@ def _capture_gap_recommended_commands(
     next_capture: dict[str, Any],
     scenario_gaps: list[dict[str, Any]],
     operation_gaps: list[dict[str, Any]],
+    *,
+    artifact_dir: Path | None = None,
 ) -> list[str]:
     commands = [
-        _tool_command("windows-capture-plan", "--capture-base", base),
+        _tool_command("windows-capture-plan", "--capture-base", base, *_artifact_dir_command_args(artifact_dir)),
         _tool_command("capture-set-report", str(root), "--capture-base", base),
+        _tool_command("capture-gap-report", str(root), "--capture-base", base, *_artifact_dir_command_args(artifact_dir)),
     ]
     if next_capture:
         capture_file = str(next_capture.get("capture_file") or "")
@@ -10080,6 +10372,8 @@ def _windows_capture_runbook_tasks(
     root: Path,
     plan: dict[str, Any],
     scenario_reports: list[dict[str, Any]],
+    *,
+    artifact_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     report_by_id = {
         str(report.get("id") or ""): report
@@ -10094,7 +10388,8 @@ def _windows_capture_runbook_tasks(
         report = report_by_id.get(scenario_id, {})
         capture_file = str(scenario.get("capture_file") or report.get("capture_file") or "")
         capture_path = root / capture_file if capture_file else root
-        meta = _capture_gap_scenario_meta(scenario_id)
+        meta = _capture_gap_scenario_priority_meta(scenario_id, artifact_context)
+        focus = meta.get("changelog_focus") if isinstance(meta.get("changelog_focus"), dict) else {}
         priority = meta.get("priority")
         planned_linux_commands = _ordered_strings_from_list(scenario.get("linux_commands"))
         linux_commands = _capture_contextual_command_set(
@@ -10107,8 +10402,14 @@ def _windows_capture_runbook_tasks(
                 "id": scenario_id,
                 "status": str(report.get("status") or "missing-capture"),
                 "priority": int(priority if priority is not None else 100),
+                "base_priority": int(
+                    meta.get("base_priority")
+                    if meta.get("base_priority") is not None
+                    else (priority if priority is not None else 100)
+                ),
                 "phase": str(meta.get("phase") or ""),
                 "risk": str(meta.get("risk") or ""),
+                "changelog_focus": focus,
                 "capture_file": capture_file,
                 "capture_path": str(capture_path),
                 "capture_note_file": _windows_capture_note_file(capture_file),
@@ -10129,7 +10430,10 @@ def _windows_capture_runbook_tasks(
                 "notes": _windows_capture_runbook_task_notes(report),
             }
         )
-    return tasks
+    priority_tasks = sorted(tasks, key=lambda item: (int(item["priority"]), str(item["capture_file"])))
+    for priority_order, task in enumerate(priority_tasks, start=1):
+        task["priority_order"] = priority_order
+    return priority_tasks
 
 
 def _windows_capture_runbook_acceptance_checks(
@@ -10202,11 +10506,32 @@ def _windows_capture_runbook_recommended_commands(
     base: str,
     version: str,
     next_task: dict[str, Any],
+    *,
+    artifact_dir: Path | None = None,
 ) -> list[str]:
     commands = [
-        _tool_command("windows-capture-plan", "--version", version, "--capture-base", base),
-        _tool_command("windows-capture-runbook", str(root), "--capture-base", base),
-        _tool_command("capture-gap-report", str(root), "--capture-base", base),
+        _tool_command(
+            "windows-capture-plan",
+            "--version",
+            version,
+            "--capture-base",
+            base,
+            *_artifact_dir_command_args(artifact_dir),
+        ),
+        _tool_command(
+            "windows-capture-runbook",
+            str(root),
+            "--capture-base",
+            base,
+            *_artifact_dir_command_args(artifact_dir),
+        ),
+        _tool_command(
+            "capture-gap-report",
+            str(root),
+            "--capture-base",
+            base,
+            *_artifact_dir_command_args(artifact_dir),
+        ),
     ]
     if next_task:
         commands.append(f"capture next scenario: {next_task.get('capture_file')}")
@@ -10944,6 +11269,33 @@ def _windows_capture_host_setup_commands(base: str) -> list[dict[str, Any]]:
     ]
 
 
+def _windows_capture_plan_scenarios(
+    base: str,
+    *,
+    artifact_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    scenarios = []
+    for scenario in _windows_capture_scenarios(base):
+        scenario_id = str(scenario.get("id") or "")
+        meta = _capture_gap_scenario_priority_meta(scenario_id, artifact_context)
+        payload = {
+            **scenario,
+            "priority": int(meta.get("priority") if meta.get("priority") is not None else 100),
+            "base_priority": int(
+                meta.get("base_priority")
+                if meta.get("base_priority") is not None
+                else (meta.get("priority") if meta.get("priority") is not None else 100)
+            ),
+            "phase": str(meta.get("phase") or ""),
+            "risk": str(meta.get("risk") or ""),
+        }
+        focus = meta.get("changelog_focus") if isinstance(meta.get("changelog_focus"), dict) else {}
+        if focus:
+            payload["changelog_focus"] = focus
+        scenarios.append(payload)
+    return scenarios
+
+
 def _windows_capture_scenarios(base: str) -> list[dict[str, Any]]:
     target = [
         "--mac",
@@ -11117,6 +11469,12 @@ def _scenario_linux_commands(capture_file: str) -> list[str]:
 
 def _tool_command(*args: str) -> str:
     return " ".join(["python", "tools/lianli_wireless_probe.py", *(shlex.quote(str(arg)) for arg in args)])
+
+
+def _artifact_dir_command_args(artifact_dir: Path | None) -> list[str]:
+    if artifact_dir is None:
+        return []
+    return ["--artifact-dir", str(artifact_dir.expanduser())]
 
 
 def _attach_transport_classification(record: dict[str, Any], classified: dict[str, Any]) -> None:

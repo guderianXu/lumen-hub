@@ -128,8 +128,32 @@ def gui_stylesheet() -> str:
         padding: 10px 12px;
     }
     QWidget#FanSummaryPanel { background: transparent; }
+    QWidget#FanPermissionStatus { background: transparent; }
+    QFrame#FanPermissionStatusChip {
+        background: #151819;
+        border: 1px solid #343d40;
+        border-radius: 7px;
+    }
+    QLabel#FanPermissionStatusValue {
+        color: #f2f3f0;
+        font-size: 14px;
+        font-weight: 900;
+    }
     QWidget#FanPermissionActions QPushButton {
         min-height: 30px;
+    }
+    QFrame#MetricCard[running="true"] {
+        border-color: #b76b74;
+        background: #20191a;
+    }
+    QLabel#FanStressState {
+        background: #111314;
+        border: 1px solid #303438;
+        border-radius: 6px;
+        color: #f2f3f0;
+        font-size: 18px;
+        font-weight: 900;
+        padding: 10px;
     }
     QTabWidget#FanWorkspaceTabs::pane {
         background: #141718;

@@ -352,6 +352,11 @@ def _build_parser() -> argparse.ArgumentParser:
     capture_gap.add_argument("--version", default="2.1.17")
     capture_gap.add_argument("--capture-base", default=None)
     capture_gap.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Optional directory containing artifact/changelog evidence used to prioritize capture gaps",
+    )
+    capture_gap.add_argument(
         "--experiment-dir",
         type=Path,
         help="Attach summarize-experiments output from a Linux validation/experiment directory",
@@ -598,6 +603,11 @@ def _build_parser() -> argparse.ArgumentParser:
     windows_plan.add_argument("--installer", type=Path, help="Optional local L-Connect installer path")
     windows_plan.add_argument("--capture-base", help="Output capture filename prefix")
     windows_plan.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Optional directory containing artifact/changelog evidence used to annotate scenario priority",
+    )
+    windows_plan.add_argument(
         "--environment",
         choices=("auto", "vm", "wine", "docker"),
         default="auto",
@@ -611,6 +621,11 @@ def _build_parser() -> argparse.ArgumentParser:
     windows_runbook.add_argument("--version", default="2.1.17", help="L-Connect version under test")
     windows_runbook.add_argument("--installer", type=Path, help="Optional local L-Connect installer path")
     windows_runbook.add_argument("--capture-base", help="Output capture filename prefix")
+    windows_runbook.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Optional directory containing artifact/changelog evidence used to prioritize tasks",
+    )
     windows_runbook.add_argument(
         "--environment",
         choices=("auto", "vm", "wine", "docker"),
@@ -1977,6 +1992,7 @@ def main(argv: list[str] | None = None) -> int:
             version=args.version,
             installer=args.installer,
             capture_base=args.capture_base,
+            artifact_dir=args.artifact_dir,
             environment=args.environment,
             experiment_dir=args.experiment_dir,
             led_count=args.led_count,
@@ -2065,6 +2081,7 @@ def main(argv: list[str] | None = None) -> int:
             args.path,
             version=args.version,
             capture_base=args.capture_base,
+            artifact_dir=args.artifact_dir,
             experiment_dir=args.experiment_dir,
             led_count=args.led_count,
             rainbow_frames=args.rainbow_frames,
@@ -2213,6 +2230,7 @@ def main(argv: list[str] | None = None) -> int:
             installer=args.installer,
             capture_base=args.capture_base,
             environment=args.environment,
+            artifact_dir=args.artifact_dir,
         )
     elif command == "usb-capture-readiness":
         payload = usb_capture_readiness(sys_root=args.sys_root)

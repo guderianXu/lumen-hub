@@ -407,6 +407,12 @@ Practical interpretation:
     by priority, names the next capture file to produce, lists proof gates such
     as baseline-before-write and lighting-before-pairing, and includes the
     exact post-capture analyzer commands.
+    When given `--artifact-dir <artifact-report-dir>`, the gap report reads the
+    target version's `artifact-evidence-matrix` changelog fields and annotates
+    each affected scenario with `base_priority`, adjusted `priority`, and
+    `changelog_focus`. Baseline still remains first, direct PWM stays the first
+    write proof, and riskier RF bind/unbind captures are raised only after the
+    lower-risk write scenarios.
     `linux_interface_contract` then turns the same evidence into implementation
     inputs: PyUSB sender/receiver VID/PID and endpoints, `LianLiWirelessBackend`
     builder/send method names, required runtime fields, dry-run/safe CLI names,
@@ -1428,10 +1434,15 @@ Risks:
   It also carries `capture_note_operator_summary`; unconfirmed sidecar actions
   remain visible in the compact gap report instead of being hidden in the full
   capture-set JSON.
+  Passing `--artifact-dir <artifact-report-dir>` adds
+  `artifact_capture_context`, `artifact_capture_changelog_score`, and per-scenario
+  `changelog_focus`, allowing v2.1.17 RF bind/rebind and sort/quick-sync notes
+  from the official changelog to move those captures earlier without putting
+  pairing before lower-risk validation.
   With no captures it prioritizes `lianli-v2117-00-baseline.pcapng`; with
   baseline/direct PWM already present it moves on to motherboard PWM sync before
   lighting, sort/quick-sync, and RF rebind.
-- `python tools/lianli_wireless_probe.py windows-capture-runbook <capture-dir> --capture-base lianli-v2117`:
+- `python tools/lianli_wireless_probe.py windows-capture-runbook <capture-dir> --capture-base lianli-v2117 --artifact-dir <artifact-report-dir>`:
   added as the operator-facing version of the capture plan. It combines the
   planned Windows USBPcap scenarios with the current `capture-set-report`
   audit, so each task carries its current status, priority, risk, capture path,

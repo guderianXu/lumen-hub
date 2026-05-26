@@ -1541,6 +1541,13 @@ def test_probe_lianli_validation_gate_includes_optional_artifact_matrix(tmp_path
     assert checks["official-static-artifact-evidence"]["detail"]["changelog_score"] == 48
     assert checks["official-static-artifact-evidence"]["detail"]["capture_recommendation_score"] == 1048
     assert checks["official-static-artifact-evidence"]["detail"]["changelog_keywords"] == ["binding", "rf", "rpm-pwm"]
+    assert payload["reports"]["capture_gap"]["artifact_capture_changelog_score"] == 48
+    rf_gap = {
+        item["id"]: item
+        for item in payload["reports"]["capture_gap"]["scenario_gaps"]
+    }["rf-rebind"]
+    assert rf_gap["base_priority"] == 90
+    assert rf_gap["priority"] == 70
     assert "artifact-evidence-matrix" in " ".join(payload["recommended_commands"])
 
 
@@ -3424,6 +3431,51 @@ def test_probe_capture_set_report_audits_planned_capture_directory(tmp_path):
     assert runbook_payload["tasks"][0]["capture_path"] == str(tmp_path / f"{base}-00-baseline.pcapng")
     assert runbook_payload["tasks"][0]["manual_tshark_export_command"].startswith("tshark -r ")
     assert "windows-capture-note baseline" in runbook_payload["tasks"][0]["capture_note_command"]
+
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    (artifact_dir / "analyze-changelog-official.json").write_text(
+        json.dumps(
+            {
+                "operation": "analyze-changelog",
+                "entries": [
+                    {
+                        "version": "2.1.17",
+                        "wireless_score": 48,
+                        "matched_keywords": ["rf", "binding", "rpm-pwm", "l-wireless", "lighting"],
+                        "category_scores": {"transport": 14, "binding": 12, "fan": 10},
+                        "matched_lines": [
+                            {
+                                "text": "L-Wireless Utility fan settings switch to quick sync after sort settings.",
+                                "keywords": ["l-wireless", "lighting"],
+                                "score": 20,
+                            },
+                            {
+                                "text": "RF unbind/rebind fan speed settings behavior changed.",
+                                "keywords": ["rf", "binding", "rpm-pwm"],
+                                "score": 18,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    changelog_gap = _run_probe(
+        "capture-gap-report",
+        str(tmp_path),
+        "--capture-base",
+        base,
+        "--artifact-dir",
+        str(artifact_dir),
+    )
+    changelog_gaps = {item["id"]: item for item in changelog_gap["scenario_gaps"]}
+    assert changelog_gap["artifact_capture_changelog_score"] == 48
+    assert changelog_gaps["sort-quick-sync"]["priority"] == 15
+    assert changelog_gaps["sort-quick-sync"]["base_priority"] == 50
+    assert changelog_gaps["sort-quick-sync"]["changelog_focus"]["matched"] is True
+
     note_payload = _run_probe(
         "windows-capture-note",
         "direct-fan-speed",
