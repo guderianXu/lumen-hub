@@ -1047,7 +1047,10 @@ Risks:
   `receiver-validation-bundle` is now the preferred post-plug command for real
   L-Wireless receivers: it saves scan/readiness/live-list/live-master,
   nested readonly validation, preflight, and write-gate JSON logs into one
-  evidence directory. `summarize-experiments` recognizes that bundle and reports
+  evidence directory. The command also writes `receiver-validation-bundle.json`
+  and `summary.json` itself, and mirrors `hardware_validation` plus
+  `receiver_control_next_action` in stdout so the post-plug decision can be read
+  without running a second command. `summarize-experiments` recognizes that bundle and reports
   `receiver_validation_bundles` plus `hardware_validation.status`, including
   `readonly-and-write-gate-ready` when the write-gate has passed but no guarded
   write experiment has been run yet. The same summary now emits

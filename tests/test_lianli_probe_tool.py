@@ -2949,10 +2949,18 @@ def test_probe_receiver_validation_bundle_saves_post_plug_evidence(monkeypatch, 
     assert payload["error_count"] == 0
     assert payload["ready_for_guarded_write"] is True
     assert payload["write_gate_status"] == "write-enabled"
+    assert payload["bundle_path"] == str(tmp_path / "receiver-validation-bundle.json")
+    assert payload["summary_path"] == str(tmp_path / "summary.json")
+    assert payload["hardware_validation"]["status"] == "readonly-and-write-gate-ready"
+    assert payload["receiver_control_next_action"]["status"] == "ready-for-single-target-safe-pwm"
+    assert payload["receiver_control_next_action"]["recommended_commands"][0].startswith(
+        "python tools/lianli_wireless_probe.py safe-pwm-experiment --mac aa:bb:cc:dd:ee:ff"
+    )
     assert calls["preflight"] == (capture_dir, sys_root, dev_root)
     assert calls["write_gate"] == (capture_dir, sys_root, dev_root)
     assert calls["experiment_dir"] == experiment_dir
     for name in (
+        "receiver-validation-bundle.json",
         "scan.json",
         "readiness.json",
         "live-list.json",
@@ -2960,8 +2968,13 @@ def test_probe_receiver_validation_bundle_saves_post_plug_evidence(monkeypatch, 
         "validate-readonly.json",
         "preflight.json",
         "write-gate.json",
+        "summary.json",
     ):
         assert (tmp_path / name).exists()
+    saved_bundle = json.loads((tmp_path / "receiver-validation-bundle.json").read_text(encoding="utf-8"))
+    saved_summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert saved_bundle["receiver_control_next_action"]["status"] == "ready-for-single-target-safe-pwm"
+    assert saved_summary["receiver_control_next_action"]["status"] == "ready-for-single-target-safe-pwm"
     assert json.loads((tmp_path / "live-list.json").read_text(encoding="utf-8"))["device_count"] == 1
     assert json.loads((tmp_path / "readonly" / "live-lcd-info.json").read_text(encoding="utf-8"))["firmware"]["version"] == "1.2.3"
     assert any("safe-pwm-experiment" in step for step in payload["next_steps"])

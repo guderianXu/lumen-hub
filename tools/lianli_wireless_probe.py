@@ -1170,7 +1170,7 @@ def _receiver_validation_bundle_payload(args: argparse.Namespace) -> dict[str, o
             write_gate_payload = {}
     ready_for_write = bool(write_gate_payload.get("allows_any_guarded_write"))
     next_command = str(write_gate_payload.get("next_command") or "")
-    return {
+    payload = {
         "operation": "receiver-validation-bundle",
         "output_dir": str(output_dir),
         "capture_dir": str(args.capture_dir),
@@ -1184,6 +1184,22 @@ def _receiver_validation_bundle_payload(args: argparse.Namespace) -> dict[str, o
         "steps": steps,
         "next_steps": _receiver_validation_next_steps(ready_for_write, next_command),
     }
+    bundle_path = output_dir / "receiver-validation-bundle.json"
+    _write_json(bundle_path, payload)
+    summary_payload = summarize_experiment_dir(output_dir)
+    summary_path = output_dir / "summary.json"
+    _write_json(summary_path, summary_payload)
+    payload.update(
+        {
+            "bundle_path": str(bundle_path),
+            "summary_path": str(summary_path),
+            "hardware_validation": summary_payload.get("hardware_validation", {}),
+            "receiver_control_next_action": summary_payload.get("receiver_control_next_action", {}),
+            "experiment_summary": summary_payload,
+        }
+    )
+    _write_json(bundle_path, payload)
+    return payload
 
 
 def _receiver_validation_next_steps(ready_for_write: bool, next_command: str) -> list[str]:

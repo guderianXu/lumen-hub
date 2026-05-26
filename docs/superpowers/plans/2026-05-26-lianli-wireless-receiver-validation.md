@@ -8,6 +8,7 @@
 - 已有 CLI 逆向工具：`tools/lianli_wireless_probe.py`。
 - 已有只读 PyUSB 路径：`scan`、`live-list`、`live-master`、`live-lcd-info`、`validate-readonly`。
 - 已有接收器插上后的整包验证入口：`receiver-validation-bundle`。
+- `receiver-validation-bundle` 会保存自身 JSON、`summary.json`，并把 `hardware_validation` / `receiver_control_next_action` 提升到 stdout 顶层。
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
 - `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令。
 - GUI 的“汇总实验”会显示同一个下一步结论，并在唯一候选 MAC 可用时自动填入目标 MAC。
@@ -22,6 +23,7 @@
 - [x] Windows USBPcap 抓包分析、packet preview/compare、写入门禁。
 - [x] GUI 联力页接入只读验证和写入门禁。
 - [x] 新增 `receiver-validation-bundle`，用于插上接收器后一次性保存只读、preflight、write-gate 证据。
+- [x] `receiver-validation-bundle` 会在同一目录写出 `receiver-validation-bundle.json` 和 `summary.json`。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并自动填入唯一可用 MAC。
@@ -60,6 +62,7 @@
    ```bash
    python tools/lianli_wireless_probe.py summarize-experiments .cache/lianli/hardware
    ```
+   如果只看上一步 `receiver-validation-bundle` 的 stdout，也可以直接看同名字段。
    重点看：
    - `receiver_validation_bundles[0].status`
    - `hardware_validation.status`
@@ -158,6 +161,7 @@ python tools/lianli_wireless_probe.py safe-pwm-experiment \
 接收器装上后，本阶段至少需要拿到：
 
 - `receiver-validation-bundle.json`
+- `summary.json`
 - `scan.json`
 - `readiness.json`
 - `live-list.json`
