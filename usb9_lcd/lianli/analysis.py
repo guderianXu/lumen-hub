@@ -113,8 +113,17 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
     confirmed_write_sets = [
         item for item in write_sets if item["control_proof_status"] == "visually-confirmed"
     ]
+    conflict_write_sets = [
+        item for item in write_sets if item["control_proof_status"] == "visual-observation-conflicts"
+    ]
+    invalid_observation_sets = [
+        item for item in write_sets if item["control_proof_status"] == "invalid-observation"
+    ]
+    unclear_observation_sets = [
+        item for item in write_sets if item["control_proof_status"] == "needs-clear-observation"
+    ]
     observation_missing_sets = [
-        item for item in write_sets if item["visual_observation"]["status"] == "missing"
+        item for item in complete_write_sets if item["visual_observation"]["status"] == "missing"
     ]
     status = receiver_evidence_status(
         missing_required_count=len(missing_required),
@@ -123,6 +132,9 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
         next_action_status=str(next_action.get("status") or ""),
         complete_write_set_count=len(complete_write_sets),
         confirmed_write_set_count=len(confirmed_write_sets),
+        conflict_write_set_count=len(conflict_write_sets),
+        invalid_observation_count=len(invalid_observation_sets),
+        unclear_observation_count=len(unclear_observation_sets),
     )
     return {
         "operation": "receiver-evidence-report",
@@ -138,6 +150,9 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
         "write_evidence_complete_count": len(complete_write_sets),
         "write_evidence_partial_count": len(partial_write_sets),
         "write_evidence_confirmed_count": len(confirmed_write_sets),
+        "write_evidence_conflict_count": len(conflict_write_sets),
+        "visual_observation_invalid_count": len(invalid_observation_sets),
+        "visual_observation_unclear_count": len(unclear_observation_sets),
         "visual_observation_missing_count": len(observation_missing_sets),
         "write_evidence_sets": write_sets,
         "file_manifest": manifest,
@@ -416,6 +431,9 @@ def receiver_evidence_status(
     next_action_status: str,
     complete_write_set_count: int = 0,
     confirmed_write_set_count: int = 0,
+    conflict_write_set_count: int = 0,
+    invalid_observation_count: int = 0,
+    unclear_observation_count: int = 0,
 ) -> str:
     if invalid_file_count:
         return "invalid-evidence-files"
@@ -423,6 +441,12 @@ def receiver_evidence_status(
         return "missing-readonly-evidence"
     if hardware_status == "errors":
         return "validation-errors"
+    if conflict_write_set_count:
+        return "write-evidence-observation-conflict"
+    if invalid_observation_count:
+        return "write-evidence-invalid-observation"
+    if unclear_observation_count:
+        return "write-evidence-unclear-observation"
     if confirmed_write_set_count:
         return "write-evidence-confirmed"
     if hardware_status == "readonly-and-write-observed" or complete_write_set_count:

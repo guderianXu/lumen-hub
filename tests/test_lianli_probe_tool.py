@@ -973,6 +973,75 @@ def test_probe_receiver_evidence_report_uses_visual_observation(tmp_path):
     assert write_set["visual_observation"]["notes"] == ["fan speed visibly changed after guarded PWM write"]
 
 
+def test_probe_receiver_evidence_report_flags_contradicting_observation(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    _run_probe(
+        "--save-json",
+        str(output_dir / "observation.json"),
+        "receiver-observation",
+        str(output_dir),
+        "--effect",
+        "unchanged",
+        "--note",
+        "no visible or audible fan response",
+    )
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = payload["write_evidence_sets"][0]
+
+    assert payload["status"] == "write-evidence-observation-conflict"
+    assert payload["write_evidence_confirmed_count"] == 0
+    assert payload["write_evidence_conflict_count"] == 1
+    assert payload["visual_observation_missing_count"] == 0
+    assert write_set["control_proof_status"] == "visual-observation-conflicts"
+    assert write_set["visual_observation"]["status"] == "contradicts"
+    assert write_set["visual_observation"]["effect"] == "unchanged"
+    assert not any("receiver-observation" in command for command in payload["recommended_commands"])
+
+
+def test_probe_receiver_evidence_report_flags_invalid_observation(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    (output_dir / "observation.json").write_text(
+        json.dumps({"operation": "wrong-observation", "effect": "changed"}) + "\n",
+        encoding="utf-8",
+    )
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = payload["write_evidence_sets"][0]
+
+    assert payload["status"] == "write-evidence-invalid-observation"
+    assert payload["visual_observation_invalid_count"] == 1
+    assert payload["visual_observation_missing_count"] == 0
+    assert write_set["control_proof_status"] == "invalid-observation"
+    assert write_set["visual_observation"]["status"] == "invalid"
+
+
+def test_probe_receiver_evidence_report_flags_unclear_observation(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    _run_probe(
+        "--save-json",
+        str(output_dir / "observation.json"),
+        "receiver-observation",
+        str(output_dir),
+        "--effect",
+        "unclear",
+        "--note",
+        "case noise made the result ambiguous",
+    )
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = payload["write_evidence_sets"][0]
+
+    assert payload["status"] == "write-evidence-unclear-observation"
+    assert payload["visual_observation_unclear_count"] == 1
+    assert payload["visual_observation_missing_count"] == 0
+    assert write_set["control_proof_status"] == "needs-clear-observation"
+    assert write_set["visual_observation"]["status"] == "unclear"
+
+
 def test_probe_live_pwm_requires_confirmation(monkeypatch):
     module = _load_probe_module()
 

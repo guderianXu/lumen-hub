@@ -1068,7 +1068,9 @@ Risks:
   creates the matching manual `observation.json` record for visible/audible fan
   response. Evidence reports now distinguish complete machine logs that still
   need observation (`write-evidence-needs-observation`) from confirmed control
-  evidence (`write-evidence-confirmed`).
+  evidence (`write-evidence-confirmed`). Negative, malformed, or ambiguous
+  observations now produce explicit conflict/invalid/unclear statuses instead
+  of being treated as merely missing observation.
 - `LianLiWirelessPage`: GUI page for safe LIAN LI wireless probing. It exposes
   sysfs scanning, live receiver snapshots, live master MAC queries, and a
   `只读验证` action that saves scan, live-list, live-master, and live-lcd-info

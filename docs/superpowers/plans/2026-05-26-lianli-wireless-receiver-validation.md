@@ -157,7 +157,10 @@ python tools/lianli_wireless_probe.py \
 如果风扇没有变化，`--effect unchanged`；如果没看清，`--effect unclear`。
 `receiver-evidence-report` 会把完整机器日志但缺观察记录的状态标成
 `write-evidence-needs-observation`，只有观察记录确认变化后才会变成
-`write-evidence-confirmed`。
+`write-evidence-confirmed`。如果观察记录写的是 `unchanged`，报告会标成
+`write-evidence-observation-conflict`；如果观察文件格式不对或结果不明确，
+会分别标成 `write-evidence-invalid-observation` 或
+`write-evidence-unclear-observation`，这些状态都不能作为 Linux PWM 控制已验证的证据。
 
 ## 还没有做
 
