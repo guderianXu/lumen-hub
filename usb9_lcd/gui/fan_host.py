@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QApplication,
     QPushButton,
@@ -1671,32 +1672,26 @@ class EmbeddedFanControlPanel(QWidget):
         row.setObjectName("FanControlRow")
         detail = str(getattr(fan, "detail_text", "") or "")
         row.setToolTip(detail)
-        layout = QGridLayout(row)
+        layout = QVBoxLayout(row)
         layout.setContentsMargins(12, 10, 12, 12)
-        layout.setHorizontalSpacing(12)
-        layout.setVerticalSpacing(8)
+        layout.setSpacing(9)
 
         channel = str(getattr(fan, "channel_label", "") or "Channel")
         role = str(getattr(fan, "type_label", "") or "未识别通道")
         header = str(getattr(fan, "header_label", "") or "")
         identity = _fan_identity_state_label(fan)
 
-        identity_block = QFrame()
-        identity_block.setObjectName("FanControlIdentityBlock")
-        identity_block.setMinimumWidth(220)
-        identity_block.setMaximumWidth(300)
-        identity_layout = QVBoxLayout(identity_block)
-        identity_layout.setContentsMargins(10, 8, 10, 8)
-        identity_layout.setSpacing(7)
+        header_layout = QGridLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setHorizontalSpacing(10)
+        header_layout.setVerticalSpacing(5)
         title = QLabel(header or _fan_control_title(fan))
         title.setObjectName("FanControlChannelTitle")
         title.setWordWrap(True)
-        identity_layout.addWidget(title)
         channel_label = QLabel(channel)
         channel_label.setObjectName("FanControlPathLabel")
         channel_label.setWordWrap(True)
         channel_label.setToolTip(detail)
-        identity_layout.addWidget(channel_label)
         badge_row = QHBoxLayout()
         badge_row.setSpacing(6)
         role_label = QLabel(role)
@@ -1710,13 +1705,16 @@ class EmbeddedFanControlPanel(QWidget):
         badge_row.addWidget(role_label)
         badge_row.addWidget(identity_label)
         badge_row.addStretch(1)
-        identity_layout.addLayout(badge_row)
         hint = QLabel(_fan_role_control_hint(role, has_pwm=True))
         hint.setObjectName("FieldHint")
         hint.setWordWrap(True)
-        identity_layout.addWidget(hint)
-        identity_layout.addStretch(1)
-        layout.addWidget(identity_block, 0, 0)
+        header_layout.addWidget(title, 0, 0)
+        header_layout.addWidget(channel_label, 1, 0)
+        header_layout.addLayout(badge_row, 0, 1, 2, 1)
+        header_layout.addWidget(hint, 2, 0, 1, 2)
+        header_layout.setColumnStretch(0, 1)
+        header_layout.setColumnStretch(1, 0)
+        layout.addLayout(header_layout)
 
         slider = self._fan_slider_cls(str(getattr(fan, "name", channel)))
         slider.setObjectName("EmbeddedFanSlider")
@@ -1728,15 +1726,7 @@ class EmbeddedFanControlPanel(QWidget):
             name_label.setText(_fan_control_title(fan))
             name_label.setToolTip(detail)
         self._sliders[str(getattr(fan, "name", channel))] = slider
-        slider_block = QFrame()
-        slider_block.setObjectName("FanControlSliderBlock")
-        slider_layout = QVBoxLayout(slider_block)
-        slider_layout.setContentsMargins(10, 8, 10, 8)
-        slider_layout.setSpacing(6)
-        slider_layout.addWidget(slider)
-        layout.addWidget(slider_block, 0, 1)
-        layout.setColumnStretch(0, 0)
-        layout.setColumnStretch(1, 1)
+        layout.addWidget(slider)
 
         return row
 
@@ -1753,30 +1743,19 @@ class EmbeddedFanControlPanel(QWidget):
         role = str(getattr(fan, "type_label", "") or "未识别通道")
         channel = str(getattr(fan, "channel_label", "") or "Channel")
         header = str(getattr(fan, "header_label", "") or "")
-        identity_block = QFrame()
-        identity_block.setObjectName("FanControlIdentityBlock")
-        identity_block.setMinimumWidth(220)
-        identity_block.setMaximumWidth(300)
-        identity_layout = QVBoxLayout(identity_block)
-        identity_layout.setContentsMargins(10, 8, 10, 8)
-        identity_layout.setSpacing(7)
         title = QLabel(header or _fan_control_title(fan))
         title.setObjectName("FanControlChannelTitle")
         title.setWordWrap(True)
         title.setToolTip(detail)
-        identity_layout.addWidget(title)
         channel_label = QLabel(channel)
         channel_label.setObjectName("FanControlPathLabel")
         channel_label.setToolTip(detail)
-        identity_layout.addWidget(channel_label)
         role_label = QLabel(role)
         role_label.setObjectName("FanRoleBadge")
         role_label.setStyleSheet(
             f"color: {_fan_role_color(role)}; border: 1px solid {_fan_role_color(role)};"
             " border-radius: 5px; padding: 2px 6px;"
         )
-        identity_layout.addWidget(role_label, 0, Qt.AlignmentFlag.AlignLeft)
-        identity_layout.addStretch(1)
         bind_label = QLabel("建议温度源")
         bind_label.setObjectName("FieldHint")
         combo = QComboBox()
@@ -1792,12 +1771,14 @@ class EmbeddedFanControlPanel(QWidget):
         hint_label.setObjectName("FieldHint")
         hint_label.setWordWrap(True)
 
-        bind_layout.addWidget(identity_block, 0, 0, 2, 1)
-        bind_layout.addWidget(bind_label, 0, 1)
-        bind_layout.addWidget(combo, 0, 2)
-        bind_layout.addWidget(hint_label, 1, 1, 1, 2)
+        bind_layout.addWidget(title, 0, 0)
+        bind_layout.addWidget(role_label, 0, 1, Qt.AlignmentFlag.AlignRight)
+        bind_layout.addWidget(channel_label, 1, 0)
+        bind_layout.addWidget(bind_label, 1, 1)
+        bind_layout.addWidget(combo, 1, 2)
+        bind_layout.addWidget(hint_label, 2, 0, 1, 3)
         bind_layout.setColumnStretch(0, 1)
-        bind_layout.setColumnStretch(1, 1)
+        bind_layout.setColumnStretch(1, 0)
         bind_layout.setColumnStretch(2, 1)
         return bind_block
 
@@ -1882,6 +1863,209 @@ class EmbeddedFanControlPanel(QWidget):
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
+
+
+class FanCurveCanvas(QWidget):
+    def __init__(self, fan_curve_cls, parent=None) -> None:  # noqa: ANN001
+        super().__init__(parent)
+        self.setObjectName("FanCurveCanvas")
+        self._fan_curve_cls = fan_curve_cls
+        self._points: list[tuple[int, int]] = [(30, 25), (50, 50), (70, 80), (85, 100)]
+        self._dragging_idx = -1
+        self.setMinimumSize(560, 420)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMouseTracking(True)
+
+    def set_curve(self, curve) -> None:  # noqa: ANN001
+        self._points = self._normalize_points(getattr(curve, "points", self._points))
+        self.update()
+
+    def get_curve(self):  # noqa: ANN001
+        return self._fan_curve_cls(points=list(self._points))
+
+    def paintEvent(self, event) -> None:  # noqa: ANN001, D401
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        outer = self.rect().adjusted(10, 8, -10, -10)
+        if outer.width() <= 10 or outer.height() <= 10:
+            return
+        plot = QRectF(outer.left() + 46, outer.top() + 20, outer.width() - 66, outer.height() - 58)
+        if plot.width() <= 10 or plot.height() <= 10:
+            return
+        self._draw_curve_background(painter, plot)
+        self._draw_curve_axes(painter, plot)
+        self._draw_curve_line(painter, plot)
+
+    def mousePressEvent(self, event) -> None:  # noqa: ANN001
+        if event.button() == Qt.MouseButton.RightButton:
+            self._delete_point_menu(event)
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        index = self._point_at(event.position())
+        if index >= 0:
+            self._dragging_idx = index
+            self.update()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: ANN001
+        if event.button() != Qt.MouseButton.LeftButton or self._point_at(event.position()) >= 0:
+            return
+        temp, pwm = self._from_screen(event.position())
+        self._points = self._normalize_points([*self._points, (temp, pwm)])
+        self.update()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: ANN001
+        if self._dragging_idx < 0:
+            return
+        temp, pwm = self._from_screen(event.position())
+        points = list(self._points)
+        if self._dragging_idx >= len(points):
+            self._dragging_idx = -1
+            return
+        points[self._dragging_idx] = (temp, pwm)
+        self._points = self._normalize_points(points)
+        self._dragging_idx = self._nearest_point_index(temp, pwm)
+        self.update()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: ANN001
+        self._dragging_idx = -1
+        self.update()
+
+    def _draw_curve_background(self, painter: QPainter, plot: QRectF) -> None:
+        painter.setPen(QPen(QColor("#30383b"), 1))
+        painter.setBrush(QColor("#111516"))
+        painter.drawRoundedRect(plot, 7, 7)
+        zones = (
+            (0, 45, QColor(82, 151, 136, 32)),
+            (45, 70, QColor(194, 156, 78, 30)),
+            (70, 100, QColor(185, 96, 105, 34)),
+        )
+        for start, end, color in zones:
+            left = self._temp_to_x(start, plot)
+            right = self._temp_to_x(end, plot)
+            painter.fillRect(QRectF(left, plot.top(), max(1.0, right - left), plot.height()), color)
+
+    def _draw_curve_axes(self, painter: QPainter, plot: QRectF) -> None:
+        font = painter.font()
+        font.setPointSize(max(8, font.pointSize() - 1))
+        painter.setFont(font)
+        grid_pen = QPen(QColor("#343d40"), 1, Qt.PenStyle.DotLine)
+        painter.setPen(grid_pen)
+        for value in (0, 25, 50, 75, 100):
+            x = self._temp_to_x(value, plot)
+            y = self._pwm_to_y(value, plot)
+            painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+            painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+        painter.setPen(QColor("#9ca4a4"))
+        for value in (0, 25, 50, 75, 100):
+            x = self._temp_to_x(value, plot)
+            y = self._pwm_to_y(value, plot)
+            painter.drawText(QRectF(x - 20, plot.bottom() + 8, 40, 18), Qt.AlignmentFlag.AlignCenter, f"{value}°")
+            painter.drawText(
+                QRectF(plot.left() - 44, y - 9, 36, 18),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"{value}%",
+            )
+
+    def _draw_curve_line(self, painter: QPainter, plot: QRectF) -> None:
+        points = self._normalize_points(self._points)
+        screen = [QPointF(self._temp_to_x(temp, plot), self._pwm_to_y(pwm, plot)) for temp, pwm in points]
+        if len(screen) >= 2:
+            path = QPainterPath(screen[0])
+            for point in screen[1:]:
+                path.lineTo(point)
+            area = QPainterPath(path)
+            area.lineTo(screen[-1].x(), plot.bottom())
+            area.lineTo(screen[0].x(), plot.bottom())
+            area.closeSubpath()
+            fill = QColor("#6fb6a0")
+            fill.setAlpha(38)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(fill)
+            painter.drawPath(area)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(111, 182, 160, 70), 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.drawPath(path)
+            painter.setPen(QPen(QColor("#80d2ba"), 2.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.drawPath(path)
+        for index, ((temp, pwm), point) in enumerate(zip(points, screen, strict=True)):
+            active = index == self._dragging_idx
+            radius = 7 if active else 6
+            painter.setPen(QPen(QColor("#111516"), 3))
+            painter.setBrush(QColor("#d9f0e8") if active else QColor("#6fb6a0"))
+            painter.drawEllipse(QRectF(point.x() - radius, point.y() - radius, radius * 2, radius * 2))
+            label = f"{temp}°/{pwm}%"
+            label_rect = QRectF(point.x() + 10, point.y() - 12, 58, 22)
+            if label_rect.right() > plot.right():
+                label_rect.moveRight(point.x() - 10)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(18, 21, 22, 220))
+            painter.drawRoundedRect(label_rect, 5, 5)
+            painter.setPen(QColor("#dfe5e1"))
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
+
+    def _delete_point_menu(self, event) -> None:  # noqa: ANN001
+        index = self._point_at(event.position())
+        if index < 0 or len(self._points) <= 2:
+            return
+        temp, pwm = self._points[index]
+        menu = QMenu(self)
+        action = menu.addAction(f"删除 {temp}°C / {pwm}%")
+        if menu.exec(event.globalPos()) == action:
+            self._points.pop(index)
+            self._points = self._normalize_points(self._points)
+            self.update()
+
+    def _point_at(self, position) -> int:  # noqa: ANN001
+        plot = self._plot_rect()
+        for index, (temp, pwm) in enumerate(self._points):
+            x = self._temp_to_x(temp, plot)
+            y = self._pwm_to_y(pwm, plot)
+            if (position.x() - x) ** 2 + (position.y() - y) ** 2 <= 144:
+                return index
+        return -1
+
+    def _nearest_point_index(self, temp: int, pwm: int) -> int:
+        best = -1
+        best_distance = float("inf")
+        for index, (point_temp, point_pwm) in enumerate(self._points):
+            distance = abs(point_temp - temp) + abs(point_pwm - pwm)
+            if distance < best_distance:
+                best = index
+                best_distance = distance
+        return best
+
+    def _from_screen(self, position) -> tuple[int, int]:  # noqa: ANN001
+        plot = self._plot_rect()
+        temp = round((position.x() - plot.left()) / max(1.0, plot.width()) * 100)
+        pwm = round(100 - (position.y() - plot.top()) / max(1.0, plot.height()) * 100)
+        return max(0, min(100, temp)), max(0, min(100, pwm))
+
+    def _plot_rect(self) -> QRectF:
+        outer = self.rect().adjusted(10, 8, -10, -10)
+        return QRectF(outer.left() + 46, outer.top() + 20, max(10, outer.width() - 66), max(10, outer.height() - 58))
+
+    def _temp_to_x(self, temp: float, plot: QRectF) -> float:
+        return plot.left() + plot.width() * max(0.0, min(100.0, float(temp))) / 100.0
+
+    def _pwm_to_y(self, pwm: float, plot: QRectF) -> float:
+        return plot.bottom() - plot.height() * max(0.0, min(100.0, float(pwm))) / 100.0
+
+    def _normalize_points(self, points: object) -> list[tuple[int, int]]:
+        normalized: dict[int, int] = {}
+        if isinstance(points, (list, tuple)):
+            for item in points:
+                if not isinstance(item, (list, tuple)) or len(item) < 2:
+                    continue
+                try:
+                    temp = int(round(float(item[0])))
+                    pwm = int(round(float(item[1])))
+                except (TypeError, ValueError):
+                    continue
+                normalized[max(0, min(100, temp))] = max(0, min(100, pwm))
+        result = sorted(normalized.items())
+        return result if len(result) >= 2 else [(30, 25), (50, 50), (70, 80), (85, 100)]
 
 
 class EmbeddedProfileEditor(QWidget):
@@ -2007,12 +2191,7 @@ class EmbeddedProfileEditor(QWidget):
         return label
 
     def _make_curve_editor(self, curve_editor_cls):  # noqa: ANN001
-        editor = curve_editor_cls()
-        editor.setMinimumSize(560, 420)
-        editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        editor.setAutoFillBackground(True)
-        editor.setStyleSheet("background: #eef0ed; border: 1px solid #62686c; border-radius: 6px;")
-        return editor
+        return FanCurveCanvas(self._fan_curve_cls)
 
     def _curve_page(self, title: str, editor) -> QWidget:  # noqa: ANN001
         page = QWidget()
@@ -2826,12 +3005,12 @@ class FanControlHostPage(QWidget):
         self._refresh_channel_label_editor()
 
         self.workspace_tabs.addTab(self.overview_tab, "仪表盘")
-        self.workspace_tabs.addTab(self.charts_tab, "实时曲线")
-        self.workspace_tabs.addTab(self.control_tab, "手动调速")
-        self.workspace_tabs.addTab(self.strategy_tab, "策略曲线")
-        self.workspace_tabs.addTab(self.details_tab, "通道标定")
-        self.workspace_tabs.addTab(self.permission_tab, "权限维护")
-        self.workspace_tabs.addTab(self.test_tab, "压力测试")
+        self.workspace_tabs.addTab(self.charts_tab, "曲线")
+        self.workspace_tabs.addTab(self.control_tab, "调速")
+        self.workspace_tabs.addTab(self.strategy_tab, "策略")
+        self.workspace_tabs.addTab(self.details_tab, "标定")
+        self.workspace_tabs.addTab(self.permission_tab, "权限")
+        self.workspace_tabs.addTab(self.test_tab, "压测")
         self.workspace_tabs.addTab(self.history_tab, "历史")
         self._workspace_tab_changed(0)
         self.layout.addWidget(self.workspace_tabs)

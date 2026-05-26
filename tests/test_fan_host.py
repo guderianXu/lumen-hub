@@ -77,12 +77,12 @@ def test_fan_host_layout_separates_dense_sections():
 
     assert [page.workspace_tabs.tabText(index) for index in range(page.workspace_tabs.count())] == [
         "仪表盘",
-        "实时曲线",
-        "手动调速",
-        "策略曲线",
-        "通道标定",
-        "权限维护",
-        "压力测试",
+        "曲线",
+        "调速",
+        "策略",
+        "标定",
+        "权限",
+        "压测",
         "历史",
     ]
     assert page.charts_tab.parentWidget() is not None
@@ -161,8 +161,9 @@ def test_fan_host_control_rows_keep_identity_control_and_binding_separate():
     ]
     assert panel.findChildren(QFrame, "FanControlRow")
     assert panel.findChildren(QFrame, "FanControlToolbar")
-    assert panel.findChildren(QFrame, "FanControlIdentityBlock")
-    assert panel.findChildren(QFrame, "FanControlSliderBlock")
+    assert not panel.findChildren(QFrame, "FanControlIdentityBlock")
+    assert not panel.findChildren(QFrame, "FanControlSliderBlock")
+    assert panel.findChildren(QFrame, "FanControlRow")[0].findChildren(QLabel, "FanControlChannelTitle")
     bind_blocks = panel.findChildren(QFrame, "FanControlBindBlock")
     assert bind_blocks
     assert bind_blocks[0].parentWidget().objectName() == "FanControlGroup"

@@ -1909,12 +1909,12 @@ def test_fan_page_exposes_control_center_layout_before_loading():
     assert page.fan_table.horizontalHeaderItem(3).text() == "关联传感器"
     assert [page.workspace_tabs.tabText(index) for index in range(page.workspace_tabs.count())] == [
         "仪表盘",
-        "实时曲线",
-        "手动调速",
-        "策略曲线",
-        "通道标定",
-        "权限维护",
-        "压力测试",
+        "曲线",
+        "调速",
+        "策略",
+        "标定",
+        "权限",
+        "压测",
         "历史",
     ]
     assert [page.strategy_tabs.tabText(index) for index in range(page.strategy_tabs.count())] == ["选择策略", "编辑曲线"]
@@ -2288,7 +2288,7 @@ def test_fan_page_stress_panel_controls_burner():
 def test_embedded_profile_editor_uses_compact_profile_selector():
     from PySide6.QtWidgets import QApplication, QComboBox, QWidget
 
-    from usb9_lcd.gui.fan_host import EmbeddedProfileEditor
+    from usb9_lcd.gui.fan_host import EmbeddedProfileEditor, FanCurveCanvas
 
     class FakeCurve:
         def __init__(self, points):
@@ -2343,6 +2343,8 @@ def test_embedded_profile_editor_uses_compact_profile_selector():
     editor = EmbeddedProfileEditor(manager, FakeCurveEditor, FakeCurve, FakeProfile)
 
     assert isinstance(editor._profile_combo, QComboBox)
+    assert isinstance(editor._cpu_editor, FanCurveCanvas)
+    assert editor._cpu_editor.objectName() == "FanCurveCanvas"
     assert editor._profile_combo.currentText() == "performance"
     editor._profile_combo.setCurrentText("silent")
     assert editor._profile_state_label.text() == "当前启用：silent"

@@ -211,30 +211,28 @@ def gui_stylesheet() -> str:
         border-radius: 8px;
     }
     QFrame#FanControlGroup {
-        background: #18191a;
+        background: #151819;
         border: 1px solid #33373a;
         border-radius: 8px;
     }
     QFrame#FanControlRow {
-        background: #1b1d1e;
-        border: 1px solid #34383b;
+        background: #181b1c;
+        border: 1px solid #32393b;
         border-radius: 7px;
     }
-    QFrame#FanControlIdentityBlock {
-        background: #141617;
-        border: 1px solid #303438;
-        border-radius: 7px;
-        padding: 8px;
-    }
-    QFrame#FanControlSliderBlock {
-        background: #161819;
-        border: 1px solid #303438;
-        border-radius: 7px;
+    QFrame#FanControlRow:hover,
+    QFrame#FanControlBindBlock:hover {
+        border-color: #455052;
     }
     QFrame#FanControlBindBlock {
-        background: #141617;
-        border: 1px solid #303438;
+        background: #181b1c;
+        border: 1px solid #32393b;
         border-radius: 7px;
+    }
+    QWidget#FanCurveCanvas {
+        background: #111516;
+        border: 1px solid #30383b;
+        border-radius: 8px;
     }
     QFrame#FanChannelEditorSection,
     QFrame#FanChannelEvidenceSection {
