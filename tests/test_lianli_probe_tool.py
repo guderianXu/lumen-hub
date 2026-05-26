@@ -239,6 +239,121 @@ def _write_receiver_safe_mirror_evidence(path: Path) -> Path:
     return output_dir
 
 
+def _write_receiver_safe_rgb_evidence(path: Path) -> Path:
+    output_dir = path / "experiments" / "safe-rgb-aa-bb-cc-dd-ee-ff"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, payload in {
+        "live-list-before.json": {"operation": "live-list-before", "device_count": 1, "devices": [_device_payload()]},
+        "live-rgb.json": {
+            "operation": "live-rgb",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "color": [0, 0, 0],
+            "led_count": 132,
+            "packets_written": 28,
+            "visual_confirmation_required": True,
+        },
+        "live-list-after.json": {"operation": "live-list-after", "device_count": 1, "devices": [_device_payload()]},
+        "analyze-live-rgb.json": {
+            "operation": "analyze-log",
+            "source_operation": "live-rgb",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "likely_effective": False,
+            "target_found_after": True,
+            "visual_confirmation_required": True,
+            "expected_effect": {"available": False, "matched": None},
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(output_dir)},
+    }.items():
+        (output_dir / name).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return output_dir
+
+
+def _write_receiver_safe_rainbow_evidence(path: Path) -> Path:
+    output_dir = path / "experiments" / "safe-rainbow-aa-bb-cc-dd-ee-ff"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, payload in {
+        "live-list-before.json": {"operation": "live-list-before", "device_count": 1, "devices": [_device_payload()]},
+        "live-rainbow.json": {
+            "operation": "live-rainbow",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "frame_count": 24,
+            "interval_ms": 50,
+            "packets_written": 128,
+            "visual_confirmation_required": True,
+        },
+        "live-list-after.json": {"operation": "live-list-after", "device_count": 1, "devices": [_device_payload()]},
+        "analyze-live-rainbow.json": {
+            "operation": "analyze-log",
+            "source_operation": "live-rainbow",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "likely_effective": False,
+            "target_found_after": True,
+            "visual_confirmation_required": True,
+            "expected_effect": {"available": False, "matched": None},
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(output_dir)},
+    }.items():
+        (output_dir / name).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return output_dir
+
+
+def _write_receiver_safe_bind_evidence(path: Path) -> Path:
+    output_dir = path / "experiments" / "safe-bind-aa-bb-cc-dd-ee-ff"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    before = _device_payload(master_mac="00:00:00:00:00:00")
+    after = _device_payload(master_mac="10:20:30:40:50:60")
+    for name, payload in {
+        "live-list-before.json": {"operation": "live-list-before", "device_count": 1, "devices": [before]},
+        "live-bind.json": {
+            "operation": "live-bind",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "master_mac": "10:20:30:40:50:60",
+            "rx_type": 3,
+            "channel": 8,
+            "packets_written": 4,
+        },
+        "live-list-after.json": {"operation": "live-list-after", "device_count": 1, "devices": [after]},
+        "analyze-live-bind.json": {
+            "operation": "analyze-log",
+            "source_operation": "live-bind",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "likely_effective": True,
+            "target_found_after": True,
+            "expected_effect": {"available": True, "matched": True},
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(output_dir)},
+    }.items():
+        (output_dir / name).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return output_dir
+
+
+def _write_receiver_safe_unbind_evidence(path: Path) -> Path:
+    output_dir = path / "experiments" / "safe-unbind-aa-bb-cc-dd-ee-ff"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    after = _device_payload(master_mac="00:00:00:00:00:00")
+    after["rx_type"] = 0
+    for name, payload in {
+        "live-list-before.json": {"operation": "live-list-before", "device_count": 1, "devices": [_device_payload()]},
+        "live-unbind.json": {
+            "operation": "live-unbind",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "packets_written": 4,
+        },
+        "live-list-after.json": {"operation": "live-list-after", "device_count": 1, "devices": [after]},
+        "analyze-live-unbind.json": {
+            "operation": "analyze-log",
+            "source_operation": "live-unbind",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "likely_effective": True,
+            "target_found_after": True,
+            "expected_effect": {"available": True, "matched": True},
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(output_dir)},
+    }.items():
+        (output_dir / name).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return output_dir
+
+
 def _write_lianli_usb_sysfs_and_dev(sys_root: Path, dev_root: Path) -> None:
     for name, vid, pid, product, busnum, devnum in (
         ("1-1", "0416", "8040", "SLV3TX_V1.6", "001", "002"),
@@ -1154,6 +1269,90 @@ def test_probe_receiver_evidence_report_detects_completed_safe_mirror_directory(
     observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
     assert observation_commands
     assert "--observed-pwm 127" in observation_commands[0]
+
+
+def test_probe_receiver_evidence_report_detects_completed_safe_rgb_directory(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    _write_receiver_safe_rgb_evidence(tmp_path)
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = next(item for item in payload["write_evidence_sets"] if item["write_operation"] == "live-rgb")
+
+    assert payload["status"] == "write-evidence-needs-observation"
+    assert payload["write_evidence_complete_count"] == 1
+    assert write_set["status"] == "complete"
+    assert write_set["write_kind"] == "static-rgb"
+    assert write_set["write_file"] == "live-rgb.json"
+    assert write_set["analysis_file"] == "analyze-live-rgb.json"
+    assert write_set["target"] == "aa:bb:cc:dd:ee:ff"
+    assert write_set["pwm_values"] == []
+    assert write_set["visual_confirmation_required"] is True
+    assert write_set["likely_effective"] is False
+    assert write_set["machine_consistency"]["status"] == "consistent"
+    assert write_set["control_proof_status"] == "machine-evidence-complete-needs-observation"
+    assert any(
+        check["name"] == "analysis-visual-confirmation-required" and check["status"] == "expected"
+        for check in write_set["machine_consistency"]["checks"]
+    )
+    observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
+    assert observation_commands
+    assert "--target aa:bb:cc:dd:ee:ff" in observation_commands[0]
+    assert "--observed-pwm" not in observation_commands[0]
+    assert "lighting visibly changed after guarded wireless lighting write" in observation_commands[0]
+
+
+def test_probe_receiver_evidence_report_detects_completed_safe_rainbow_directory(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    _write_receiver_safe_rainbow_evidence(tmp_path)
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = next(item for item in payload["write_evidence_sets"] if item["write_operation"] == "live-rainbow")
+
+    assert payload["status"] == "write-evidence-needs-observation"
+    assert write_set["status"] == "complete"
+    assert write_set["write_kind"] == "rainbow-rgb"
+    assert write_set["visual_confirmation_required"] is True
+    assert write_set["machine_consistency"]["status"] == "consistent"
+    observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
+    assert observation_commands
+    assert "--observed-pwm" not in observation_commands[0]
+    assert "lighting visibly changed after guarded wireless lighting write" in observation_commands[0]
+
+
+def test_probe_receiver_evidence_report_detects_completed_safe_bind_directory(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    _write_receiver_safe_bind_evidence(tmp_path)
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = next(item for item in payload["write_evidence_sets"] if item["write_operation"] == "live-bind")
+
+    assert payload["status"] == "write-evidence-needs-observation"
+    assert write_set["status"] == "complete"
+    assert write_set["write_kind"] == "pairing-bind"
+    assert write_set["write_file"] == "live-bind.json"
+    assert write_set["analysis_file"] == "analyze-live-bind.json"
+    assert write_set["machine_consistency"]["status"] == "consistent"
+    assert write_set["control_proof_status"] == "machine-evidence-complete-needs-observation"
+    observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
+    assert observation_commands
+    assert "receiver pairing state changed after guarded bind write" in observation_commands[0]
+
+
+def test_probe_receiver_evidence_report_detects_completed_safe_unbind_directory(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    _write_receiver_safe_unbind_evidence(tmp_path)
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = next(item for item in payload["write_evidence_sets"] if item["write_operation"] == "live-unbind")
+
+    assert payload["status"] == "write-evidence-needs-observation"
+    assert write_set["status"] == "complete"
+    assert write_set["write_kind"] == "pairing-unbind"
+    assert write_set["machine_consistency"]["status"] == "consistent"
+    assert write_set["control_proof_status"] == "machine-evidence-complete-needs-observation"
+    observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
+    assert observation_commands
+    assert "receiver pairing state changed after guarded unbind write" in observation_commands[0]
 
 
 def test_receiver_evidence_write_set_prefers_mirror_prefix_over_direct_pwm(tmp_path):

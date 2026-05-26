@@ -54,6 +54,34 @@ RECEIVER_EVIDENCE_WRITE_SPECS = {
         "analysis_file": "analyze-live-pwm-mirror.json",
         "dir_prefixes": ("safe-pwm-mirror-",),
     },
+    "live-rgb": {
+        "operation": "live-rgb",
+        "label": "static-rgb",
+        "write_file": "live-rgb.json",
+        "analysis_file": "analyze-live-rgb.json",
+        "dir_prefixes": ("safe-rgb-",),
+    },
+    "live-rainbow": {
+        "operation": "live-rainbow",
+        "label": "rainbow-rgb",
+        "write_file": "live-rainbow.json",
+        "analysis_file": "analyze-live-rainbow.json",
+        "dir_prefixes": ("safe-rainbow-",),
+    },
+    "live-bind": {
+        "operation": "live-bind",
+        "label": "pairing-bind",
+        "write_file": "live-bind.json",
+        "analysis_file": "analyze-live-bind.json",
+        "dir_prefixes": ("safe-bind-",),
+    },
+    "live-unbind": {
+        "operation": "live-unbind",
+        "label": "pairing-unbind",
+        "write_file": "live-unbind.json",
+        "analysis_file": "analyze-live-unbind.json",
+        "dir_prefixes": ("safe-unbind-",),
+    },
 }
 RECEIVER_EVIDENCE_FALLBACK_WRITE_DIR = "experiments/safe-pwm-001"
 RECEIVER_OBSERVATION_FILE_NAME = "observation.json"
@@ -306,6 +334,9 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
     before_snapshot = _optional_json_object(output_dir / "live-list-before.json")
     after_snapshot = _optional_json_object(output_dir / "live-list-after.json")
     analysis = _optional_json_object(output_dir / str(spec["analysis_file"]))
+    visual_confirmation_required = bool(
+        live_pwm.get("visual_confirmation_required") or analysis.get("visual_confirmation_required")
+    )
     visual_observation = receiver_visual_observation(output_dir)
     observation_consistency = receiver_observation_consistency(live_pwm, visual_observation)
     machine_consistency = receiver_machine_write_consistency(live_pwm, analysis, before_snapshot, after_snapshot)
@@ -318,6 +349,7 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
     control_proof_status = receiver_control_proof_status(
         machine_status=status,
         likely_effective=analysis.get("likely_effective"),
+        visual_confirmation_required=visual_confirmation_required,
         visual_status=str(visual_observation.get("status") or ""),
         consistency_status=str(observation_consistency.get("status") or ""),
         machine_consistency_status=str(machine_consistency.get("status") or ""),
@@ -338,6 +370,7 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
         "pwm_values": receiver_write_expected_pwm_values(live_pwm),
         "packets_written": live_pwm.get("packets_written"),
         "likely_effective": analysis.get("likely_effective"),
+        "visual_confirmation_required": visual_confirmation_required,
         "expected_effect": analysis.get("expected_effect") if isinstance(analysis.get("expected_effect"), dict) else {},
         "machine_consistency": machine_consistency,
         "visual_observation": visual_observation,
@@ -699,7 +732,7 @@ def receiver_write_expected_pwm_values(live_write: dict[str, Any]) -> list[int]:
             return [6, 6, 6, 6]
         fallback_pwm = _int_value(live_write.get("fallback_pwm"), default=-1)
         return [fallback_pwm] * 4 if fallback_pwm >= 0 else []
-    return _int_list(live_write.get("pwm_values"))
+    return _int_list(live_write.get("pwm_values")) or []
 
 
 def receiver_machine_write_consistency(
@@ -716,7 +749,7 @@ def receiver_machine_write_consistency(
     target = _normalize_mac(str(live_pwm.get("target") or analysis.get("target") or ""))
     if not target:
         checks.append({"name": "target-present", "status": "incomplete"})
-        notes.append("live-pwm/analyze-live-pwm target MAC is missing.")
+        notes.append("live write/analysis target MAC is missing.")
     else:
         checks.append({"name": "target-present", "status": "match", "target": target})
 
@@ -732,7 +765,7 @@ def receiver_machine_write_consistency(
             }
         )
         if status == "mismatch":
-            notes.append("analyze-live-pwm target differs from live-pwm target.")
+            notes.append("analysis target differs from live write target.")
     elif target:
         checks.append({"name": "analysis-target", "status": "incomplete", "live_pwm_target": target})
 
@@ -746,7 +779,7 @@ def receiver_machine_write_consistency(
         status = "present" if device is not None else "missing"
         checks.append({"name": name, "status": status, "target": target})
         if status == "missing":
-            notes.append(f"{name} snapshot does not contain live-pwm target.")
+            notes.append(f"{name} snapshot does not contain live write target.")
 
     machine_pwm = receiver_write_expected_pwm_values(live_pwm)
     after_pwm = _int_list(after_target.get("pwm_values")) if isinstance(after_target, dict) else []
@@ -761,30 +794,43 @@ def receiver_machine_write_consistency(
             }
         )
         if status == "mismatch":
-            notes.append("live-list-after pwm_values differ from live-pwm pwm_values.")
+            notes.append("live-list-after pwm_values differ from live write expected pwm_values.")
     elif machine_pwm:
         checks.append({"name": "after-pwm-values", "status": "incomplete", "live_pwm_values": machine_pwm})
 
     target_found_after = analysis.get("target_found_after")
     if target_found_after is False:
         checks.append({"name": "analysis-target-found-after", "status": "mismatch", "value": False})
-        notes.append("analyze-live-pwm reports the target was not found after the write.")
+        notes.append("analysis reports the target was not found after the write.")
     elif target_found_after is True:
         checks.append({"name": "analysis-target-found-after", "status": "match", "value": True})
+
+    visual_confirmation_required = bool(
+        live_pwm.get("visual_confirmation_required") or analysis.get("visual_confirmation_required")
+    )
 
     expected_effect = analysis.get("expected_effect") if isinstance(analysis.get("expected_effect"), dict) else {}
     expected_matched = expected_effect.get("matched")
     if expected_matched is False:
         checks.append({"name": "analysis-expected-effect", "status": "mismatch", "matched": False})
-        notes.append("analyze-live-pwm expected_effect did not match.")
+        notes.append("analysis expected_effect did not match.")
     elif expected_matched is True:
         checks.append({"name": "analysis-expected-effect", "status": "match", "matched": True})
     elif expected_effect:
-        checks.append({"name": "analysis-expected-effect", "status": "incomplete", "matched": expected_matched})
+        status = "expected" if visual_confirmation_required else "incomplete"
+        checks.append({"name": "analysis-expected-effect", "status": status, "matched": expected_matched})
 
-    if analysis.get("likely_effective") is False:
+    if visual_confirmation_required:
+        checks.append(
+            {
+                "name": "analysis-visual-confirmation-required",
+                "status": "expected",
+                "value": True,
+            }
+        )
+    if analysis.get("likely_effective") is False and not visual_confirmation_required:
         checks.append({"name": "analysis-likely-effective", "status": "mismatch", "value": False})
-        notes.append("analyze-live-pwm reports likely_effective=false.")
+        notes.append("analysis reports likely_effective=false.")
     elif analysis.get("likely_effective") is True:
         checks.append({"name": "analysis-likely-effective", "status": "match", "value": True})
 
@@ -807,6 +853,7 @@ def receiver_control_proof_status(
     *,
     machine_status: str,
     likely_effective: Any,
+    visual_confirmation_required: Any,
     visual_status: str,
     consistency_status: str = "",
     machine_consistency_status: str = "",
@@ -827,7 +874,7 @@ def receiver_control_proof_status(
         return "invalid-observation"
     if visual_status == "unclear":
         return "needs-clear-observation"
-    if likely_effective is True:
+    if likely_effective is True or visual_confirmation_required is True:
         return "machine-evidence-complete-needs-observation"
     return "needs-observation"
 
@@ -1051,14 +1098,25 @@ def receiver_observation_commands(path: Path) -> list[str]:
         observed_pwm = _format_observed_pwm_arg(write_set.get("pwm_values"))
         if observed_pwm:
             argv.extend(["--observed-pwm", observed_pwm])
+        operation = str(write_set.get("write_operation") or "")
         argv.extend(
             [
                 "--note",
-                "fan speed visibly changed after guarded PWM write",
+                _receiver_observation_note(operation),
             ]
         )
         commands.append(_tool_command(*argv))
     return commands
+
+
+def _receiver_observation_note(operation: str) -> str:
+    if operation in {"live-rgb", "live-rainbow"}:
+        return "lighting visibly changed after guarded wireless lighting write"
+    if operation == "live-bind":
+        return "receiver pairing state changed after guarded bind write"
+    if operation == "live-unbind":
+        return "receiver pairing state changed after guarded unbind write"
+    return "fan speed visibly changed after guarded PWM write"
 
 
 def _format_observed_pwm_arg(value: Any) -> str:

@@ -1086,8 +1086,12 @@ Risks:
   `machine_consistency`, checking that the live write JSON, before/after
   snapshots, and matching analysis JSON agree on the target and expected PWM
   effect. The evidence report now recognizes direct PWM, motherboard PWM sync,
-  and motherboard PWM mirror experiment directories instead of assuming every
-  write is `live-pwm.json`. Conflicting machine logs become
+  motherboard PWM mirror, static RGB, generated rainbow RGB, bind, and unbind
+  experiment directories instead of assuming every write is `live-pwm.json`.
+  RGB evidence is treated as machine-complete but visually unverified when the
+  receiver snapshot is unchanged and `visual_confirmation_required` is set, so
+  lighting tests are not incorrectly marked as failed before manual observation.
+  Conflicting machine logs become
   `write-evidence-machine-conflict`, so a manual observation cannot promote a
   mixed log set to validated control.
   Negative, malformed, or ambiguous observations now produce explicit
