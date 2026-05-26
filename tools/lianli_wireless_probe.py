@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from usb9_lcd.lianli import KNOWN_USB_DEVICES, UDEV_RULES, scan_known_usb_devices
-from usb9_lcd.lianli.analysis import analyze_live_log, diff_snapshot_files, summarize_experiment_dir
+from usb9_lcd.lianli.analysis import analyze_live_log, diff_snapshot_files, receiver_evidence_report, summarize_experiment_dir
 from usb9_lcd.lianli.artifact import (
     DEFAULT_TREE_MAX_FILE_SIZE,
     HID_JS_MAX_FILE_SIZE,
@@ -152,6 +152,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Summarize a directory of saved LIAN LI JSON validation/write logs",
     )
     summarize.add_argument("path", type=Path)
+
+    evidence = subparsers.add_parser(
+        "receiver-evidence-report",
+        help="Audit a saved receiver validation directory and emit a shareable evidence manifest",
+    )
+    evidence.add_argument("path", type=Path)
 
     artifact = subparsers.add_parser(
         "analyze-artifact",
@@ -1806,6 +1812,8 @@ def main(argv: list[str] | None = None) -> int:
         payload = diff_snapshot_files(args.before, args.after)
     elif command == "summarize-experiments":
         payload = summarize_experiment_dir(args.path)
+    elif command == "receiver-evidence-report":
+        payload = receiver_evidence_report(args.path)
     elif command == "analyze-artifact":
         payload = analyze_artifact_file(args.path)
     elif command == "analyze-artifact-tree":

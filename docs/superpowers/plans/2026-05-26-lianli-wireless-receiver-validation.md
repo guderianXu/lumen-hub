@@ -9,6 +9,7 @@
 - 已有只读 PyUSB 路径：`scan`、`live-list`、`live-master`、`live-lcd-info`、`validate-readonly`。
 - 已有接收器插上后的整包验证入口：`receiver-validation-bundle`。
 - `receiver-validation-bundle` 会保存自身 JSON、`summary.json`，并把 `hardware_validation` / `receiver_control_next_action` 提升到 stdout 顶层。
+- 已有 `receiver-evidence-report`，用于审计实机日志目录、列出必需证据文件和每个 JSON 的 SHA256。
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
 - `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令。
 - GUI 的“汇总实验”会显示同一个下一步结论，并在唯一候选 MAC 可用时自动填入目标 MAC。
@@ -24,6 +25,7 @@
 - [x] GUI 联力页接入只读验证和写入门禁。
 - [x] 新增 `receiver-validation-bundle`，用于插上接收器后一次性保存只读、preflight、write-gate 证据。
 - [x] `receiver-validation-bundle` 会在同一目录写出 `receiver-validation-bundle.json` 和 `summary.json`。
+- [x] 新增 `receiver-evidence-report`，用于把实机验证目录整理成可分享的证据清单。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并自动填入唯一可用 MAC。
@@ -70,8 +72,14 @@
    - `receiver_control_next_action.status`
    - `receiver_control_next_action.candidates`
    - `receiver_control_next_action.recommended_commands`
-6. 也可以在 GUI 里点“汇总实验”，选择 `.cache/lianli/hardware`，看实验流程里的“下一步”提示；如果只有一个可用 MAC，GUI 会自动填入目标 MAC。
-7. 如果需要分步排查，再运行底层命令：
+6. 生成一份可回传分析的证据清单：
+   ```bash
+   python tools/lianli_wireless_probe.py \
+     --save-json .cache/lianli/hardware/receiver-evidence-report.json \
+     receiver-evidence-report .cache/lianli/hardware
+   ```
+7. 也可以在 GUI 里点“汇总实验”，选择 `.cache/lianli/hardware`，看实验流程里的“下一步”提示；如果只有一个可用 MAC，GUI 会自动填入目标 MAC。
+8. 如果需要分步排查，再运行底层命令：
    ```bash
    mkdir -p .cache/lianli/hardware
    python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/scan.json scan
@@ -80,7 +88,7 @@
    python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/live-master.json live-master
    python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/validate-readonly.json validate-readonly --output-dir .cache/lianli/hardware/readonly
    ```
-8. 如果权限不足，先运行：
+9. 如果权限不足，先运行：
    ```bash
    python tools/lianli_wireless_probe.py udev-rules
    ```
@@ -162,6 +170,7 @@ python tools/lianli_wireless_probe.py safe-pwm-experiment \
 
 - `receiver-validation-bundle.json`
 - `summary.json`
+- `receiver-evidence-report.json`
 - `scan.json`
 - `readiness.json`
 - `live-list.json`

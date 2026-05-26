@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -10,6 +11,27 @@ from usb9_lcd.lianli.wireless import LianLiWirelessError
 
 
 LIVE_SNAPSHOT_OPERATIONS = {"live-list", "live-list-before", "live-list-after"}
+RECEIVER_EVIDENCE_REQUIRED_FILES = (
+    "receiver-validation-bundle.json",
+    "summary.json",
+    "scan.json",
+    "readiness.json",
+    "live-list.json",
+    "live-master.json",
+    "validate-readonly.json",
+    "readonly/scan.json",
+    "readonly/live-list.json",
+    "readonly/live-master.json",
+    "preflight.json",
+    "write-gate.json",
+)
+RECEIVER_EVIDENCE_WRITE_FILES = (
+    "experiments/safe-pwm-001/live-list-before.json",
+    "experiments/safe-pwm-001/live-pwm.json",
+    "experiments/safe-pwm-001/live-list-after.json",
+    "experiments/safe-pwm-001/analyze-live-pwm.json",
+    "experiments/safe-pwm-001/summary.json",
+)
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -65,6 +87,139 @@ def diff_snapshot_files(before_path: Path, after_path: Path) -> dict[str, Any]:
         "after_path": str(after_path),
         **diff,
     }
+
+
+def receiver_evidence_report(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise LianLiWirelessError(f"evidence path does not exist: {path}")
+    root = path if path.is_dir() else path.parent
+    summary = summarize_experiment_dir(path)
+    manifest = receiver_evidence_manifest(root)
+    required = receiver_evidence_checklist(root, RECEIVER_EVIDENCE_REQUIRED_FILES)
+    write = receiver_evidence_checklist(root, RECEIVER_EVIDENCE_WRITE_FILES)
+    missing_required = [item for item in required if not item["exists"]]
+    hardware_validation = summary.get("hardware_validation") if isinstance(summary.get("hardware_validation"), dict) else {}
+    next_action = summary.get("receiver_control_next_action") if isinstance(summary.get("receiver_control_next_action"), dict) else {}
+    status = receiver_evidence_status(
+        missing_required_count=len(missing_required),
+        invalid_file_count=int(summary.get("invalid_file_count") or 0),
+        hardware_status=str(hardware_validation.get("status") or ""),
+        next_action_status=str(next_action.get("status") or ""),
+    )
+    return {
+        "operation": "receiver-evidence-report",
+        "path": str(path),
+        "root": str(root),
+        "status": status,
+        "json_file_count": len(manifest),
+        "required_present_count": len(required) - len(missing_required),
+        "required_missing_count": len(missing_required),
+        "required_files": required,
+        "write_files": write,
+        "file_manifest": manifest,
+        "hardware_validation": hardware_validation,
+        "receiver_control_next_action": next_action,
+        "recommended_commands": receiver_evidence_recommended_commands(root, status, next_action),
+        "summary": summary,
+    }
+
+
+def receiver_evidence_manifest(root: Path) -> list[dict[str, Any]]:
+    files = sorted(root.rglob("*.json")) if root.is_dir() else [root]
+    result = []
+    for file_path in files:
+        item = {
+            "path": str(file_path),
+            "relative_path": str(file_path.relative_to(root)) if root.is_dir() else file_path.name,
+            "size_bytes": file_path.stat().st_size,
+            "sha256": _sha256_file(file_path),
+        }
+        try:
+            payload = load_json_file(file_path)
+        except LianLiWirelessError as error:
+            item["status"] = "invalid-json"
+            item["error"] = str(error)
+        else:
+            item["status"] = "ok"
+            item["operation"] = str(payload.get("operation") or "")
+        result.append(item)
+    return result
+
+
+def receiver_evidence_checklist(root: Path, relative_paths: tuple[str, ...]) -> list[dict[str, Any]]:
+    return [
+        {
+            "relative_path": relative_path,
+            "exists": (root / relative_path).exists(),
+            "path": str(root / relative_path),
+        }
+        for relative_path in relative_paths
+    ]
+
+
+def receiver_evidence_status(
+    *,
+    missing_required_count: int,
+    invalid_file_count: int,
+    hardware_status: str,
+    next_action_status: str,
+) -> str:
+    if invalid_file_count:
+        return "invalid-evidence-files"
+    if missing_required_count:
+        return "missing-readonly-evidence"
+    if hardware_status == "errors":
+        return "validation-errors"
+    if hardware_status == "readonly-and-write-observed":
+        return "write-evidence-collected"
+    if next_action_status == "ready-for-single-target-safe-pwm":
+        return "ready-for-single-target-safe-pwm"
+    if hardware_status == "readonly-and-write-gate-ready":
+        return "write-gate-ready"
+    if hardware_status == "readonly-observed":
+        return "readonly-evidence-collected"
+    return "needs-review"
+
+
+def receiver_evidence_recommended_commands(path: Path, status: str, next_action: dict[str, Any]) -> list[str]:
+    commands = []
+    if status in {"missing-readonly-evidence", "invalid-evidence-files"}:
+        commands.append(
+            _tool_command(
+                "--save-json",
+                str(path / "receiver-validation-bundle.json"),
+                "receiver-validation-bundle",
+                "--output-dir",
+                str(path),
+                "--capture-dir",
+                ".cache/lianli",
+            )
+        )
+    action_commands = next_action.get("recommended_commands")
+    if isinstance(action_commands, list):
+        commands.extend(str(command) for command in action_commands if isinstance(command, str) and command)
+    if _tool_command("receiver-evidence-report", str(path)) not in commands:
+        commands.append(_tool_command("receiver-evidence-report", str(path)))
+    return _unique_preserve_order(commands)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _unique_preserve_order(values: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def summarize_experiment_dir(path: Path) -> dict[str, Any]:

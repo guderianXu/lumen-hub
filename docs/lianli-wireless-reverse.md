@@ -1058,6 +1058,10 @@ Risks:
   snapshot into an explicit decision: do not write, collect more evidence, or
   run exactly one conservative `safe-pwm-experiment` command for a bound
   receiver MAC.
+  `receiver-evidence-report <hardware-log-dir>` audits that same directory as a
+  shareable evidence package: it checks required post-plug JSON files, records
+  file sizes and SHA256 hashes, mirrors the hardware validation state, and keeps
+  the next recommended command next to the manifest.
 - `LianLiWirelessPage`: GUI page for safe LIAN LI wireless probing. It exposes
   sysfs scanning, live receiver snapshots, live master MAC queries, and a
   `只读验证` action that saves scan, live-list, live-master, and live-lcd-info

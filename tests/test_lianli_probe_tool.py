@@ -800,6 +800,60 @@ def test_probe_summarize_experiments_recommends_one_safe_pwm_after_write_gate(tm
     assert action["recommended_commands"][1] == f"python tools/lianli_wireless_probe.py summarize-experiments {tmp_path}"
 
 
+def test_probe_receiver_evidence_report_audits_saved_bundle(tmp_path):
+    required_payloads = {
+        "receiver-validation-bundle.json": {
+            "operation": "receiver-validation-bundle",
+            "output_dir": str(tmp_path),
+            "capture_dir": str(tmp_path / "captures"),
+            "experiment_dir": str(tmp_path / "experiments"),
+            "step_count": 7,
+            "ok_count": 7,
+            "error_count": 0,
+            "ready_for_guarded_write": True,
+            "write_gate_status": "write-enabled",
+            "steps": [],
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(tmp_path)},
+        "scan.json": {"operation": "scan", "device_count": 1},
+        "readiness.json": {"operation": "usb-capture-readiness", "status": "linux-live-ready"},
+        "live-list.json": {"operation": "live-list", "device_count": 1, "devices": [_device_payload()]},
+        "live-master.json": {"operation": "live-master", "detected": True, "master_mac": "10:20:30:40:50:60"},
+        "validate-readonly.json": {"operation": "validate-readonly", "step_count": 3, "ok_count": 3, "error_count": 0},
+        "preflight.json": {"operation": "linux-control-preflight", "status": "ready"},
+        "write-gate.json": {
+            "operation": "linux-control-write-gate",
+            "status": "write-enabled",
+            "allows_any_guarded_write": True,
+        },
+        "readonly/scan.json": {"operation": "scan", "device_count": 1},
+        "readonly/live-list.json": {"operation": "live-list", "device_count": 1, "devices": [_device_payload()]},
+        "readonly/live-master.json": {"operation": "live-master", "detected": True},
+    }
+    for relative_path, payload in required_payloads.items():
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    manifest_by_path = {item["relative_path"]: item for item in payload["file_manifest"]}
+
+    assert payload["operation"] == "receiver-evidence-report"
+    assert payload["status"] == "ready-for-single-target-safe-pwm"
+    assert payload["required_missing_count"] == 0
+    assert payload["required_present_count"] == 12
+    assert payload["json_file_count"] == 12
+    assert payload["hardware_validation"]["status"] == "readonly-and-write-gate-ready"
+    assert payload["receiver_control_next_action"]["status"] == "ready-for-single-target-safe-pwm"
+    assert payload["recommended_commands"][0].startswith(
+        "python tools/lianli_wireless_probe.py safe-pwm-experiment --mac aa:bb:cc:dd:ee:ff"
+    )
+    assert payload["recommended_commands"][-1] == f"python tools/lianli_wireless_probe.py receiver-evidence-report {tmp_path}"
+    assert manifest_by_path["live-list.json"]["operation"] == "live-list"
+    assert len(manifest_by_path["live-list.json"]["sha256"]) == 64
+    assert all(item["exists"] for item in payload["required_files"])
+
+
 def test_probe_live_pwm_requires_confirmation(monkeypatch):
     module = _load_probe_module()
 
