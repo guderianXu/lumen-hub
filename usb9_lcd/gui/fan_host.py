@@ -1584,6 +1584,8 @@ class EmbeddedFanControlPanel(QWidget):
         title.setObjectName("SectionLabel")
         hint = QLabel(FAN_ROLE_CONTROL_HINTS.get(role, "先确认物理接口，再启用 PWM 写入"))
         hint.setObjectName("FieldHint")
+        hint.setMaximumWidth(520)
+        hint.setWordWrap(True)
         hint.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         header.addWidget(title)
         header.addWidget(hint, 1)
@@ -1596,8 +1598,8 @@ class EmbeddedFanControlPanel(QWidget):
         detail = str(getattr(fan, "detail_text", "") or "")
         row.setToolTip(detail)
         layout = QGridLayout(row)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setHorizontalSpacing(14)
+        layout.setContentsMargins(10, 9, 10, 9)
+        layout.setHorizontalSpacing(12)
         layout.setVerticalSpacing(8)
 
         channel = str(getattr(fan, "channel_label", "") or "Channel")
@@ -1632,15 +1634,10 @@ class EmbeddedFanControlPanel(QWidget):
         identity_layout.addLayout(badge_row)
 
         channel_label = QLabel(channel)
-        channel_label.setObjectName("FanCardMeta")
+        channel_label.setObjectName("FanControlPathLabel")
         channel_label.setWordWrap(True)
+        channel_label.setToolTip(detail)
         identity_layout.addWidget(channel_label)
-
-        evidence_label = QLabel(_fan_identity_evidence_text(fan, compact=True))
-        evidence_label.setObjectName("FieldHint")
-        evidence_label.setWordWrap(True)
-        evidence_label.setToolTip(detail)
-        identity_layout.addWidget(evidence_label)
         identity_layout.addStretch(1)
 
         control_block = QWidget()
@@ -1660,9 +1657,14 @@ class EmbeddedFanControlPanel(QWidget):
         self._sliders[str(getattr(fan, "name", channel))] = slider
         control_layout.addWidget(slider)
 
-        bind_row = QHBoxLayout()
+        bind_block = QFrame()
+        bind_block.setObjectName("FanControlBindBlock")
+        bind_layout = QVBoxLayout(bind_block)
+        bind_layout.setContentsMargins(10, 8, 10, 8)
+        bind_layout.setSpacing(6)
         bind_label = QLabel("建议温度源")
         bind_label.setObjectName("FieldHint")
+        bind_layout.addWidget(bind_label)
         combo = QComboBox()
         combo.addItem("(自动)", None)
         for sensor in temp_sensors:
@@ -1670,17 +1672,20 @@ class EmbeddedFanControlPanel(QWidget):
         default_index = self._default_sensor_index(combo, role)
         if default_index >= 0:
             combo.setCurrentIndex(default_index)
-        combo.setMaximumWidth(360)
-        bind_row.addWidget(bind_label)
-        bind_row.addWidget(combo)
-        bind_row.addStretch(1)
-        control_layout.addLayout(bind_row)
+        combo.setMinimumWidth(150)
+        combo.setMaximumWidth(230)
+        combo.setToolTip(_fan_role_control_hint(role, has_pwm=True))
+        bind_layout.addWidget(combo)
+        bind_layout.addStretch(1)
+        bind_block.setMaximumWidth(250)
 
         layout.addWidget(identity_block, 0, 0)
         layout.addWidget(control_block, 0, 1)
-        layout.setColumnMinimumWidth(0, 220)
+        layout.addWidget(bind_block, 0, 2)
+        layout.setColumnMinimumWidth(0, 190)
         layout.setColumnStretch(0, 0)
         layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(2, 0)
         return row
 
     def _default_sensor_index(self, combo: QComboBox, role: str) -> int:
@@ -2219,18 +2224,22 @@ class FanControlHostPage(QWidget):
         channel_cards_layout = QVBoxLayout(channel_cards_page)
         channel_cards_layout.setContentsMargins(0, 0, 0, 0)
         channel_cards_layout.setSpacing(10)
+        self.fan_overview_headline_label = QLabel("加载后按 CPU、水泵、机箱和 GPU 分组显示实时转速。")
+        self.fan_overview_headline_label.setObjectName("FanOverviewHeadline")
+        self.fan_overview_headline_label.setWordWrap(True)
+        live_overview_layout.addWidget(self.fan_overview_headline_label)
         self.fan_role_summary_label = QLabel("加载后会按 CPU 风扇、水泵/AIO、机箱风扇和未识别通道分组显示。")
         self.fan_role_summary_label.setObjectName("FanRoleSummary")
         self.fan_role_summary_label.setWordWrap(True)
-        live_overview_layout.addWidget(self.fan_role_summary_label)
+        self.fan_role_summary_label.setVisible(False)
         self.fan_role_speed_label = QLabel("加载后会直接列出 CPU_FAN、CPU_OPT、水泵和机箱风扇的实时转速。")
         self.fan_role_speed_label.setObjectName("FanSpeedSummary")
         self.fan_role_speed_label.setWordWrap(True)
-        live_overview_layout.addWidget(self.fan_role_speed_label)
+        self.fan_role_speed_label.setVisible(False)
         self.fan_identity_overview_label = QLabel("加载后显示每路物理接口、角色、转速和识别状态。")
         self.fan_identity_overview_label.setObjectName("FanIdentityOverview")
         self.fan_identity_overview_label.setWordWrap(True)
-        live_overview_layout.addWidget(self.fan_identity_overview_label)
+        self.fan_identity_overview_label.setVisible(False)
 
         identity_notice_row = QHBoxLayout()
         identity_notice_row.setSpacing(10)
@@ -2242,7 +2251,6 @@ class FanControlHostPage(QWidget):
         self.confirm_all_candidates_button.clicked.connect(self.confirm_all_candidate_channel_detections)
         identity_notice_row.addWidget(self.fan_identity_notice_label, 1)
         identity_notice_row.addWidget(self.confirm_all_candidates_button)
-        live_overview_layout.addLayout(identity_notice_row)
 
         self.fan_identity_table = QTableWidget(0, 5)
         self.fan_identity_table.setObjectName("FanIdentityTable")
@@ -2259,7 +2267,6 @@ class FanControlHostPage(QWidget):
         self.fan_identity_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.fan_identity_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.fan_identity_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        live_overview_layout.addWidget(self.fan_identity_table)
 
         self.fan_role_metric_cards: dict[str, FanRoleMetricCard] = {}
         role_metrics = QWidget()
@@ -2275,6 +2282,7 @@ class FanControlHostPage(QWidget):
             role_metrics_layout.addWidget(card, row, column)
             role_metrics_layout.setColumnStretch(column, 1)
         live_overview_layout.addWidget(role_metrics)
+        live_overview_layout.addStretch(1)
 
         self.fan_cards_container = QWidget()
         self.fan_cards_container.setObjectName("FanCardsContainer")
@@ -2455,21 +2463,22 @@ class FanControlHostPage(QWidget):
         self.channel_evidence_label.setObjectName("FieldHint")
         self.channel_evidence_label.setWordWrap(True)
         identity_layout.addWidget(identity_hint, 0, 0, 1, 4)
-        identity_layout.addWidget(QLabel("通道"), 1, 0)
-        identity_layout.addWidget(self.channel_label_combo, 1, 1)
-        identity_layout.addWidget(QLabel("角色"), 1, 2)
-        identity_layout.addWidget(self.channel_role_combo, 1, 3)
-        identity_layout.addWidget(QLabel("物理接口"), 2, 0)
-        identity_layout.addWidget(self.channel_header_combo, 2, 1)
-        identity_layout.addWidget(QLabel("别名"), 2, 2)
-        identity_layout.addWidget(self.channel_alias_input, 2, 3)
-        identity_layout.addWidget(self.save_channel_label_button, 3, 0)
-        identity_layout.addWidget(self.confirm_channel_label_button, 3, 1)
-        identity_layout.addWidget(self.clear_channel_label_button, 3, 2)
-        identity_layout.addWidget(self.identify_channel_button, 3, 3)
-        identity_layout.addWidget(QLabel("快速标记"), 4, 0)
-        identity_layout.addLayout(quick_role_layout, 4, 1, 1, 3)
-        identity_layout.addWidget(self.channel_evidence_label, 5, 0, 1, 4)
+        identity_layout.addLayout(identity_notice_row, 1, 0, 1, 4)
+        identity_layout.addWidget(QLabel("通道"), 2, 0)
+        identity_layout.addWidget(self.channel_label_combo, 2, 1)
+        identity_layout.addWidget(QLabel("角色"), 2, 2)
+        identity_layout.addWidget(self.channel_role_combo, 2, 3)
+        identity_layout.addWidget(QLabel("物理接口"), 3, 0)
+        identity_layout.addWidget(self.channel_header_combo, 3, 1)
+        identity_layout.addWidget(QLabel("别名"), 3, 2)
+        identity_layout.addWidget(self.channel_alias_input, 3, 3)
+        identity_layout.addWidget(self.save_channel_label_button, 4, 0)
+        identity_layout.addWidget(self.confirm_channel_label_button, 4, 1)
+        identity_layout.addWidget(self.clear_channel_label_button, 4, 2)
+        identity_layout.addWidget(self.identify_channel_button, 4, 3)
+        identity_layout.addWidget(QLabel("快速标记"), 5, 0)
+        identity_layout.addLayout(quick_role_layout, 5, 1, 1, 3)
+        identity_layout.addWidget(self.channel_evidence_label, 6, 0, 1, 4)
         identity_layout.setColumnStretch(1, 1)
         self.fan_table = QTableWidget(0, 8)
         self.fan_table.setObjectName("FanChannelTable")
@@ -2490,6 +2499,10 @@ class FanControlHostPage(QWidget):
         details_layout.addWidget(details_title)
         channel_calibration_layout.addLayout(identity_layout)
         channel_calibration_layout.addStretch(1)
+        identity_table_title = QLabel("识别概览")
+        identity_table_title.setObjectName("SectionLabel")
+        channel_table_layout.addWidget(identity_table_title)
+        channel_table_layout.addWidget(self.fan_identity_table)
         channel_table_layout.addWidget(self.fan_table_hint)
         channel_table_layout.addWidget(self.fan_table, 1)
         self.channel_detail_tabs.addTab(channel_calibration_tab, "标定")
@@ -2700,6 +2713,9 @@ class FanControlHostPage(QWidget):
         self.rpm_chart.clear()
         self.temperature_chart.clear()
         self.visual_status_label.setText("等待加载监控")
+        if hasattr(self, "fan_overview_headline_label"):
+            self.fan_overview_headline_label.setText("加载后按 CPU、水泵、机箱和 GPU 分组显示实时转速。")
+            self.fan_overview_headline_label.setToolTip("")
         self.fan_role_summary_label.setText("加载后会按 CPU 风扇、水泵/AIO、机箱风扇和未识别通道分组显示。")
         self.fan_role_speed_label.setText("加载后会直接列出 CPU_FAN、CPU_OPT、水泵和机箱风扇的实时转速。")
         self.fan_identity_overview_label.setText("加载后显示每路物理接口、角色、转速和识别状态。")
@@ -2744,19 +2760,19 @@ class FanControlHostPage(QWidget):
             return
         widget = self.workspace_tabs.widget(index)
         if widget is self.overview_tab:
-            height = 760
+            height = 560
         elif widget is self.control_tab:
-            height = 740
+            height = 680
         elif widget is self.strategy_tab:
-            height = 820 if self.strategy_tabs.currentWidget() is self.strategy_editor_tab else 420
+            height = 760 if self.strategy_tabs.currentWidget() is self.strategy_editor_tab else 360
         elif widget is self.details_tab:
-            height = 720
+            height = 640
         elif widget is self.permission_tab:
-            height = 620
+            height = 560
         elif widget is self.test_tab:
-            height = 460
+            height = 420
         elif widget is self.history_tab:
-            height = 740
+            height = 640
         else:
             height = 300
         self.workspace_tabs.setMinimumHeight(height)
@@ -3985,6 +4001,26 @@ class FanControlHostPage(QWidget):
             parts.append(f"未识别 {unknown}")
         return f"{len(self._fans)} 通道\n" + " · ".join(parts)
 
+    def _fan_overview_headline_text(self) -> str:
+        if not self._fans:
+            return "加载后按 CPU、水泵、机箱和 GPU 分组显示实时转速；通道标定和底层路径放在“通道”页。"
+        groups = self._fan_role_groups()
+        role_parts: list[str] = []
+        for role in FAN_ROLE_OVERVIEW_ORDER:
+            fans = groups.get(role, [])
+            if not fans:
+                continue
+            active = sum(1 for fan in fans if self._fan_has_live_speed(str(getattr(fan, "name", ""))))
+            role_parts.append(f"{_fan_role_compact_label(role)} {active}/{len(fans)}")
+        total_active = sum(
+            1
+            for fan in self._fans
+            if self._fan_has_live_speed(str(getattr(fan, "name", "")))
+        )
+        mode = "PWM 写入中" if self._control_is_enabled() else "只读监控"
+        role_text = " · ".join(role_parts) if role_parts else f"{len(self._fans)} 个通道"
+        return f"{role_text} · 总计 {total_active}/{len(self._fans)} 有转速 · {mode}"
+
     def _fan_role_summary_text(self) -> str:
         if not self._fans:
             return "加载后会按 CPU 风扇、水泵/AIO、机箱风扇和未识别通道分组显示。"
@@ -4236,7 +4272,7 @@ class FanControlHostPage(QWidget):
             return
         evidence = self._fan_channel_evidence_text(fan)
         self.channel_evidence_label.setText(evidence)
-        self.channel_evidence_label.setToolTip(self._fan_detail_text(fan))
+        self.channel_evidence_label.setToolTip(self._fan_channel_evidence_tooltip(fan))
 
     def _fan_channel_evidence_text(self, fan) -> str:  # noqa: ANN001
         channel = str(getattr(fan, "channel_label", "") or "--")
@@ -4246,12 +4282,9 @@ class FanControlHostPage(QWidget):
         role = str(getattr(fan, "type_label", "") or "未知")
         identity = _fan_identity_state_label(fan)
         speed = self._fan_snapshot_speed_text(fan)
-        source = self._fan_display_source(fan)
-        path_text = self._fan_compact_path_text(fan)
         sensor = str(getattr(fan, "sensor_label", "") or "未关联")
         sensor_basis = str(getattr(fan, "sensor_basis", "") or "")
         chip = str(getattr(fan, "chip_label", "") or "")
-        hwmon_path = str(getattr(fan, "hwmon_path", "") or "")
         header_text = f"{header}（{header_basis or '自动识别'}）" if header else "未确认"
         if identity == "主板候选":
             guidance = (
@@ -4263,15 +4296,37 @@ class FanControlHostPage(QWidget):
         sensor_text = f"关联传感器：{sensor}"
         if sensor_basis:
             sensor_text += f"（{sensor_basis}）"
-        chip_text = ""
-        if chip:
-            chip_text = f"芯片：{chip}。"
-        if hwmon_path:
-            chip_text += f"hwmon：{hwmon_path}。"
+        chip_text = f"芯片：{chip}。" if chip else ""
+        evidence = self._compact_fan_evidence_text(role_basis)
+        channel_text = f" · {channel}" if channel and channel != "--" else ""
         return (
-            f"当前识别：{role} · 物理接口：{header_text} · {identity} · {speed}。"
-            f"{sensor_text}。{chip_text}证据：{role_basis}。PWM/FAN：{channel}；来源：{source}{path_text}。{guidance}"
+            f"当前识别：{role} · 物理接口：{header_text} · {identity} · {speed}{channel_text}。"
+            f"{sensor_text}。{chip_text}证据：{evidence}。{guidance}"
         )
+
+    def _compact_fan_evidence_text(self, text: str, limit: int = 150) -> str:
+        text = re.sub(r"\s+", " ", str(text or "")).strip()
+        if len(text) <= limit:
+            return text or "无"
+        return text[: max(0, limit - 3)].rstrip() + "..."
+
+    def _fan_channel_evidence_tooltip(self, fan) -> str:  # noqa: ANN001
+        role_basis = str(getattr(fan, "role_basis", "") or "")
+        header_basis = str(getattr(fan, "header_basis", "") or "")
+        sensor_basis = str(getattr(fan, "sensor_basis", "") or "")
+        detail = self._fan_detail_text(fan)
+        chip = str(getattr(fan, "chip_label", "") or "")
+        channel = str(getattr(fan, "channel_label", "") or "")
+        source = self._fan_display_source(fan)
+        path_text = self._fan_compact_path_text(fan)
+        lines = [line for line in (role_basis, header_basis, sensor_basis, detail) if line]
+        if chip:
+            lines.append(f"芯片：{chip}")
+        if channel:
+            lines.append(f"PWM/FAN：{channel}")
+        if source:
+            lines.append(f"来源：{source}{path_text}")
+        return "\n".join(dict.fromkeys(lines)) or "--"
 
     def _fan_channel_combo_text(self, fan) -> str:  # noqa: ANN001
         role = str(getattr(fan, "type_label", "") or "未知")
@@ -4915,6 +4970,17 @@ class FanControlHostPage(QWidget):
         self.fan_role_summary_label.setText(self._fan_role_summary_text())
         self.fan_role_speed_label.setText(self._fan_role_speed_summary_text())
         self.fan_identity_overview_label.setText(self._fan_identity_overview_text())
+        if hasattr(self, "fan_overview_headline_label"):
+            self.fan_overview_headline_label.setText(self._fan_overview_headline_text())
+            self.fan_overview_headline_label.setToolTip(
+                "\n".join(
+                    (
+                        self.fan_role_summary_label.text(),
+                        self.fan_role_speed_label.text(),
+                        self.fan_identity_overview_label.text(),
+                    )
+                )
+            )
         if hasattr(self, "fan_identity_notice_label"):
             self.fan_identity_notice_label.setText(self._fan_identity_notice_text())
         if hasattr(self, "confirm_all_candidates_button"):

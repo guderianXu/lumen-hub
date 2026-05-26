@@ -100,10 +100,62 @@ def test_fan_host_layout_separates_dense_sections():
         "权限明细",
         "诊断建议",
     ]
-    assert page.workspace_tabs.minimumHeight() >= 700
+    assert page.fan_overview_headline_label.text()
+    assert page.fan_role_summary_label.isHidden()
+    assert page.fan_role_speed_label.isHidden()
+    assert page.fan_identity_overview_label.isHidden()
+    assert page.fan_identity_table.parentWidget() is not page.overview_sections.widget(0)
+    assert page.workspace_tabs.minimumHeight() >= 520
     assert page.workspace_tabs.maximumHeight() == 16777215
 
     page.close()
+    app.quit()
+
+
+def test_fan_host_control_rows_keep_identity_control_and_binding_separate():
+    from PySide6.QtCore import Signal
+    from PySide6.QtWidgets import QApplication, QFrame, QLabel, QVBoxLayout
+
+    from usb9_lcd.gui.fan_host import DisplayFanChannel, EmbeddedFanControlPanel
+
+    class DummySlider(QFrame):
+        pwm_changed = Signal(str, int)
+        auto_toggled = Signal(str, bool)
+
+        def __init__(self, fan_name: str) -> None:
+            super().__init__()
+            layout = QVBoxLayout(self)
+            self._name_label = QLabel(fan_name)
+            layout.addWidget(self._name_label)
+
+        def set_control_enabled(self, enabled: bool) -> None:
+            self._enabled = enabled
+
+    app = QApplication.instance() or QApplication([])
+    panel = EmbeddedFanControlPanel(DummySlider)
+    panel.populate_fans(
+        [
+            DisplayFanChannel(
+                name="CPU_FAN · PWM1/FAN1",
+                pwm_path="/sys/class/hwmon/hwmon0/pwm1",
+                rpm_input="/sys/class/hwmon/hwmon0/fan1_input",
+                type_label="CPU 风扇",
+                channel_label="PWM1/FAN1",
+                header_label="CPU_FAN",
+                header_confirmed=True,
+                detail_text="底层路径应放进 tooltip，而不是挤在默认行内。",
+            )
+        ],
+        [],
+    )
+
+    assert panel.findChildren(QFrame, "FanControlIdentityBlock")
+    assert panel.findChildren(QFrame, "FanControlBindBlock")
+    path_labels = panel.findChildren(QLabel, "FanControlPathLabel")
+    assert [label.text() for label in path_labels] == ["PWM1/FAN1"]
+    assert panel._sliders["CPU_FAN · PWM1/FAN1"]._name_label.text() == "CPU_FAN · CPU"
+
+    panel.close()
     app.quit()
 
 
@@ -1035,7 +1087,7 @@ def test_fan_host_uses_pwm_label_basis_and_can_identify_selected_channel(tmp_pat
     assert "pwm: " in page.fan_table.item(0, 0).toolTip()
     assert "物理接口：W_PUMP" in page.channel_evidence_label.text()
     assert "PWM1/FAN1" in page.channel_evidence_label.text()
-    assert str(hwmon / "pwm1") in page.channel_evidence_label.text()
+    assert str(hwmon / "pwm1") in page.channel_evidence_label.toolTip()
 
     page.identify_selected_fan_channel()
 
@@ -1137,7 +1189,7 @@ def test_fan_host_shows_candidate_channel_identity_evidence(tmp_path: Path, monk
     assert "CPU_FAN?" in page.channel_label_combo.currentText()
     assert "芯片 主板 nct6799" in page.channel_label_combo.currentText()
     assert "芯片 主板 nct6799" in page.fan_table.item(0, 6).toolTip()
-    assert "hwmon：" in page.channel_evidence_label.text()
+    assert "hwmon:" in page.channel_evidence_label.toolTip()
     assert "pwm1" in page.channel_evidence_label.text()
 
     page.close()

@@ -107,6 +107,15 @@ def gui_stylesheet() -> str:
         border: 1px solid #34383b;
         border-radius: 8px;
     }
+    QLabel#FanOverviewHeadline {
+        background: #121719;
+        border: 1px solid #2f4642;
+        border-radius: 7px;
+        color: #dfe5e1;
+        font-size: 14px;
+        font-weight: 800;
+        padding: 10px 12px;
+    }
     QWidget#FanSummaryPanel { background: transparent; }
     QTabWidget#FanWorkspaceTabs::pane {
         background: #151718;
@@ -144,6 +153,11 @@ def gui_stylesheet() -> str:
         border-radius: 7px;
         padding: 8px;
     }
+    QFrame#FanControlBindBlock {
+        background: #141617;
+        border: 1px solid #303438;
+        border-radius: 7px;
+    }
     QFrame#EmbeddedFanSlider {
         background: transparent;
         border: 0;
@@ -152,6 +166,11 @@ def gui_stylesheet() -> str:
         color: #f2f3f0;
         font-size: 15px;
         font-weight: 900;
+    }
+    QLabel#FanControlPathLabel {
+        color: #a9afad;
+        font-size: 12px;
+        font-weight: 700;
     }
     QLabel#FanCardName { color: #f0f2ef; font-weight: 800; }
     QLabel#FanRpmValue { color: #f2f3f0; font-size: 20px; font-weight: 900; }
