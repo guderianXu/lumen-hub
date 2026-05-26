@@ -265,6 +265,7 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
     live_pwm = _optional_json_object(output_dir / "live-pwm.json")
     analysis = _optional_json_object(output_dir / "analyze-live-pwm.json")
     visual_observation = receiver_visual_observation(output_dir)
+    observation_consistency = receiver_observation_consistency(live_pwm, visual_observation)
     if not missing:
         status = "complete"
     elif present:
@@ -275,6 +276,7 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
         machine_status=status,
         likely_effective=analysis.get("likely_effective"),
         visual_status=str(visual_observation.get("status") or ""),
+        consistency_status=str(observation_consistency.get("status") or ""),
     )
     return {
         "output_dir": str(output_dir),
@@ -290,6 +292,7 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
         "likely_effective": analysis.get("likely_effective"),
         "expected_effect": analysis.get("expected_effect") if isinstance(analysis.get("expected_effect"), dict) else {},
         "visual_observation": visual_observation,
+        "observation_consistency": observation_consistency,
         "files": files,
     }
 
@@ -343,15 +346,70 @@ def receiver_visual_observation(output_dir: Path) -> dict[str, Any]:
     }
 
 
+def receiver_observation_consistency(live_pwm: dict[str, Any], visual_observation: dict[str, Any]) -> dict[str, Any]:
+    visual_status = str(visual_observation.get("status") or "")
+    if visual_status in {"missing", "invalid", "unclear"}:
+        return {
+            "status": "not-applicable",
+            "target_status": "not-checked",
+            "pwm_status": "not-checked",
+            "notes": [],
+        }
+
+    machine_target = _normalize_mac(str(live_pwm.get("target") or ""))
+    observed_target = _normalize_mac(str(visual_observation.get("target") or ""))
+    target_status = "not-provided"
+    notes = []
+    if machine_target and observed_target:
+        target_status = "match" if machine_target == observed_target else "mismatch"
+    elif machine_target:
+        target_status = "observation-target-missing"
+    elif observed_target:
+        target_status = "machine-target-missing"
+
+    machine_pwm = _int_list(live_pwm.get("pwm_values"))
+    observed_pwm_text = str(visual_observation.get("observed_pwm") or "").strip()
+    observed_pwm = _parse_observed_pwm_values(observed_pwm_text)
+    pwm_status = "not-provided"
+    if observed_pwm_text:
+        if observed_pwm is None:
+            pwm_status = "unparseable"
+        elif not machine_pwm:
+            pwm_status = "machine-pwm-missing"
+        elif len(observed_pwm) == 1 and len(set(machine_pwm)) == 1:
+            pwm_status = "match" if observed_pwm[0] == machine_pwm[0] else "mismatch"
+        else:
+            pwm_status = "match" if observed_pwm == machine_pwm else "mismatch"
+
+    if target_status == "mismatch":
+        notes.append("Observation target MAC differs from live-pwm target.")
+    if pwm_status == "mismatch":
+        notes.append("Observation PWM differs from live-pwm pwm_values.")
+    status = "conflict" if target_status == "mismatch" or pwm_status == "mismatch" else "consistent"
+    return {
+        "status": status,
+        "target_status": target_status,
+        "pwm_status": pwm_status,
+        "machine_target": machine_target,
+        "observed_target": observed_target,
+        "machine_pwm_values": machine_pwm,
+        "observed_pwm_values": observed_pwm or [],
+        "notes": notes,
+    }
+
+
 def receiver_control_proof_status(
     *,
     machine_status: str,
     likely_effective: Any,
     visual_status: str,
+    consistency_status: str = "",
 ) -> str:
     if machine_status != "complete":
         return f"machine-evidence-{machine_status}"
     if visual_status == "confirmed":
+        if consistency_status == "conflict":
+            return "visual-observation-conflicts"
         return "visually-confirmed"
     if visual_status == "contradicts":
         return "visual-observation-conflicts"
@@ -362,6 +420,36 @@ def receiver_control_proof_status(
     if likely_effective is True:
         return "machine-evidence-complete-needs-observation"
     return "needs-observation"
+
+
+def _normalize_mac(value: str) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    parts = re.findall(r"[0-9a-f]{2}", text)
+    return ":".join(parts[:6]) if len(parts) >= 6 else text
+
+
+def _int_list(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        try:
+            result.append(int(item))
+        except (TypeError, ValueError):
+            return []
+    return result
+
+
+def _parse_observed_pwm_values(value: str) -> list[int] | None:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    values = [int(item) for item in re.findall(r"\d+", text)]
+    if not values:
+        return None
+    return values
 
 
 def receiver_evidence_file_item(root: Path, path: Path) -> dict[str, Any]:

@@ -971,6 +971,9 @@ def test_probe_receiver_evidence_report_uses_visual_observation(tmp_path):
     assert write_set["visual_observation"]["status"] == "confirmed"
     assert write_set["visual_observation"]["effect"] == "changed"
     assert write_set["visual_observation"]["notes"] == ["fan speed visibly changed after guarded PWM write"]
+    assert write_set["observation_consistency"]["status"] == "consistent"
+    assert write_set["observation_consistency"]["target_status"] == "match"
+    assert write_set["observation_consistency"]["pwm_status"] == "not-provided"
 
 
 def test_probe_receiver_evidence_report_flags_contradicting_observation(tmp_path):
@@ -998,6 +1001,69 @@ def test_probe_receiver_evidence_report_flags_contradicting_observation(tmp_path
     assert write_set["visual_observation"]["status"] == "contradicts"
     assert write_set["visual_observation"]["effect"] == "unchanged"
     assert not any("receiver-observation" in command for command in payload["recommended_commands"])
+
+
+def test_probe_receiver_evidence_report_flags_target_mismatch_observation(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    _run_probe(
+        "--save-json",
+        str(output_dir / "observation.json"),
+        "receiver-observation",
+        str(output_dir),
+        "--effect",
+        "changed",
+        "--target",
+        "ff:ee:dd:cc:bb:aa",
+        "--note",
+        "different target was watched by mistake",
+    )
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = payload["write_evidence_sets"][0]
+    consistency = write_set["observation_consistency"]
+
+    assert payload["status"] == "write-evidence-observation-conflict"
+    assert payload["write_evidence_confirmed_count"] == 0
+    assert payload["write_evidence_conflict_count"] == 1
+    assert write_set["control_proof_status"] == "visual-observation-conflicts"
+    assert write_set["visual_observation"]["status"] == "confirmed"
+    assert consistency["status"] == "conflict"
+    assert consistency["target_status"] == "mismatch"
+    assert consistency["machine_target"] == "aa:bb:cc:dd:ee:ff"
+    assert consistency["observed_target"] == "ff:ee:dd:cc:bb:aa"
+
+
+def test_probe_receiver_evidence_report_flags_pwm_mismatch_observation(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    _run_probe(
+        "--save-json",
+        str(output_dir / "observation.json"),
+        "receiver-observation",
+        str(output_dir),
+        "--effect",
+        "changed",
+        "--observed-pwm",
+        "80",
+        "--note",
+        "wrong PWM value was recorded",
+    )
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = payload["write_evidence_sets"][0]
+    consistency = write_set["observation_consistency"]
+
+    assert payload["status"] == "write-evidence-observation-conflict"
+    assert payload["write_evidence_confirmed_count"] == 0
+    assert payload["write_evidence_conflict_count"] == 1
+    assert write_set["control_proof_status"] == "visual-observation-conflicts"
+    assert write_set["visual_observation"]["status"] == "confirmed"
+    assert consistency["status"] == "conflict"
+    assert consistency["target_status"] == "match"
+    assert consistency["pwm_status"] == "mismatch"
+    assert consistency["machine_pwm_values"] == [120, 120, 120, 120]
+    assert consistency["observed_pwm_values"] == [80]
 
 
 def test_probe_receiver_evidence_report_flags_invalid_observation(tmp_path):

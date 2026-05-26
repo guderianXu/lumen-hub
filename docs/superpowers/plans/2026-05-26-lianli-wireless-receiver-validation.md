@@ -160,7 +160,9 @@ python tools/lianli_wireless_probe.py \
 `write-evidence-confirmed`。如果观察记录写的是 `unchanged`，报告会标成
 `write-evidence-observation-conflict`；如果观察文件格式不对或结果不明确，
 会分别标成 `write-evidence-invalid-observation` 或
-`write-evidence-unclear-observation`，这些状态都不能作为 Linux PWM 控制已验证的证据。
+`write-evidence-unclear-observation`。即使 `--effect changed`，如果
+`observation.json` 里的目标 MAC 或 `--observed-pwm` 与 `live-pwm.json`
+不一致，也会标成 `write-evidence-observation-conflict`。这些状态都不能作为 Linux PWM 控制已验证的证据。
 
 ## 还没有做
 
