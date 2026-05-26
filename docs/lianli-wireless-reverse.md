@@ -1030,7 +1030,10 @@ Risks:
   protocol proof. `windows-capture-runbook` and `capture-gap-report` surface the
   matching hints as `interface_focus` per scenario; target-version hints are
   preferred, with a lower-confidence matrix-summary fallback when only another
-  analyzed L-Connect asset version contains the JS entry points.
+  analyzed L-Connect asset version contains the JS entry points. Those same
+  hints now expand into `interface_capture_actions`, a scenario-specific Windows
+  UI action and observation checklist that is also copied into generated
+  capture-note templates.
   High-entropy data still gets warnings where isolated 4-byte VID/PID hits may
   be accidental.
 - `usb9_lcd.lianli.changelog`: official L-Connect 3 changelog analyzer. It

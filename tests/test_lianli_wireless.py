@@ -3043,7 +3043,11 @@ def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
     assert tasks["direct-fan-speed"]["interface_focus"]["matched"] is True
     assert tasks["direct-fan-speed"]["interface_focus"]["source"] == "target-version"
     assert tasks["direct-fan-speed"]["interface_focus"]["matched_hints"] == ["fan-controller-settings"]
+    assert tasks["direct-fan-speed"]["interface_capture_actions"][0]["hint"] == "fan-controller-settings"
+    assert "Apply two fixed manual fan speeds" in tasks["direct-fan-speed"]["interface_capture_actions"][0]["ui_actions"][2]
+    assert tasks["direct-fan-speed"]["capture_note_template"]["interface_capture_actions"][0]["label"] == "Apply fan-controller speed settings"
     assert tasks["lighting-static-and-off"]["interface_focus"]["matched_hints"] == ["lighting-effect-settings"]
+    assert "lighting effect settings" in tasks["lighting-static-and-off"]["interface_capture_actions"][0]["ui_actions"][0]
     assert tasks["rf-rebind"]["base_priority"] == 90
     assert tasks["rf-rebind"]["priority"] == 70
     assert tasks["rf-rebind"]["changelog_focus"]["matched_keywords"] == ["binding", "rf"]
@@ -3058,6 +3062,7 @@ def test_capture_runbook_prioritizes_target_changelog_scenarios(tmp_path):
     assert gap_report["artifact_capture_context_status"] == "target-found"
     direct_gap = next(item for item in gap_report["scenario_gaps"] if item["id"] == "direct-fan-speed")
     assert direct_gap["interface_focus"]["matched_hints"] == ["fan-controller-settings"]
+    assert direct_gap["interface_capture_actions"][0]["observations"][0].startswith("Record the exact percent")
     assert "--artifact-dir" in gap_report["recommended_commands"][0]
 
 

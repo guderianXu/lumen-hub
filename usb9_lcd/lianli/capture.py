@@ -8545,6 +8545,11 @@ def _linux_control_action_plan_windows_actions(missing_scenarios: list[dict[str,
                 "goal": str(scenario.get("goal") or ""),
                 "expected_evidence": list(scenario.get("expected_evidence", []) if isinstance(scenario.get("expected_evidence"), list) else []),
                 "windows_actions": list(scenario.get("windows_actions", []) if isinstance(scenario.get("windows_actions"), list) else []),
+                "interface_capture_actions": list(
+                    scenario.get("interface_capture_actions", [])
+                    if isinstance(scenario.get("interface_capture_actions"), list)
+                    else []
+                ),
             }
         )
     return result
@@ -9931,6 +9936,7 @@ def _capture_gap_scenario_items(
         meta = _capture_gap_scenario_priority_meta(scenario_id, artifact_context)
         focus = meta.get("changelog_focus") if isinstance(meta.get("changelog_focus"), dict) else {}
         interface_focus = meta.get("interface_focus") if isinstance(meta.get("interface_focus"), dict) else {}
+        interface_actions = _capture_interface_capture_actions(scenario_id, interface_focus)
         gaps.append(
             {
                 "id": scenario_id,
@@ -9941,6 +9947,7 @@ def _capture_gap_scenario_items(
                 "risk": str(meta["risk"]),
                 "changelog_focus": focus,
                 "interface_focus": interface_focus,
+                "interface_capture_actions": interface_actions,
                 "capture_file": str(scenario.get("capture_file") or ""),
                 "path": str(scenario.get("path") or ""),
                 "goal": str(scenario.get("goal") or ""),
@@ -10246,6 +10253,163 @@ def _capture_interface_hint_scenarios(hint_id: str) -> set[str]:
     }.get(str(hint_id), set())
 
 
+def _capture_interface_capture_actions(
+    scenario_id: str,
+    interface_focus: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not interface_focus:
+        return []
+    actions: list[dict[str, Any]] = []
+    for hint_id in _ordered_strings_from_list(interface_focus.get("matched_hints")):
+        spec = _capture_interface_action_spec(scenario_id, hint_id)
+        if not spec:
+            continue
+        actions.append(
+            {
+                "hint": hint_id,
+                "label": str(spec.get("label") or hint_id),
+                "source": str(interface_focus.get("source") or ""),
+                "ui_actions": _ordered_strings_from_list(spec.get("ui_actions")),
+                "observations": _ordered_strings_from_list(spec.get("observations")),
+                "capture_note": str(spec.get("capture_note") or ""),
+            }
+        )
+    return actions
+
+
+def _capture_interface_action_spec(scenario_id: str, hint_id: str) -> dict[str, Any]:
+    key = (str(scenario_id), str(hint_id))
+    return {
+        ("baseline", "device-discovery"): {
+            "label": "Refresh / discover L-Wireless devices",
+            "ui_actions": [
+                "Open L-Connect 3 to the L-Wireless Utility or device list page.",
+                "Wait for the device list to finish discovery; if a refresh/update-controller action is visible, trigger it once.",
+                "Leave fan speed, lighting, sort, and binding settings unchanged during this file.",
+            ],
+            "observations": [
+                "Record every visible receiver/controller identity field: receiver MAC, master MAC, channel, device type, fan count, and LED count.",
+                "Record whether the UI shows a discovery/refresh completion state.",
+            ],
+            "capture_note": "Maps to official JS device-discovery events such as updateControllerVersion / find-device-finished.",
+        },
+        ("direct-fan-speed", "fan-controller-settings"): {
+            "label": "Apply fan-controller speed settings",
+            "ui_actions": [
+                "Open the target wireless fan group controller settings.",
+                "Disable motherboard/quick sync for this test if L-Connect exposes that switch.",
+                "Apply two fixed manual fan speeds with a clear gap, for example 55% then 75%.",
+            ],
+            "observations": [
+                "Record the exact percent or RPM values used and whether all fans changed together.",
+                "Record any UI apply/saved status after each change.",
+            ],
+            "capture_note": "Maps to official JS controller settings keys such as ALV2Controller- / SLV2Controller-.",
+        },
+        ("motherboard-pwm-sync", "fan-controller-settings"): {
+            "label": "Toggle motherboard PWM sync from controller settings",
+            "ui_actions": [
+                "Open the same wireless fan group controller settings used for direct PWM.",
+                "Toggle motherboard PWM sync off and on, waiting for the UI to settle after each transition.",
+                "Keep manual speed and lighting unchanged in this file except for the sync switch.",
+            ],
+            "observations": [
+                "Record whether the UI reports sync enabled, sync disabled, or quick sync.",
+                "Record the current motherboard PWM/fallback value if L-Connect shows it.",
+            ],
+            "capture_note": "Uses the same controller settings entry point but should produce sync/fallback PWM evidence.",
+        },
+        ("sort-quick-sync", "fan-controller-settings"): {
+            "label": "Check controller rewrite after sort / quick sync",
+            "ui_actions": [
+                "Set a recognizable wireless fan speed profile before changing sort/order.",
+                "Change the fan order/sort setting for the same L-Wireless group.",
+                "Watch whether L-Connect rewrites fan settings or enables quick sync after sorting.",
+            ],
+            "observations": [
+                "Record the before/after order and whether quick sync changed state.",
+                "Record whether the previously configured fan speed profile was preserved or rewritten.",
+            ],
+            "capture_note": "Targets the changelog issue where L-Wireless Utility settings switch to quick sync after sort settings.",
+        },
+        ("sort-quick-sync", "lighting-effect-settings"): {
+            "label": "Check lighting rewrite after sort / quick sync",
+            "ui_actions": [
+                "Set a recognizable lighting effect before changing sort/order.",
+                "Change the fan order/sort setting for the same L-Wireless group.",
+                "Watch whether lighting settings are rewritten or quick sync changes state.",
+            ],
+            "observations": [
+                "Record the before/after lighting effect name, color, speed, and brightness.",
+                "Record whether the sort action changed lighting without an explicit apply.",
+            ],
+            "capture_note": "Pairs LightEfferct settings keys with the sort/quick-sync scenario.",
+        },
+        ("lighting-static-and-off", "lighting-effect-settings"): {
+            "label": "Apply static and off lighting effects",
+            "ui_actions": [
+                "Open the target wireless fan group lighting effect settings.",
+                "Apply one obvious static color, preferably red at full brightness.",
+                "Apply lighting off / black in the same page after the static color settles.",
+            ],
+            "observations": [
+                "Record color, brightness, speed, direction, and effect name shown in L-Connect.",
+                "Record whether the physical fans visibly switch to the chosen color and then off.",
+            ],
+            "capture_note": "Maps to official LightEfferct settings keys and should produce static/off RGB evidence.",
+        },
+        ("lighting-generated-rainbow", "lighting-effect-settings"): {
+            "label": "Apply generated rainbow / spectrum effect",
+            "ui_actions": [
+                "Open the target wireless fan group lighting effect settings.",
+                "Choose a generated rainbow/spectrum animation rather than a static color.",
+                "Set a known speed/interval if exposed, apply once, then wait for one clean visual cycle.",
+            ],
+            "observations": [
+                "Record effect name, speed/interval, direction, brightness, LED count if visible, and whether animation loops.",
+                "Do not mix static color changes into this capture file.",
+            ],
+            "capture_note": "Maps to LightEfferct keys and should help label TinyUZ animated RGB payloads.",
+        },
+        ("rf-rebind", "wireless-config-settings"): {
+            "label": "Bind / unbind wireless profile settings",
+            "ui_actions": [
+                "Start from a known bound receiver and record the current fan PWM tuple first.",
+                "Unbind the target receiver, wait for discovery to finish, then bind it back to the same master/controller.",
+                "Apply one conservative fan speed after rebinding to expose post-bind control state.",
+            ],
+            "observations": [
+                "Record before/after receiver MAC, master MAC, channel, bind state, and recovery path.",
+                "Do not run this before baseline and lower-risk PWM/light captures are complete.",
+            ],
+            "capture_note": "Only use this hint after pairing-risk review because it changes receiver binding state.",
+        },
+        ("baseline", "wireless-config-settings"): {
+            "label": "Inspect wireless profile without changing binding",
+            "ui_actions": [
+                "Open wireless profile/configuration details without applying bind or unbind.",
+                "Record visible controller/receiver identity fields and close the page without saving changes.",
+            ],
+            "observations": [
+                "Record whether L-Connect shows profile names, receiver MACs, or pairing status.",
+            ],
+            "capture_note": "Wireless configuration keys can help label baseline profile reads.",
+        },
+        ("sort-quick-sync", "sort-or-quick-sync"): {
+            "label": "Trigger sort / quick-sync UI path",
+            "ui_actions": [
+                "Open the sort/order UI for the same wireless fan group.",
+                "Move one fan/device position and apply once.",
+                "Record whether a quick-sync switch or saved setting changes immediately after apply.",
+            ],
+            "observations": [
+                "Record original order, final order, and any automatic quick-sync transition.",
+            ],
+            "capture_note": "Use if future JS extraction finds explicit sort/order/quick-sync entry points.",
+        },
+    }.get(key, {})
+
+
 def _capture_focus_evidence(
     evidence_items: list[dict[str, Any]],
     matched_keywords: list[str],
@@ -10452,6 +10616,7 @@ def _windows_capture_runbook_tasks(
         meta = _capture_gap_scenario_priority_meta(scenario_id, artifact_context)
         focus = meta.get("changelog_focus") if isinstance(meta.get("changelog_focus"), dict) else {}
         interface_focus = meta.get("interface_focus") if isinstance(meta.get("interface_focus"), dict) else {}
+        interface_actions = _capture_interface_capture_actions(scenario_id, interface_focus)
         priority = meta.get("priority")
         planned_linux_commands = _ordered_strings_from_list(scenario.get("linux_commands"))
         linux_commands = _capture_contextual_command_set(
@@ -10473,6 +10638,7 @@ def _windows_capture_runbook_tasks(
                 "risk": str(meta.get("risk") or ""),
                 "changelog_focus": focus,
                 "interface_focus": interface_focus,
+                "interface_capture_actions": interface_actions,
                 "capture_file": capture_file,
                 "capture_path": str(capture_path),
                 "capture_note_file": _windows_capture_note_file(capture_file),
@@ -10718,12 +10884,15 @@ def _windows_capture_note_template(
     capture_file: str,
 ) -> dict[str, Any]:
     version = str(plan.get("version") or "")
+    scenario_id = str(scenario.get("id") or "")
+    interface_focus = scenario.get("interface_focus") if isinstance(scenario.get("interface_focus"), dict) else {}
+    interface_actions = _capture_interface_capture_actions(scenario_id, interface_focus)
     return {
         "operation": "windows-capture-note",
         "schema_version": CAPTURE_NOTE_SCHEMA_VERSION,
         "version": version,
         "capture_base": _capture_set_base_from_capture_file(capture_file),
-        "scenario_id": str(scenario.get("id") or ""),
+        "scenario_id": scenario_id,
         "capture_file": capture_file,
         "captured_at": "",
         "operator": "",
@@ -10747,6 +10916,8 @@ def _windows_capture_note_template(
             {"action": action, "done": False}
             for action in _ordered_strings_from_list(scenario.get("windows_actions"))
         ],
+        "interface_focus": interface_focus,
+        "interface_capture_actions": interface_actions,
         "observations": [],
         "expected_evidence": _ordered_strings_from_list(scenario.get("expected_evidence")),
     }
@@ -11358,6 +11529,10 @@ def _windows_capture_plan_scenarios(
         interface_focus = meta.get("interface_focus") if isinstance(meta.get("interface_focus"), dict) else {}
         if interface_focus:
             payload["interface_focus"] = interface_focus
+            payload["interface_capture_actions"] = _capture_interface_capture_actions(
+                scenario_id,
+                interface_focus,
+            )
         scenarios.append(payload)
     return scenarios
 
