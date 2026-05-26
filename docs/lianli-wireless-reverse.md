@@ -1080,14 +1080,18 @@ Risks:
   recommended observation command now carries the same target MAC and expected
   PWM tuple from `live-pwm.json`, reducing the chance that a manual observation
   is recorded against the wrong fan group. Evidence reports now distinguish
-  complete machine logs that still need observation
+  internally consistent complete machine logs that still need observation
   (`write-evidence-needs-observation`) from confirmed control evidence
-  (`write-evidence-confirmed`). Negative, malformed, or ambiguous observations
-  now produce explicit conflict/invalid/unclear statuses instead of being
-  treated as merely missing observation. Confirmed observations also have to
-  match the `live-pwm.json` target MAC, and recorded PWM values are compared
-  against `pwm_values`; mismatches are treated as observation conflicts rather
-  than validated control.
+  (`write-evidence-confirmed`). Each safe PWM write set now includes
+  `machine_consistency`, checking that `live-pwm.json`, before/after snapshots,
+  and `analyze-live-pwm.json` agree on the target and expected PWM effect.
+  Conflicting machine logs become `write-evidence-machine-conflict`, so a
+  manual observation cannot promote a mixed log set to validated control.
+  Negative, malformed, or ambiguous observations now produce explicit
+  conflict/invalid/unclear statuses instead of being treated as merely missing
+  observation. Confirmed observations also have to match the `live-pwm.json`
+  target MAC, and recorded PWM values are compared against `pwm_values`;
+  mismatches are treated as observation conflicts rather than validated control.
 - `LianLiWirelessPage`: GUI page for safe LIAN LI wireless probing. It exposes
   sysfs scanning, live receiver snapshots, live master MAC queries, and a
   `只读验证` action that saves scan, live-list, live-master, and live-lcd-info

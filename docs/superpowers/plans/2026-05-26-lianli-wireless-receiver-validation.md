@@ -11,6 +11,7 @@
 - `receiver-validation-bundle` 会保存自身 JSON、`summary.json`，并把 `hardware_validation` / `receiver_control_next_action` 提升到 stdout 顶层。
 - 已有 `receiver-evidence-report`，用于审计实机日志目录、列出必需证据文件、每个 JSON 的 SHA256，以及推荐/已存在的安全 PWM 实验目录。
 - `receiver-evidence-report` 会交叉检查 `live-list.json`、`readonly/live-list.json`、`live-master.json` 的 receiver MAC、Master MAC、channel、rx_type、device_type、fan_count，避免混用不同接收器或旧日志。
+- `receiver-evidence-report` 也会检查安全 PWM 实验内部的 `live-pwm.json`、before/after 快照和 `analyze-live-pwm.json` 是否指向同一个目标并匹配预期效果。
 - 已有 `receiver-observation`，用于把安全 PWM 后肉眼/听感确认的风扇变化保存成 `observation.json`。
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
 - `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令；如果 receiver 身份证据冲突或不完整，会先要求重新采集整包验证日志。
@@ -30,6 +31,7 @@
 - [x] 新增 `receiver-evidence-report`，用于把实机验证目录整理成可分享的证据清单。
 - [x] `receiver-evidence-report` 会跟随下一步推荐命令里的安全 PWM 输出目录，不再只检查固定 `safe-pwm-001`。
 - [x] `receiver-evidence-report` 会输出 `receiver_identity_consistency`，当两份只读快照的 receiver 集合/身份字段不一致，或两份 Master 查询互相矛盾时标记 `receiver-identity-conflict`。
+- [x] `receiver-evidence-report` 会输出每个写入证据的 `machine_consistency`，机器日志内部冲突时标记 `write-evidence-machine-conflict`。
 - [x] 新增 `receiver-observation`，用于把实际风扇变化记录进证据目录；`receiver-evidence-report` 会区分只收集机器日志和已经肉眼确认。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
@@ -166,7 +168,9 @@ python tools/lianli_wireless_probe.py \
 `receiver-evidence-report` 会把完整机器日志但缺观察记录的状态标成
 `write-evidence-needs-observation`，只有观察记录确认变化后才会变成
 `write-evidence-confirmed`。如果观察记录写的是 `unchanged`，报告会标成
-`write-evidence-observation-conflict`；如果观察文件格式不对或结果不明确，
+`write-evidence-observation-conflict`；如果机器日志本身的 target、
+before/after 快照或 `analyze-live-pwm.json` 互相矛盾，会标成
+`write-evidence-machine-conflict`；如果观察文件格式不对或结果不明确，
 会分别标成 `write-evidence-invalid-observation` 或
 `write-evidence-unclear-observation`。即使 `--effect changed`，如果
 `observation.json` 里的目标 MAC 或 `--observed-pwm` 与 `live-pwm.json`

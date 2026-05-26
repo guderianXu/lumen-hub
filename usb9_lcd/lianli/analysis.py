@@ -120,6 +120,12 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
     conflict_write_sets = [
         item for item in write_sets if item["control_proof_status"] == "visual-observation-conflicts"
     ]
+    machine_conflict_write_sets = [
+        item for item in write_sets if item["control_proof_status"] == "machine-evidence-conflict"
+    ]
+    machine_incomplete_write_sets = [
+        item for item in write_sets if item["control_proof_status"] == "machine-evidence-incomplete"
+    ]
     invalid_observation_sets = [
         item for item in write_sets if item["control_proof_status"] == "invalid-observation"
     ]
@@ -138,6 +144,8 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
         complete_write_set_count=len(complete_write_sets),
         confirmed_write_set_count=len(confirmed_write_sets),
         conflict_write_set_count=len(conflict_write_sets),
+        machine_conflict_count=len(machine_conflict_write_sets),
+        machine_incomplete_count=len(machine_incomplete_write_sets),
         invalid_observation_count=len(invalid_observation_sets),
         unclear_observation_count=len(unclear_observation_sets),
     )
@@ -156,6 +164,8 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
         "write_evidence_partial_count": len(partial_write_sets),
         "write_evidence_confirmed_count": len(confirmed_write_sets),
         "write_evidence_conflict_count": len(conflict_write_sets),
+        "write_evidence_machine_conflict_count": len(machine_conflict_write_sets),
+        "write_evidence_machine_incomplete_count": len(machine_incomplete_write_sets),
         "visual_observation_invalid_count": len(invalid_observation_sets),
         "visual_observation_unclear_count": len(unclear_observation_sets),
         "visual_observation_missing_count": len(observation_missing_sets),
@@ -269,9 +279,12 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
     present = [item for item in files if item["exists"]]
     missing = [item for item in files if not item["exists"]]
     live_pwm = _optional_json_object(output_dir / "live-pwm.json")
+    before_snapshot = _optional_json_object(output_dir / "live-list-before.json")
+    after_snapshot = _optional_json_object(output_dir / "live-list-after.json")
     analysis = _optional_json_object(output_dir / "analyze-live-pwm.json")
     visual_observation = receiver_visual_observation(output_dir)
     observation_consistency = receiver_observation_consistency(live_pwm, visual_observation)
+    machine_consistency = receiver_machine_write_consistency(live_pwm, analysis, before_snapshot, after_snapshot)
     if not missing:
         status = "complete"
     elif present:
@@ -283,6 +296,7 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
         likely_effective=analysis.get("likely_effective"),
         visual_status=str(visual_observation.get("status") or ""),
         consistency_status=str(observation_consistency.get("status") or ""),
+        machine_consistency_status=str(machine_consistency.get("status") or ""),
     )
     return {
         "output_dir": str(output_dir),
@@ -297,6 +311,7 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
         "packets_written": live_pwm.get("packets_written"),
         "likely_effective": analysis.get("likely_effective"),
         "expected_effect": analysis.get("expected_effect") if isinstance(analysis.get("expected_effect"), dict) else {},
+        "machine_consistency": machine_consistency,
         "visual_observation": visual_observation,
         "observation_consistency": observation_consistency,
         "files": files,
@@ -645,15 +660,121 @@ def receiver_observation_consistency(live_pwm: dict[str, Any], visual_observatio
     }
 
 
+def receiver_machine_write_consistency(
+    live_pwm: dict[str, Any],
+    analysis: dict[str, Any],
+    before_snapshot: dict[str, Any],
+    after_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    if not live_pwm and not analysis and not before_snapshot and not after_snapshot:
+        return {"status": "not-applicable", "checks": [], "notes": []}
+
+    checks: list[dict[str, Any]] = []
+    notes: list[str] = []
+    target = _normalize_mac(str(live_pwm.get("target") or analysis.get("target") or ""))
+    if not target:
+        checks.append({"name": "target-present", "status": "incomplete"})
+        notes.append("live-pwm/analyze-live-pwm target MAC is missing.")
+    else:
+        checks.append({"name": "target-present", "status": "match", "target": target})
+
+    analysis_target = _normalize_mac(str(analysis.get("target") or ""))
+    if target and analysis_target:
+        status = "match" if target == analysis_target else "mismatch"
+        checks.append(
+            {
+                "name": "analysis-target",
+                "status": status,
+                "live_pwm_target": target,
+                "analysis_target": analysis_target,
+            }
+        )
+        if status == "mismatch":
+            notes.append("analyze-live-pwm target differs from live-pwm target.")
+    elif target:
+        checks.append({"name": "analysis-target", "status": "incomplete", "live_pwm_target": target})
+
+    before_devices = devices_by_mac(before_snapshot)
+    after_devices = devices_by_mac(after_snapshot)
+    before_target = before_devices.get(target) if target else None
+    after_target = after_devices.get(target) if target else None
+    for name, device in (("before-target", before_target), ("after-target", after_target)):
+        if not target:
+            continue
+        status = "present" if device is not None else "missing"
+        checks.append({"name": name, "status": status, "target": target})
+        if status == "missing":
+            notes.append(f"{name} snapshot does not contain live-pwm target.")
+
+    machine_pwm = _int_list(live_pwm.get("pwm_values"))
+    after_pwm = _int_list(after_target.get("pwm_values")) if isinstance(after_target, dict) else []
+    if machine_pwm and after_pwm:
+        status = "match" if after_pwm == machine_pwm else "mismatch"
+        checks.append(
+            {
+                "name": "after-pwm-values",
+                "status": status,
+                "live_pwm_values": machine_pwm,
+                "after_pwm_values": after_pwm,
+            }
+        )
+        if status == "mismatch":
+            notes.append("live-list-after pwm_values differ from live-pwm pwm_values.")
+    elif machine_pwm:
+        checks.append({"name": "after-pwm-values", "status": "incomplete", "live_pwm_values": machine_pwm})
+
+    target_found_after = analysis.get("target_found_after")
+    if target_found_after is False:
+        checks.append({"name": "analysis-target-found-after", "status": "mismatch", "value": False})
+        notes.append("analyze-live-pwm reports the target was not found after the write.")
+    elif target_found_after is True:
+        checks.append({"name": "analysis-target-found-after", "status": "match", "value": True})
+
+    expected_effect = analysis.get("expected_effect") if isinstance(analysis.get("expected_effect"), dict) else {}
+    expected_matched = expected_effect.get("matched")
+    if expected_matched is False:
+        checks.append({"name": "analysis-expected-effect", "status": "mismatch", "matched": False})
+        notes.append("analyze-live-pwm expected_effect did not match.")
+    elif expected_matched is True:
+        checks.append({"name": "analysis-expected-effect", "status": "match", "matched": True})
+    elif expected_effect:
+        checks.append({"name": "analysis-expected-effect", "status": "incomplete", "matched": expected_matched})
+
+    if analysis.get("likely_effective") is False:
+        checks.append({"name": "analysis-likely-effective", "status": "mismatch", "value": False})
+        notes.append("analyze-live-pwm reports likely_effective=false.")
+    elif analysis.get("likely_effective") is True:
+        checks.append({"name": "analysis-likely-effective", "status": "match", "value": True})
+
+    statuses = {str(check.get("status") or "") for check in checks}
+    if "mismatch" in statuses or "missing" in statuses:
+        status = "conflict"
+    elif "incomplete" in statuses:
+        status = "incomplete"
+    else:
+        status = "consistent"
+    return {
+        "status": status,
+        "target": target,
+        "checks": checks,
+        "notes": notes,
+    }
+
+
 def receiver_control_proof_status(
     *,
     machine_status: str,
     likely_effective: Any,
     visual_status: str,
     consistency_status: str = "",
+    machine_consistency_status: str = "",
 ) -> str:
     if machine_status != "complete":
         return f"machine-evidence-{machine_status}"
+    if machine_consistency_status == "conflict":
+        return "machine-evidence-conflict"
+    if machine_consistency_status == "incomplete":
+        return "machine-evidence-incomplete"
     if visual_status == "confirmed":
         if consistency_status == "conflict":
             return "visual-observation-conflicts"
@@ -768,6 +889,8 @@ def receiver_evidence_status(
     complete_write_set_count: int = 0,
     confirmed_write_set_count: int = 0,
     conflict_write_set_count: int = 0,
+    machine_conflict_count: int = 0,
+    machine_incomplete_count: int = 0,
     invalid_observation_count: int = 0,
     unclear_observation_count: int = 0,
 ) -> str:
@@ -783,6 +906,10 @@ def receiver_evidence_status(
         return "receiver-identity-incomplete"
     if identity_status == "missing":
         return "receiver-identity-missing"
+    if machine_conflict_count:
+        return "write-evidence-machine-conflict"
+    if machine_incomplete_count:
+        return "write-evidence-machine-incomplete"
     if conflict_write_set_count:
         return "write-evidence-observation-conflict"
     if invalid_observation_count:

@@ -153,7 +153,11 @@ def _write_receiver_safe_pwm_evidence(path: Path) -> Path:
             "pwm_values": [120, 120, 120, 120],
             "packets_written": 4,
         },
-        "live-list-after.json": {"operation": "live-list-after", "device_count": 1, "devices": [_device_payload()]},
+        "live-list-after.json": {
+            "operation": "live-list-after",
+            "device_count": 1,
+            "devices": [_device_payload(pwm=[120, 120, 120, 120])],
+        },
         "analyze-live-pwm.json": {
             "operation": "analyze-log",
             "target": "aa:bb:cc:dd:ee:ff",
@@ -1024,6 +1028,7 @@ def test_probe_receiver_evidence_report_detects_completed_safe_pwm_directory(tmp
     assert write_set["pwm_values"] == [120, 120, 120, 120]
     assert write_set["packets_written"] == 4
     assert write_set["likely_effective"] is True
+    assert write_set["machine_consistency"]["status"] == "consistent"
     assert all(item["exists"] for item in write_set["files"])
     observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
     assert observation_commands
@@ -1038,6 +1043,10 @@ def test_probe_receiver_evidence_report_observation_command_keeps_pwm_tuple(tmp_
     live_pwm = json.loads(live_pwm_path.read_text(encoding="utf-8"))
     live_pwm["pwm_values"] = [96, 112, 128, 144]
     live_pwm_path.write_text(json.dumps(live_pwm) + "\n", encoding="utf-8")
+    after_path = output_dir / "live-list-after.json"
+    after = json.loads(after_path.read_text(encoding="utf-8"))
+    after["devices"][0]["pwm_values"] = [96, 112, 128, 144]
+    after_path.write_text(json.dumps(after) + "\n", encoding="utf-8")
 
     payload = _run_probe("receiver-evidence-report", str(tmp_path))
     observation_commands = [command for command in payload["recommended_commands"] if "receiver-observation" in command]
@@ -1045,6 +1054,58 @@ def test_probe_receiver_evidence_report_observation_command_keeps_pwm_tuple(tmp_
     assert observation_commands
     assert "--target aa:bb:cc:dd:ee:ff" in observation_commands[0]
     assert "--observed-pwm 96,112,128,144" in observation_commands[0]
+
+
+def test_probe_receiver_evidence_report_flags_machine_target_missing_after(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    after_path = output_dir / "live-list-after.json"
+    after = json.loads(after_path.read_text(encoding="utf-8"))
+    after["devices"][0]["mac"] = "11:22:33:44:55:66"
+    after_path.write_text(json.dumps(after) + "\n", encoding="utf-8")
+    _run_probe(
+        "--save-json",
+        str(output_dir / "observation.json"),
+        "receiver-observation",
+        str(output_dir),
+        "--effect",
+        "changed",
+        "--target",
+        "aa:bb:cc:dd:ee:ff",
+        "--observed-pwm",
+        "120",
+    )
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = next(item for item in payload["write_evidence_sets"] if item["status"] == "complete")
+
+    assert payload["status"] == "write-evidence-machine-conflict"
+    assert payload["write_evidence_confirmed_count"] == 0
+    assert payload["write_evidence_machine_conflict_count"] == 1
+    assert write_set["control_proof_status"] == "machine-evidence-conflict"
+    assert write_set["machine_consistency"]["status"] == "conflict"
+    assert any(check["name"] == "after-target" and check["status"] == "missing" for check in write_set["machine_consistency"]["checks"])
+
+
+def test_probe_receiver_evidence_report_flags_machine_analysis_mismatch(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = _write_receiver_safe_pwm_evidence(tmp_path)
+    analysis_path = output_dir / "analyze-live-pwm.json"
+    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    analysis["target"] = "11:22:33:44:55:66"
+    analysis["likely_effective"] = False
+    analysis["expected_effect"] = {"available": True, "matched": False}
+    analysis_path.write_text(json.dumps(analysis) + "\n", encoding="utf-8")
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = payload["write_evidence_sets"][0]
+
+    assert payload["status"] == "write-evidence-machine-conflict"
+    assert payload["write_evidence_machine_conflict_count"] == 1
+    assert write_set["control_proof_status"] == "machine-evidence-conflict"
+    assert write_set["machine_consistency"]["status"] == "conflict"
+    assert any(check["name"] == "analysis-target" and check["status"] == "mismatch" for check in write_set["machine_consistency"]["checks"])
+    assert any(check["name"] == "analysis-expected-effect" and check["status"] == "mismatch" for check in write_set["machine_consistency"]["checks"])
 
 
 def test_probe_receiver_observation_records_visual_result(tmp_path):
