@@ -75,6 +75,15 @@ def test_fan_host_layout_separates_dense_sections():
     app = QApplication.instance() or QApplication([])
     page = FanControlHostPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
 
+    assert [page.workspace_tabs.tabText(index) for index in range(page.workspace_tabs.count())] == [
+        "总览",
+        "调速",
+        "策略",
+        "通道",
+        "权限",
+        "压力测试",
+        "历史",
+    ]
     assert page.overview_sections.count() == 3
     assert [page.overview_sections.tabText(index) for index in range(page.overview_sections.count())] == [
         "概览",
@@ -91,7 +100,8 @@ def test_fan_host_layout_separates_dense_sections():
         "权限明细",
         "诊断建议",
     ]
-    assert page.workspace_tabs.maximumHeight() >= 700
+    assert page.workspace_tabs.minimumHeight() >= 700
+    assert page.workspace_tabs.maximumHeight() == 16777215
 
     page.close()
     app.quit()

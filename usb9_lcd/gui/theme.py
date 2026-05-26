@@ -107,6 +107,19 @@ def gui_stylesheet() -> str:
         border: 1px solid #34383b;
         border-radius: 8px;
     }
+    QWidget#FanSummaryPanel { background: transparent; }
+    QTabWidget#FanWorkspaceTabs::pane {
+        background: #151718;
+        border-color: #34383b;
+    }
+    QTabWidget#FanWorkspaceTabs QTabBar::tab {
+        padding: 9px 14px;
+        min-width: 70px;
+    }
+    QTabWidget#FanWorkspaceTabs QTabBar::tab:selected {
+        background: #24322e;
+        border-color: #6fb6a0;
+    }
     QScrollArea#FanControlScrollArea {
         background: transparent;
         border: 0;
@@ -121,9 +134,15 @@ def gui_stylesheet() -> str:
         border-radius: 8px;
     }
     QFrame#FanControlRow {
-        background: #1e2021;
+        background: #1b1d1e;
         border: 1px solid #34383b;
         border-radius: 7px;
+    }
+    QFrame#FanControlIdentityBlock {
+        background: #141617;
+        border: 1px solid #303438;
+        border-radius: 7px;
+        padding: 8px;
     }
     QFrame#EmbeddedFanSlider {
         background: transparent;

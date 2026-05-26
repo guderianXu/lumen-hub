@@ -1833,15 +1833,12 @@ def test_fan_page_exposes_control_center_layout_before_loading():
     assert page.fan_table.horizontalHeaderItem(3).text() == "关联传感器"
     assert [page.workspace_tabs.tabText(index) for index in range(page.workspace_tabs.count())] == [
         "总览",
-        "策略",
-        "维护",
-    ]
-    assert [page.maintenance_tabs.tabText(index) for index in range(page.maintenance_tabs.count())] == [
         "调速",
+        "策略",
+        "通道",
         "权限",
-        "明细",
-        "历史",
         "压力测试",
+        "历史",
     ]
     assert [page.strategy_tabs.tabText(index) for index in range(page.strategy_tabs.count())] == ["选择策略", "编辑曲线"]
     assert page.workspace_tabs.currentWidget() is page.overview_tab
