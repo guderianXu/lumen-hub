@@ -9,7 +9,7 @@
 - 已有只读 PyUSB 路径：`scan`、`live-list`、`live-master`、`live-lcd-info`、`validate-readonly`。
 - 已有接收器插上后的整包验证入口：`receiver-validation-bundle`。
 - `receiver-validation-bundle` 会保存自身 JSON、`summary.json`，并把 `hardware_validation` / `receiver_control_next_action` 提升到 stdout 顶层。
-- 已有 `receiver-evidence-report`，用于审计实机日志目录、列出必需证据文件和每个 JSON 的 SHA256。
+- 已有 `receiver-evidence-report`，用于审计实机日志目录、列出必需证据文件、每个 JSON 的 SHA256，以及推荐/已存在的安全 PWM 实验目录。
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
 - `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令。
 - GUI 的“汇总实验”会显示同一个下一步结论，并在唯一候选 MAC 可用时自动填入目标 MAC。
@@ -26,6 +26,7 @@
 - [x] 新增 `receiver-validation-bundle`，用于插上接收器后一次性保存只读、preflight、write-gate 证据。
 - [x] `receiver-validation-bundle` 会在同一目录写出 `receiver-validation-bundle.json` 和 `summary.json`。
 - [x] 新增 `receiver-evidence-report`，用于把实机验证目录整理成可分享的证据清单。
+- [x] `receiver-evidence-report` 会跟随下一步推荐命令里的安全 PWM 输出目录，不再只检查固定 `safe-pwm-001`。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
 - [x] GUI 汇总实验会显示 `receiver_control_next_action` 的中文结论，并自动填入唯一可用 MAC。
@@ -114,17 +115,22 @@ python tools/lianli_wireless_probe.py --save-json .cache/lianli/hardware/write-g
 
 ## 第一轮允许尝试的写入
 
-只在 write-gate 通过后执行最小 PWM 实验：
+只在 write-gate 通过后执行最小 PWM 实验。优先复制
+`receiver_control_next_action.recommended_commands[0]`，它会用真实 MAC 生成
+`experiments/safe-pwm-aa-bb-cc-dd-ee-ff` 这类输出目录，避免多个目标互相覆盖。
+手工执行时可以使用同样格式：
 
 ```bash
 python tools/lianli_wireless_probe.py safe-pwm-experiment \
   --mac aa:bb:cc:dd:ee:ff \
   --pwm 120 \
-  --output-dir .cache/lianli/hardware/experiments/safe-pwm-001 \
+  --output-dir .cache/lianli/hardware/experiments/safe-pwm-aa-bb-cc-dd-ee-ff \
   --confirm WRITE-LIANLI
 ```
 
 把 `aa:bb:cc:dd:ee:ff` 换成 `live-list` 里读到的目标 receiver MAC。
+如果手工改目录，后续 `receiver-evidence-report` 仍会自动发现
+`experiments/` 下含有安全 PWM 证据文件的目录。
 
 实验后必须保存：
 
@@ -187,10 +193,10 @@ python tools/lianli_wireless_probe.py safe-pwm-experiment \
 
 如果 write-gate 通过，再追加：
 
-- `safe-pwm-001/live-list-before.json`
-- `safe-pwm-001/live-pwm.json`
-- `safe-pwm-001/live-list-after.json`
-- `safe-pwm-001/analyze-live-pwm.json`
-- `safe-pwm-001/summary.json`
+- `experiments/safe-pwm-<mac>/live-list-before.json`
+- `experiments/safe-pwm-<mac>/live-pwm.json`
+- `experiments/safe-pwm-<mac>/live-list-after.json`
+- `experiments/safe-pwm-<mac>/analyze-live-pwm.json`
+- `experiments/safe-pwm-<mac>/summary.json`
 
 只有这些证据显示目标 MAC、packet compare、写入前后状态和实际风扇反馈一致，才能把 PWM 控制从“候选可行”升级为“实机验证可行”。

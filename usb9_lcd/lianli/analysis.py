@@ -25,13 +25,14 @@ RECEIVER_EVIDENCE_REQUIRED_FILES = (
     "preflight.json",
     "write-gate.json",
 )
-RECEIVER_EVIDENCE_WRITE_FILES = (
-    "experiments/safe-pwm-001/live-list-before.json",
-    "experiments/safe-pwm-001/live-pwm.json",
-    "experiments/safe-pwm-001/live-list-after.json",
-    "experiments/safe-pwm-001/analyze-live-pwm.json",
-    "experiments/safe-pwm-001/summary.json",
+RECEIVER_EVIDENCE_WRITE_FILE_NAMES = (
+    "live-list-before.json",
+    "live-pwm.json",
+    "live-list-after.json",
+    "analyze-live-pwm.json",
+    "summary.json",
 )
+RECEIVER_EVIDENCE_FALLBACK_WRITE_DIR = "experiments/safe-pwm-001"
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -96,15 +97,23 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
     summary = summarize_experiment_dir(path)
     manifest = receiver_evidence_manifest(root)
     required = receiver_evidence_checklist(root, RECEIVER_EVIDENCE_REQUIRED_FILES)
-    write = receiver_evidence_checklist(root, RECEIVER_EVIDENCE_WRITE_FILES)
-    missing_required = [item for item in required if not item["exists"]]
     hardware_validation = summary.get("hardware_validation") if isinstance(summary.get("hardware_validation"), dict) else {}
     next_action = summary.get("receiver_control_next_action") if isinstance(summary.get("receiver_control_next_action"), dict) else {}
+    write_sets = receiver_evidence_write_sets(root, next_action)
+    write = [
+        file_item
+        for write_set in write_sets
+        for file_item in write_set["files"]
+    ]
+    missing_required = [item for item in required if not item["exists"]]
+    complete_write_sets = [item for item in write_sets if item["status"] == "complete"]
+    partial_write_sets = [item for item in write_sets if item["status"] == "partial"]
     status = receiver_evidence_status(
         missing_required_count=len(missing_required),
         invalid_file_count=int(summary.get("invalid_file_count") or 0),
         hardware_status=str(hardware_validation.get("status") or ""),
         next_action_status=str(next_action.get("status") or ""),
+        complete_write_set_count=len(complete_write_sets),
     )
     return {
         "operation": "receiver-evidence-report",
@@ -116,6 +125,10 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
         "required_missing_count": len(missing_required),
         "required_files": required,
         "write_files": write,
+        "write_evidence_set_count": len(write_sets),
+        "write_evidence_complete_count": len(complete_write_sets),
+        "write_evidence_partial_count": len(partial_write_sets),
+        "write_evidence_sets": write_sets,
         "file_manifest": manifest,
         "hardware_validation": hardware_validation,
         "receiver_control_next_action": next_action,
@@ -148,13 +161,121 @@ def receiver_evidence_manifest(root: Path) -> list[dict[str, Any]]:
 
 def receiver_evidence_checklist(root: Path, relative_paths: tuple[str, ...]) -> list[dict[str, Any]]:
     return [
-        {
-            "relative_path": relative_path,
-            "exists": (root / relative_path).exists(),
-            "path": str(root / relative_path),
-        }
+        receiver_evidence_file_item(root, root / relative_path)
         for relative_path in relative_paths
     ]
+
+
+def receiver_evidence_write_sets(root: Path, next_action: dict[str, Any]) -> list[dict[str, Any]]:
+    directories: dict[Path, set[str]] = {}
+
+    experiments_dir = root / "experiments"
+    if experiments_dir.exists():
+        for output_dir in sorted(path for path in experiments_dir.rglob("*") if path.is_dir()):
+            if not _looks_like_safe_pwm_evidence_dir(output_dir):
+                continue
+            _add_write_evidence_dir(directories, output_dir, "existing-files")
+
+    for output_dir in _receiver_evidence_recommended_output_dirs(next_action):
+        _add_write_evidence_dir(directories, output_dir, "recommended-command")
+
+    if not directories:
+        _add_write_evidence_dir(directories, root / RECEIVER_EVIDENCE_FALLBACK_WRITE_DIR, "checklist-template")
+
+    return [
+        receiver_evidence_write_set(root, output_dir, sources)
+        for output_dir, sources in sorted(directories.items(), key=lambda item: str(item[0]))
+    ]
+
+
+def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str]) -> dict[str, Any]:
+    files = [
+        receiver_evidence_file_item(root, output_dir / file_name)
+        for file_name in RECEIVER_EVIDENCE_WRITE_FILE_NAMES
+    ]
+    present = [item for item in files if item["exists"]]
+    missing = [item for item in files if not item["exists"]]
+    live_pwm = _optional_json_object(output_dir / "live-pwm.json")
+    analysis = _optional_json_object(output_dir / "analyze-live-pwm.json")
+    if not missing:
+        status = "complete"
+    elif present:
+        status = "partial"
+    else:
+        status = "missing"
+    return {
+        "output_dir": str(output_dir),
+        "relative_dir": _relative_path(root, output_dir),
+        "sources": sorted(sources),
+        "status": status,
+        "present_count": len(present),
+        "missing_count": len(missing),
+        "target": str(live_pwm.get("target") or analysis.get("target") or ""),
+        "pwm_values": live_pwm.get("pwm_values") if isinstance(live_pwm.get("pwm_values"), list) else [],
+        "packets_written": live_pwm.get("packets_written"),
+        "likely_effective": analysis.get("likely_effective"),
+        "expected_effect": analysis.get("expected_effect") if isinstance(analysis.get("expected_effect"), dict) else {},
+        "files": files,
+    }
+
+
+def receiver_evidence_file_item(root: Path, path: Path) -> dict[str, Any]:
+    return {
+        "relative_path": _relative_path(root, path),
+        "exists": path.exists(),
+        "path": str(path),
+    }
+
+
+def _add_write_evidence_dir(directories: dict[Path, set[str]], output_dir: Path, source: str) -> None:
+    directories.setdefault(output_dir, set()).add(source)
+
+
+def _looks_like_safe_pwm_evidence_dir(path: Path) -> bool:
+    if not any((path / file_name).exists() for file_name in RECEIVER_EVIDENCE_WRITE_FILE_NAMES):
+        return False
+    return (
+        path.name.startswith("safe-pwm-")
+        or (path / "live-pwm.json").exists()
+        or (path / "analyze-live-pwm.json").exists()
+    )
+
+
+def _receiver_evidence_recommended_output_dirs(next_action: dict[str, Any]) -> list[Path]:
+    candidates = next_action.get("candidates")
+    if not isinstance(candidates, list):
+        return []
+    output_dirs = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        argv = candidate.get("safe_pwm_argv")
+        if not isinstance(argv, list):
+            continue
+        args = [str(item) for item in argv]
+        if "--output-dir" not in args:
+            continue
+        index = args.index("--output-dir")
+        if index + 1 >= len(args):
+            continue
+        output_dirs.append(Path(args[index + 1]))
+    return output_dirs
+
+
+def _optional_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return load_json_file(path)
+    except LianLiWirelessError:
+        return {}
+
+
+def _relative_path(root: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
 
 
 def receiver_evidence_status(
@@ -163,6 +284,7 @@ def receiver_evidence_status(
     invalid_file_count: int,
     hardware_status: str,
     next_action_status: str,
+    complete_write_set_count: int = 0,
 ) -> str:
     if invalid_file_count:
         return "invalid-evidence-files"
@@ -170,7 +292,7 @@ def receiver_evidence_status(
         return "missing-readonly-evidence"
     if hardware_status == "errors":
         return "validation-errors"
-    if hardware_status == "readonly-and-write-observed":
+    if hardware_status == "readonly-and-write-observed" or complete_write_set_count:
         return "write-evidence-collected"
     if next_action_status == "ready-for-single-target-safe-pwm":
         return "ready-for-single-target-safe-pwm"

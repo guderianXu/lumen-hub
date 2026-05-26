@@ -106,6 +106,42 @@ def _write_linux_experiment_summary_inputs(path: Path) -> None:
     )
 
 
+def _write_receiver_evidence_required_payloads(path: Path) -> None:
+    required_payloads = {
+        "receiver-validation-bundle.json": {
+            "operation": "receiver-validation-bundle",
+            "output_dir": str(path),
+            "capture_dir": str(path / "captures"),
+            "experiment_dir": str(path / "experiments"),
+            "step_count": 7,
+            "ok_count": 7,
+            "error_count": 0,
+            "ready_for_guarded_write": True,
+            "write_gate_status": "write-enabled",
+            "steps": [],
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(path)},
+        "scan.json": {"operation": "scan", "device_count": 1},
+        "readiness.json": {"operation": "usb-capture-readiness", "status": "linux-live-ready"},
+        "live-list.json": {"operation": "live-list", "device_count": 1, "devices": [_device_payload()]},
+        "live-master.json": {"operation": "live-master", "detected": True, "master_mac": "10:20:30:40:50:60"},
+        "validate-readonly.json": {"operation": "validate-readonly", "step_count": 3, "ok_count": 3, "error_count": 0},
+        "preflight.json": {"operation": "linux-control-preflight", "status": "ready"},
+        "write-gate.json": {
+            "operation": "linux-control-write-gate",
+            "status": "write-enabled",
+            "allows_any_guarded_write": True,
+        },
+        "readonly/scan.json": {"operation": "scan", "device_count": 1},
+        "readonly/live-list.json": {"operation": "live-list", "device_count": 1, "devices": [_device_payload()]},
+        "readonly/live-master.json": {"operation": "live-master", "detected": True},
+    }
+    for relative_path, payload in required_payloads.items():
+        item_path = path / relative_path
+        item_path.parent.mkdir(parents=True, exist_ok=True)
+        item_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
 def _write_lianli_usb_sysfs_and_dev(sys_root: Path, dev_root: Path) -> None:
     for name, vid, pid, product, busnum, devnum in (
         ("1-1", "0416", "8040", "SLV3TX_V1.6", "001", "002"),
@@ -801,48 +837,24 @@ def test_probe_summarize_experiments_recommends_one_safe_pwm_after_write_gate(tm
 
 
 def test_probe_receiver_evidence_report_audits_saved_bundle(tmp_path):
-    required_payloads = {
-        "receiver-validation-bundle.json": {
-            "operation": "receiver-validation-bundle",
-            "output_dir": str(tmp_path),
-            "capture_dir": str(tmp_path / "captures"),
-            "experiment_dir": str(tmp_path / "experiments"),
-            "step_count": 7,
-            "ok_count": 7,
-            "error_count": 0,
-            "ready_for_guarded_write": True,
-            "write_gate_status": "write-enabled",
-            "steps": [],
-        },
-        "summary.json": {"operation": "summarize-experiments", "path": str(tmp_path)},
-        "scan.json": {"operation": "scan", "device_count": 1},
-        "readiness.json": {"operation": "usb-capture-readiness", "status": "linux-live-ready"},
-        "live-list.json": {"operation": "live-list", "device_count": 1, "devices": [_device_payload()]},
-        "live-master.json": {"operation": "live-master", "detected": True, "master_mac": "10:20:30:40:50:60"},
-        "validate-readonly.json": {"operation": "validate-readonly", "step_count": 3, "ok_count": 3, "error_count": 0},
-        "preflight.json": {"operation": "linux-control-preflight", "status": "ready"},
-        "write-gate.json": {
-            "operation": "linux-control-write-gate",
-            "status": "write-enabled",
-            "allows_any_guarded_write": True,
-        },
-        "readonly/scan.json": {"operation": "scan", "device_count": 1},
-        "readonly/live-list.json": {"operation": "live-list", "device_count": 1, "devices": [_device_payload()]},
-        "readonly/live-master.json": {"operation": "live-master", "detected": True},
-    }
-    for relative_path, payload in required_payloads.items():
-        path = tmp_path / relative_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    _write_receiver_evidence_required_payloads(tmp_path)
 
     payload = _run_probe("receiver-evidence-report", str(tmp_path))
     manifest_by_path = {item["relative_path"]: item for item in payload["file_manifest"]}
+    write_set = payload["write_evidence_sets"][0]
 
     assert payload["operation"] == "receiver-evidence-report"
     assert payload["status"] == "ready-for-single-target-safe-pwm"
     assert payload["required_missing_count"] == 0
     assert payload["required_present_count"] == 12
     assert payload["json_file_count"] == 12
+    assert payload["write_evidence_set_count"] == 1
+    assert payload["write_evidence_complete_count"] == 0
+    assert payload["write_evidence_partial_count"] == 0
+    assert write_set["relative_dir"] == "experiments/safe-pwm-aa-bb-cc-dd-ee-ff"
+    assert write_set["status"] == "missing"
+    assert write_set["sources"] == ["recommended-command"]
+    assert payload["write_files"][0]["relative_path"] == "experiments/safe-pwm-aa-bb-cc-dd-ee-ff/live-list-before.json"
     assert payload["hardware_validation"]["status"] == "readonly-and-write-gate-ready"
     assert payload["receiver_control_next_action"]["status"] == "ready-for-single-target-safe-pwm"
     assert payload["recommended_commands"][0].startswith(
@@ -852,6 +864,45 @@ def test_probe_receiver_evidence_report_audits_saved_bundle(tmp_path):
     assert manifest_by_path["live-list.json"]["operation"] == "live-list"
     assert len(manifest_by_path["live-list.json"]["sha256"]) == 64
     assert all(item["exists"] for item in payload["required_files"])
+
+
+def test_probe_receiver_evidence_report_detects_completed_safe_pwm_directory(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    output_dir = tmp_path / "experiments" / "safe-pwm-aa-bb-cc-dd-ee-ff"
+    output_dir.mkdir(parents=True)
+    for name, payload in {
+        "live-list-before.json": {"operation": "live-list-before", "device_count": 1, "devices": [_device_payload()]},
+        "live-pwm.json": {
+            "operation": "live-pwm",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "pwm_values": [120, 120, 120, 120],
+            "packets_written": 4,
+        },
+        "live-list-after.json": {"operation": "live-list-after", "device_count": 1, "devices": [_device_payload()]},
+        "analyze-live-pwm.json": {
+            "operation": "analyze-log",
+            "target": "aa:bb:cc:dd:ee:ff",
+            "likely_effective": True,
+            "expected_effect": {"available": True, "matched": True},
+        },
+        "summary.json": {"operation": "summarize-experiments", "path": str(output_dir)},
+    }.items():
+        (output_dir / name).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    payload = _run_probe("receiver-evidence-report", str(tmp_path))
+    write_set = payload["write_evidence_sets"][0]
+
+    assert payload["status"] == "write-evidence-collected"
+    assert payload["write_evidence_complete_count"] == 1
+    assert payload["write_evidence_partial_count"] == 0
+    assert write_set["status"] == "complete"
+    assert write_set["relative_dir"] == "experiments/safe-pwm-aa-bb-cc-dd-ee-ff"
+    assert write_set["sources"] == ["existing-files", "recommended-command"]
+    assert write_set["target"] == "aa:bb:cc:dd:ee:ff"
+    assert write_set["pwm_values"] == [120, 120, 120, 120]
+    assert write_set["packets_written"] == 4
+    assert write_set["likely_effective"] is True
+    assert all(item["exists"] for item in write_set["files"])
 
 
 def test_probe_live_pwm_requires_confirmation(monkeypatch):

@@ -1061,7 +1061,10 @@ Risks:
   `receiver-evidence-report <hardware-log-dir>` audits that same directory as a
   shareable evidence package: it checks required post-plug JSON files, records
   file sizes and SHA256 hashes, mirrors the hardware validation state, and keeps
-  the next recommended command next to the manifest.
+  the next recommended command next to the manifest. It also audits the
+  recommended or already-created safe PWM output directory, so the evidence
+  checklist follows the MAC-specific `experiments/safe-pwm-<mac>` path emitted
+  by `receiver_control_next_action`.
 - `LianLiWirelessPage`: GUI page for safe LIAN LI wireless probing. It exposes
   sysfs scanning, live receiver snapshots, live master MAC queries, and a
   `只读验证` action that saves scan, live-list, live-master, and live-lcd-info
