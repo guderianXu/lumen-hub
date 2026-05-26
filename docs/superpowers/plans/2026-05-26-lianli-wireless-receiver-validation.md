@@ -10,6 +10,7 @@
 - 已有接收器插上后的整包验证入口：`receiver-validation-bundle`。
 - `receiver-validation-bundle` 会保存自身 JSON、`summary.json`，并把 `hardware_validation` / `receiver_control_next_action` 提升到 stdout 顶层。
 - 已有 `receiver-evidence-report`，用于审计实机日志目录、列出必需证据文件、每个 JSON 的 SHA256，以及推荐/已存在的安全 PWM 实验目录。
+- `receiver-evidence-report` 会交叉检查 `live-list.json`、`readonly/live-list.json`、`live-master.json` 的 receiver MAC、Master MAC、channel、rx_type、device_type、fan_count，避免混用不同接收器或旧日志。
 - 已有 `receiver-observation`，用于把安全 PWM 后肉眼/听感确认的风扇变化保存成 `observation.json`。
 - `summarize-experiments` 已能识别 `receiver-validation-bundle`，并汇总 write-gate 是否已准备好。
 - `summarize-experiments` 已能输出 `receiver_control_next_action`，直接给出是否允许单目标安全 PWM、候选 MAC 和保守命令。
@@ -28,6 +29,7 @@
 - [x] `receiver-validation-bundle` 会在同一目录写出 `receiver-validation-bundle.json` 和 `summary.json`。
 - [x] 新增 `receiver-evidence-report`，用于把实机验证目录整理成可分享的证据清单。
 - [x] `receiver-evidence-report` 会跟随下一步推荐命令里的安全 PWM 输出目录，不再只检查固定 `safe-pwm-001`。
+- [x] `receiver-evidence-report` 会输出 `receiver_identity_consistency`，当只读快照和 Master 查询互相矛盾时标记 `receiver-identity-conflict`。
 - [x] 新增 `receiver-observation`，用于把实际风扇变化记录进证据目录；`receiver-evidence-report` 会区分只收集机器日志和已经肉眼确认。
 - [x] 新增 bundle 复盘摘要，`summarize-experiments` 会显示 `receiver_validation_bundles` 和 `hardware_validation.status`。
 - [x] 新增接收器控制下一步摘要，`summarize-experiments` 会显示 `receiver_control_next_action`。
@@ -75,6 +77,7 @@
    - `receiver_control_next_action.status`
    - `receiver_control_next_action.candidates`
    - `receiver_control_next_action.recommended_commands`
+   - `receiver_identity_consistency.status`
 6. 生成一份可回传分析的证据清单：
    ```bash
    python tools/lianli_wireless_probe.py \
@@ -101,6 +104,7 @@
 
 - `live-list` 能稳定读到接收器和目标风扇 receiver。
 - 目标 MAC 已明确，不能对未知设备写入。
+- `receiver_identity_consistency.status` 必须是 `consistent`；如果出现 `receiver-identity-conflict`，先重新采集整包验证日志。
 - `linux-control-write-gate` 必须显示 `status = write-enabled`。
 - GUI 的“写入门禁”状态必须显示已通过。
 - `WRITE-LIANLI` token 只能用于单 MAC 的安全实验，不用于批量写入。

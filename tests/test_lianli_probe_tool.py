@@ -881,6 +881,12 @@ def test_probe_receiver_evidence_report_audits_saved_bundle(tmp_path):
     assert payload["write_files"][0]["relative_path"] == "experiments/safe-pwm-aa-bb-cc-dd-ee-ff/live-list-before.json"
     assert payload["hardware_validation"]["status"] == "readonly-and-write-gate-ready"
     assert payload["receiver_control_next_action"]["status"] == "ready-for-single-target-safe-pwm"
+    identity = payload["receiver_identity_consistency"]
+    assert identity["status"] == "consistent"
+    assert identity["receiver_macs"] == ["aa:bb:cc:dd:ee:ff"]
+    assert identity["master_query_macs"] == ["10:20:30:40:50:60"]
+    assert identity["snapshot_master_macs"] == ["10:20:30:40:50:60"]
+    assert identity["conflicts"] == []
     assert payload["recommended_commands"][0].startswith(
         "python tools/lianli_wireless_probe.py safe-pwm-experiment --mac aa:bb:cc:dd:ee:ff"
     )
@@ -888,6 +894,47 @@ def test_probe_receiver_evidence_report_audits_saved_bundle(tmp_path):
     assert manifest_by_path["live-list.json"]["operation"] == "live-list"
     assert len(manifest_by_path["live-list.json"]["sha256"]) == 64
     assert all(item["exists"] for item in payload["required_files"])
+
+
+def test_probe_receiver_evidence_report_flags_receiver_identity_conflict(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    readonly_live_list = tmp_path / "readonly" / "live-list.json"
+    payload = json.loads(readonly_live_list.read_text(encoding="utf-8"))
+    payload["devices"][0]["fan_count"] = 4
+    readonly_live_list.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    report = _run_probe("receiver-evidence-report", str(tmp_path))
+    identity = report["receiver_identity_consistency"]
+
+    assert report["status"] == "receiver-identity-conflict"
+    assert identity["status"] == "conflict"
+    assert identity["receiver_macs"] == ["aa:bb:cc:dd:ee:ff"]
+    assert identity["conflicts"][0]["type"] == "snapshot-field-mismatch"
+    assert identity["conflicts"][0]["field"] == "fan_count"
+    assert identity["conflicts"][0]["values"] == ["3", "4"]
+    assert report["recommended_commands"][0].startswith(
+        "python tools/lianli_wireless_probe.py --save-json"
+    )
+    assert "receiver-validation-bundle" in report["recommended_commands"][0]
+
+
+def test_probe_receiver_evidence_report_flags_master_query_mismatch(tmp_path):
+    _write_receiver_evidence_required_payloads(tmp_path)
+    live_master = tmp_path / "live-master.json"
+    payload = json.loads(live_master.read_text(encoding="utf-8"))
+    payload["master_mac"] = "66:55:44:33:22:11"
+    live_master.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    report = _run_probe("receiver-evidence-report", str(tmp_path))
+    identity = report["receiver_identity_consistency"]
+    conflicts = {item["type"]: item for item in identity["conflicts"]}
+
+    assert report["status"] == "receiver-identity-conflict"
+    assert identity["status"] == "conflict"
+    assert identity["master_query_macs"] == ["66:55:44:33:22:11"]
+    assert identity["snapshot_master_macs"] == ["10:20:30:40:50:60"]
+    assert conflicts["master-query-mismatch"]["master_query_values"] == ["66:55:44:33:22:11"]
+    assert conflicts["master-query-mismatch"]["snapshot_values"] == ["10:20:30:40:50:60"]
 
 
 def test_probe_receiver_evidence_report_detects_completed_safe_pwm_directory(tmp_path):

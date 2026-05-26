@@ -1061,11 +1061,16 @@ Risks:
   `receiver-evidence-report <hardware-log-dir>` audits that same directory as a
   shareable evidence package: it checks required post-plug JSON files, records
   file sizes and SHA256 hashes, mirrors the hardware validation state, and keeps
-  the next recommended command next to the manifest. It also audits the
-  recommended or already-created safe PWM output directory, so the evidence
-  checklist follows the MAC-specific `experiments/safe-pwm-<mac>` path emitted
-  by `receiver_control_next_action`. `receiver-observation <safe-pwm-dir>`
-  creates the matching manual `observation.json` record for visible/audible fan
+  the next recommended command next to the manifest. It now emits
+  `receiver_identity_consistency`, cross-checking `live-list.json`,
+  `readonly/live-list.json`, and `live-master.json` for receiver MAC,
+  master MAC, channel, rx_type, device_type, and fan_count mismatches. A
+  mismatch is surfaced as `receiver-identity-conflict` before the log set can
+  be treated as a safe-write candidate. The report also audits the recommended
+  or already-created safe PWM output directory, so the evidence checklist
+  follows the MAC-specific `experiments/safe-pwm-<mac>` path emitted by
+  `receiver_control_next_action`. `receiver-observation <safe-pwm-dir>` creates
+  the matching manual `observation.json` record for visible/audible fan
   response. When machine logs are complete but no observation exists, the
   recommended observation command now carries the same target MAC and expected
   PWM tuple from `live-pwm.json`, reducing the chance that a manual observation

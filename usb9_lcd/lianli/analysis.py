@@ -35,6 +35,9 @@ RECEIVER_EVIDENCE_WRITE_FILE_NAMES = (
 RECEIVER_EVIDENCE_FALLBACK_WRITE_DIR = "experiments/safe-pwm-001"
 RECEIVER_OBSERVATION_FILE_NAME = "observation.json"
 RECEIVER_OBSERVATION_EFFECTS = ("changed", "unchanged", "unclear")
+RECEIVER_IDENTITY_SNAPSHOT_FILES = ("live-list.json", "readonly/live-list.json")
+RECEIVER_IDENTITY_MASTER_FILES = ("live-master.json", "readonly/live-master.json")
+RECEIVER_IDENTITY_FIELDS = ("master_mac", "is_bound", "channel", "rx_type", "device_type", "fan_count")
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -101,6 +104,7 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
     required = receiver_evidence_checklist(root, RECEIVER_EVIDENCE_REQUIRED_FILES)
     hardware_validation = summary.get("hardware_validation") if isinstance(summary.get("hardware_validation"), dict) else {}
     next_action = summary.get("receiver_control_next_action") if isinstance(summary.get("receiver_control_next_action"), dict) else {}
+    identity_consistency = receiver_identity_consistency(root)
     write_sets = receiver_evidence_write_sets(root, next_action)
     write = [
         file_item
@@ -130,6 +134,7 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
         invalid_file_count=int(summary.get("invalid_file_count") or 0),
         hardware_status=str(hardware_validation.get("status") or ""),
         next_action_status=str(next_action.get("status") or ""),
+        identity_status=str(identity_consistency.get("status") or ""),
         complete_write_set_count=len(complete_write_sets),
         confirmed_write_set_count=len(confirmed_write_sets),
         conflict_write_set_count=len(conflict_write_sets),
@@ -155,6 +160,7 @@ def receiver_evidence_report(path: Path) -> dict[str, Any]:
         "visual_observation_unclear_count": len(unclear_observation_sets),
         "visual_observation_missing_count": len(observation_missing_sets),
         "write_evidence_sets": write_sets,
+        "receiver_identity_consistency": identity_consistency,
         "file_manifest": manifest,
         "hardware_validation": hardware_validation,
         "receiver_control_next_action": next_action,
@@ -295,6 +301,206 @@ def receiver_evidence_write_set(root: Path, output_dir: Path, sources: set[str])
         "observation_consistency": observation_consistency,
         "files": files,
     }
+
+
+def receiver_identity_consistency(root: Path) -> dict[str, Any]:
+    snapshot_sources = []
+    master_sources = []
+    devices: dict[str, list[dict[str, Any]]] = {}
+    conflicts: list[dict[str, Any]] = []
+    missing_identity: list[dict[str, Any]] = []
+
+    for relative_path in RECEIVER_IDENTITY_SNAPSHOT_FILES:
+        path = root / relative_path
+        source = {
+            "relative_path": relative_path,
+            "path": str(path),
+            "exists": path.exists(),
+            "status": "missing",
+            "device_count": 0,
+            "device_macs": [],
+        }
+        if path.exists():
+            try:
+                payload = load_json_file(path)
+            except LianLiWirelessError as error:
+                source["status"] = "invalid"
+                source["error"] = str(error)
+            else:
+                source_devices = devices_by_mac(payload)
+                source["status"] = "ok"
+                source["device_count"] = len(source_devices)
+                source["device_macs"] = sorted(source_devices)
+                for mac, device in sorted(source_devices.items()):
+                    entry = receiver_identity_entry(relative_path, device)
+                    devices.setdefault(mac, []).append(entry)
+                    missing_fields = [
+                        field
+                        for field in ("master_mac", "channel", "rx_type", "fan_count")
+                        if entry["fields"].get(field) in ("", None)
+                    ]
+                    if missing_fields:
+                        missing_identity.append(
+                            {
+                                "relative_path": relative_path,
+                                "mac": mac,
+                                "missing_fields": missing_fields,
+                            }
+                        )
+        snapshot_sources.append(source)
+
+    for relative_path in RECEIVER_IDENTITY_MASTER_FILES:
+        path = root / relative_path
+        source = {
+            "relative_path": relative_path,
+            "path": str(path),
+            "exists": path.exists(),
+            "status": "missing",
+            "master_mac": "",
+            "detected": False,
+        }
+        if path.exists():
+            try:
+                payload = load_json_file(path)
+            except LianLiWirelessError as error:
+                source["status"] = "invalid"
+                source["error"] = str(error)
+            else:
+                master_mac = _normalize_mac(str(payload.get("master_mac") or ""))
+                source["status"] = "ok" if master_mac else "no-master-mac"
+                source["detected"] = bool(payload.get("detected"))
+                source["master_mac"] = master_mac
+                if "channel" in payload:
+                    source["channel"] = payload.get("channel")
+        master_sources.append(source)
+
+    for mac, entries in sorted(devices.items()):
+        for field in RECEIVER_IDENTITY_FIELDS:
+            values = _unique_preserve_order(
+                [
+                    _identity_value_key(entry["fields"].get(field))
+                    for entry in entries
+                    if entry["fields"].get(field) not in ("", None)
+                ]
+            )
+            if len(values) > 1:
+                conflicts.append(
+                    {
+                        "type": "snapshot-field-mismatch",
+                        "mac": mac,
+                        "field": field,
+                        "values": values,
+                        "sources": [
+                            {
+                                "relative_path": entry["relative_path"],
+                                "value": _identity_value_key(entry["fields"].get(field)),
+                            }
+                            for entry in entries
+                            if entry["fields"].get(field) not in ("", None)
+                        ],
+                    }
+                )
+
+    master_macs = sorted(
+        {
+            str(source.get("master_mac") or "")
+            for source in master_sources
+            if source.get("master_mac")
+        }
+    )
+    bound_master_macs = sorted(
+        {
+            str(entry["fields"].get("master_mac") or "")
+            for entries in devices.values()
+            for entry in entries
+            if entry["fields"].get("master_mac") and entry["fields"].get("master_mac") != "00:00:00:00:00:00"
+        }
+    )
+    if master_macs and bound_master_macs:
+        mismatched_masters = [mac for mac in bound_master_macs if mac not in set(master_macs)]
+        if mismatched_masters:
+            conflicts.append(
+                {
+                    "type": "master-query-mismatch",
+                    "field": "master_mac",
+                    "master_query_values": master_macs,
+                    "snapshot_values": bound_master_macs,
+                    "mismatched_snapshot_values": mismatched_masters,
+                }
+            )
+
+    if conflicts:
+        status = "conflict"
+    elif not devices:
+        status = "missing"
+    elif missing_identity or (bound_master_macs and not master_macs):
+        status = "incomplete"
+    else:
+        status = "consistent"
+
+    return {
+        "status": status,
+        "receiver_count": len(devices),
+        "receiver_macs": sorted(devices),
+        "master_query_macs": master_macs,
+        "snapshot_master_macs": bound_master_macs,
+        "snapshot_sources": snapshot_sources,
+        "master_sources": master_sources,
+        "devices": {
+            mac: {
+                "sources": entries,
+                "source_count": len(entries),
+            }
+            for mac, entries in sorted(devices.items())
+        },
+        "missing_identity": missing_identity,
+        "conflicts": conflicts,
+        "notes": receiver_identity_consistency_notes(status, conflicts, missing_identity, master_macs, bound_master_macs),
+    }
+
+
+def receiver_identity_entry(relative_path: str, device: dict[str, Any]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for field in RECEIVER_IDENTITY_FIELDS:
+        value = device.get(field)
+        if field == "master_mac":
+            value = _normalize_mac(str(value or ""))
+        elif field in {"channel", "rx_type", "device_type", "fan_count"} and value not in ("", None):
+            value = _int_value(value, default=-1)
+            if value < 0:
+                value = ""
+        fields[field] = value
+    return {
+        "relative_path": relative_path,
+        "fields": fields,
+    }
+
+
+def receiver_identity_consistency_notes(
+    status: str,
+    conflicts: list[dict[str, Any]],
+    missing_identity: list[dict[str, Any]],
+    master_macs: list[str],
+    bound_master_macs: list[str],
+) -> list[str]:
+    if status == "conflict":
+        return ["Receiver identity fields disagree across readonly snapshots or master query logs."]
+    if status == "missing":
+        return ["No receiver MAC was found in live-list or readonly/live-list evidence."]
+    if status == "incomplete":
+        notes = []
+        if missing_identity:
+            notes.append("One or more receiver snapshots are missing master/channel/rx_type/fan_count fields.")
+        if bound_master_macs and not master_macs:
+            notes.append("Bound receivers have master MACs, but live-master did not provide a master MAC.")
+        return notes or ["Receiver identity evidence is incomplete."]
+    return ["Receiver MAC, master MAC, channel, rx_type, device_type, and fan_count are consistent across readonly evidence."]
+
+
+def _identity_value_key(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def receiver_visual_observation(output_dir: Path) -> dict[str, Any]:
@@ -517,6 +723,7 @@ def receiver_evidence_status(
     invalid_file_count: int,
     hardware_status: str,
     next_action_status: str,
+    identity_status: str = "",
     complete_write_set_count: int = 0,
     confirmed_write_set_count: int = 0,
     conflict_write_set_count: int = 0,
@@ -529,6 +736,12 @@ def receiver_evidence_status(
         return "missing-readonly-evidence"
     if hardware_status == "errors":
         return "validation-errors"
+    if identity_status == "conflict":
+        return "receiver-identity-conflict"
+    if identity_status == "incomplete":
+        return "receiver-identity-incomplete"
+    if identity_status == "missing":
+        return "receiver-identity-missing"
     if conflict_write_set_count:
         return "write-evidence-observation-conflict"
     if invalid_observation_count:
@@ -550,7 +763,13 @@ def receiver_evidence_status(
 
 def receiver_evidence_recommended_commands(path: Path, status: str, next_action: dict[str, Any]) -> list[str]:
     commands = []
-    if status in {"missing-readonly-evidence", "invalid-evidence-files"}:
+    if status in {
+        "missing-readonly-evidence",
+        "invalid-evidence-files",
+        "receiver-identity-conflict",
+        "receiver-identity-incomplete",
+        "receiver-identity-missing",
+    }:
         commands.append(
             _tool_command(
                 "--save-json",
