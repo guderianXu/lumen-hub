@@ -65,6 +65,7 @@ def gui_stylesheet() -> str:
     }
     QLabel#MetricValue { font-size: 32px; font-weight: 800; color: #f2f3f0; }
     QLabel#HomeMetricValue { font-size: 20px; font-weight: 800; color: #f2f3f0; }
+    QLabel#FanSummaryValue { font-size: 17px; font-weight: 900; color: #f2f3f0; }
     QFrame#MetricCard {
         background: #1a1b1c;
         border: 1px solid #33363a;
@@ -72,8 +73,8 @@ def gui_stylesheet() -> str:
     }
     QFrame#MetricCard:hover { border-color: #484d50; }
     QFrame#FanCommandPanel {
-        background: #18191a;
-        border: 1px solid #34383b;
+        background: #17191a;
+        border: 1px solid #394044;
         border-radius: 8px;
     }
     QFrame#LightingTargetPanel,
@@ -93,28 +94,28 @@ def gui_stylesheet() -> str:
         border-color: #484d50;
     }
     QFrame#FanDashboardPanel {
-        background: #18191a;
-        border: 1px solid #34383b;
+        background: #171a1b;
+        border: 1px solid #394145;
         border-radius: 8px;
     }
     QFrame#FanChartPanel {
-        background: #18191a;
-        border: 1px solid #34383b;
+        background: #171a1b;
+        border: 1px solid #394145;
         border-radius: 8px;
     }
     QFrame#FanTrendChart {
-        background: #121314;
-        border: 1px solid #303438;
+        background: #121516;
+        border: 1px solid #333b3f;
         border-radius: 8px;
     }
     QFrame#FanStatusCard {
-        background: #1c1d1e;
-        border: 1px solid #34383b;
+        background: #181b1c;
+        border: 1px solid #363f42;
         border-radius: 8px;
     }
     QFrame#FanRoleMetricCard {
-        background: #17191a;
-        border: 1px solid #34383b;
+        background: #151819;
+        border: 1px solid #343d40;
         border-radius: 8px;
     }
     QLabel#FanOverviewHeadline {
@@ -127,9 +128,12 @@ def gui_stylesheet() -> str:
         padding: 10px 12px;
     }
     QWidget#FanSummaryPanel { background: transparent; }
+    QWidget#FanPermissionActions QPushButton {
+        min-height: 30px;
+    }
     QTabWidget#FanWorkspaceTabs::pane {
-        background: #151718;
-        border-color: #34383b;
+        background: #141718;
+        border-color: #394145;
     }
     QTabWidget#FanWorkspaceTabs QTabBar::tab {
         padding: 9px 14px;
@@ -190,12 +194,12 @@ def gui_stylesheet() -> str:
     }
     QFrame#FanChannelEditorSection,
     QFrame#FanChannelEvidenceSection {
-        background: #151718;
-        border: 1px solid #303438;
+        background: #151819;
+        border: 1px solid #343d40;
         border-radius: 7px;
     }
     QFrame#FanChannelEvidenceSection {
-        background: #121516;
+        background: #111516;
     }
     QFrame#EmbeddedFanSlider {
         background: transparent;

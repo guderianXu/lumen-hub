@@ -929,7 +929,7 @@ class FanTrendChart(QFrame):
     def __init__(self, title: str, unit: str, *, default_max: float) -> None:
         super().__init__()
         self.setObjectName("FanTrendChart")
-        self.setMinimumHeight(228)
+        self.setMinimumHeight(248)
         self._title = title
         self._unit = unit
         self._default_max = default_max
@@ -961,12 +961,12 @@ class FanTrendChart(QFrame):
         values = [value for items in self._series.values() for value in items if math.isfinite(value)]
         top_value = next((items[-1] for items in self._series.values() if items), None)
         if top_value is not None:
-            painter.setPen(QColor("#969b9e"))
+            painter.setPen(QColor("#a7aeab"))
             badge = f"当前 {top_value:.0f} {self._unit}"
             painter.drawText(rect.left(), rect.top(), rect.width(), 22, Qt.AlignmentFlag.AlignRight, badge)
 
         legend_height = 26 if values else 0
-        plot_rect = QRectF(rect.left() + 42, rect.top() + 42 + legend_height, rect.width() - 92, rect.height() - 72 - legend_height)
+        plot_rect = QRectF(rect.left() + 42, rect.top() + 44 + legend_height, rect.width() - 92, rect.height() - 76 - legend_height)
         if plot_rect.width() <= 4 or plot_rect.height() <= 4:
             return
 
@@ -986,8 +986,8 @@ class FanTrendChart(QFrame):
 
     def _draw_plot_background(self, painter: QPainter, plot_rect: QRectF) -> None:
         gradient = QLinearGradient(plot_rect.topLeft(), plot_rect.bottomLeft())
-        gradient.setColorAt(0.0, QColor("#1d2021"))
-        gradient.setColorAt(1.0, QColor("#121314"))
+        gradient.setColorAt(0.0, QColor("#1a1f20"))
+        gradient.setColorAt(1.0, QColor("#121516"))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(gradient)
         painter.drawRoundedRect(plot_rect, 6, 6)
@@ -1015,14 +1015,11 @@ class FanTrendChart(QFrame):
             return self._default_max
         magnitude = 10 ** math.floor(math.log10(value))
         normalized = value / magnitude
-        if normalized <= 1:
-            nice = 1
-        elif normalized <= 2:
-            nice = 2
-        elif normalized <= 5:
-            nice = 5
-        else:
-            nice = 10
+        nice = 10
+        for candidate in (1, 1.5, 2, 2.5, 3, 4, 5, 8, 10):
+            if normalized <= candidate:
+                nice = candidate
+                break
         return nice * magnitude
 
     def _draw_axes(self, painter: QPainter, plot_rect: QRectF, min_value: float, max_value: float) -> None:
@@ -1031,9 +1028,9 @@ class FanTrendChart(QFrame):
         label_font.setPointSize(max(8, label_font.pointSize() - 1))
         painter.setFont(label_font)
 
-        grid_pen = QPen(QColor("#303438"), 1)
+        grid_pen = QPen(QColor("#384044"), 1)
         grid_pen.setStyle(Qt.PenStyle.DashLine)
-        axis_pen = QPen(QColor("#484d50"), 1)
+        axis_pen = QPen(QColor("#596164"), 1)
         painter.setPen(grid_pen)
         ticks = 4
         for index in range(ticks + 1):
@@ -1074,8 +1071,8 @@ class FanTrendChart(QFrame):
             chip_width = min(154, max(82, metrics.horizontalAdvance(text) + 26))
             if legend_x + chip_width > plot_rect.right():
                 break
-            painter.setBrush(QColor("#202224"))
-            painter.setPen(QColor("#3a3f42"))
+            painter.setBrush(QColor("#202627"))
+            painter.setPen(QColor("#3e484b"))
             painter.drawRoundedRect(QRectF(legend_x, legend_y - 2, chip_width, 20), 5, 5)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
@@ -1186,9 +1183,9 @@ class FanStatusCard(QFrame):
     def __init__(self, fan_name: str) -> None:
         super().__init__()
         self.setObjectName("FanStatusCard")
-        self.setMinimumHeight(126)
+        self.setMinimumHeight(138)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
 
         top = QHBoxLayout()
@@ -1198,6 +1195,7 @@ class FanStatusCard(QFrame):
         self.source_label = QLabel("--")
         self.source_label.setObjectName("FanCardMeta")
         self.source_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.source_label.setMaximumWidth(150)
         top.addWidget(self.name_label, 1)
         top.addWidget(self.source_label)
         layout.addLayout(top)
@@ -1208,6 +1206,7 @@ class FanStatusCard(QFrame):
         self.channel_label = QLabel("--")
         self.channel_label.setObjectName("FanCardMeta")
         self.channel_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.channel_label.setMaximumWidth(150)
         meta_row.addWidget(self.role_label)
         meta_row.addWidget(self.channel_label, 1)
         layout.addLayout(meta_row)
@@ -1282,10 +1281,10 @@ class FanRoleMetricCard(QFrame):
         super().__init__()
         self.role = role
         self.setObjectName("FanRoleMetricCard")
-        self.setMinimumHeight(82)
+        self.setMinimumHeight(98)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(5)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(6)
 
         top = QHBoxLayout()
         self.title_label = QLabel(_fan_role_compact_label(role))
@@ -1305,6 +1304,7 @@ class FanRoleMetricCard(QFrame):
         self.detail_label = QLabel("--")
         self.detail_label.setObjectName("FanCardMeta")
         self.detail_label.setWordWrap(True)
+        self.detail_label.setMaximumHeight(38)
         layout.addWidget(self.detail_label)
 
     def update_status(
@@ -2275,9 +2275,9 @@ class FanControlHostPage(QWidget):
         summary.addWidget(self._summary_card("控制状态", self.control_state_value), 0, 0)
         summary.addWidget(self._summary_card("风扇通道", self.fan_count_value), 0, 1)
         summary.addWidget(self._summary_card("传感器", self.sensor_count_value), 0, 2)
-        summary.addWidget(self._summary_card("当前策略", self.active_profile_value), 1, 0, 1, 2)
-        summary.addWidget(self._summary_card("PWM 权限", self.permission_value), 1, 2)
-        for column in range(3):
+        summary.addWidget(self._summary_card("当前策略", self.active_profile_value), 0, 3)
+        summary.addWidget(self._summary_card("PWM 权限", self.permission_value), 0, 4)
+        for column in range(5):
             summary.setColumnStretch(column, 1)
         self.layout.addWidget(summary_panel)
 
@@ -2423,10 +2423,22 @@ class FanControlHostPage(QWidget):
         for index, role in enumerate(("CPU 风扇", "水泵/AIO", "机箱风扇", "GPU 风扇")):
             card = FanRoleMetricCard(role)
             self.fan_role_metric_cards[role] = card
-            row, column = divmod(index, 2)
-            role_metrics_layout.addWidget(card, row, column)
-            role_metrics_layout.setColumnStretch(column, 1)
+            role_metrics_layout.addWidget(card, 0, index)
+            role_metrics_layout.setColumnStretch(index, 1)
         live_overview_layout.addWidget(role_metrics)
+        overview_charts = QWidget()
+        overview_charts.setObjectName("FanOverviewCharts")
+        overview_charts_layout = QGridLayout(overview_charts)
+        overview_charts_layout.setContentsMargins(0, 0, 0, 0)
+        overview_charts_layout.setHorizontalSpacing(10)
+        overview_charts_layout.setVerticalSpacing(10)
+        self.overview_rpm_chart = FanTrendChart("风扇转速", "RPM", default_max=1800)
+        self.overview_temperature_chart = FanTrendChart("核心温度", "°C", default_max=90)
+        overview_charts_layout.addWidget(self.overview_rpm_chart, 0, 0)
+        overview_charts_layout.addWidget(self.overview_temperature_chart, 0, 1)
+        overview_charts_layout.setColumnStretch(0, 1)
+        overview_charts_layout.setColumnStretch(1, 1)
+        live_overview_layout.addWidget(overview_charts, 1)
         live_overview_layout.addStretch(1)
 
         self.fan_cards_container = QWidget()
@@ -2540,13 +2552,11 @@ class FanControlHostPage(QWidget):
         permission_wizard_page_layout.addWidget(self.permission_wizard_text)
         self.permission_info_tabs.addTab(permission_detail_page, "权限明细")
         self.permission_info_tabs.addTab(permission_wizard_page, "诊断建议")
-        permission_layout.addWidget(permission_title, 0, 0, 1, 2)
-        permission_layout.addWidget(permission_hint, 1, 0, 1, 2)
-        permission_layout.addWidget(permission_actions, 2, 0, Qt.AlignmentFlag.AlignTop)
-        permission_layout.addWidget(self.permission_info_tabs, 2, 1)
-        permission_layout.setColumnMinimumWidth(0, 320)
-        permission_layout.setColumnStretch(0, 0)
-        permission_layout.setColumnStretch(1, 1)
+        permission_layout.addWidget(permission_title, 0, 0)
+        permission_layout.addWidget(permission_hint, 1, 0)
+        permission_layout.addWidget(permission_actions, 2, 0)
+        permission_layout.addWidget(self.permission_info_tabs, 3, 0)
+        permission_layout.setRowStretch(3, 1)
         self.permission_layout.addWidget(permission_panel)
         self.permission_layout.addStretch(1)
         self._update_permission_summary()
@@ -2674,14 +2684,15 @@ class FanControlHostPage(QWidget):
         evidence_layout.addWidget(evidence_title)
         evidence_layout.addWidget(self.channel_evidence_label)
 
-        identity_layout.addWidget(selector_section, 0, 0)
-        identity_layout.addWidget(properties_section, 0, 1)
-        identity_layout.addWidget(evidence_section, 1, 0)
+        identity_layout.addWidget(selector_section, 0, 0, 1, 2)
+        identity_layout.addWidget(properties_section, 1, 0)
         identity_layout.addWidget(action_section, 1, 1)
+        identity_layout.addWidget(evidence_section, 2, 0, 1, 2)
         identity_layout.setColumnStretch(0, 1)
         identity_layout.setColumnStretch(1, 1)
         identity_layout.setRowStretch(0, 0)
-        identity_layout.setRowStretch(1, 1)
+        identity_layout.setRowStretch(1, 0)
+        identity_layout.setRowStretch(2, 1)
         self.fan_table = QTableWidget(0, 8)
         self.fan_table.setObjectName("FanChannelTable")
         self.fan_table.setHorizontalHeaderLabels(["名称", "角色", "接口", "关联传感器", "转速", "输出", "来源", "状态"])
@@ -5310,7 +5321,7 @@ class FanControlHostPage(QWidget):
             self.fan_cards_layout.addWidget(self.fan_cards_empty_label, 0, 0)
             return
         self.fan_cards_empty_label.setVisible(False)
-        columns = 3 if len(fan_names) > 2 else max(1, len(fan_names))
+        columns = 2 if len(fan_names) > 1 else 1
         for index, name in enumerate(fan_names):
             card = FanStatusCard(name)
             self._fan_cards[name] = card
@@ -5345,14 +5356,18 @@ class FanControlHostPage(QWidget):
             for name in ordered_names[:6]
             if self._rpm_history.get(name)
         }
-        self.rpm_chart.set_series(series)
+        for chart in (self.rpm_chart, getattr(self, "overview_rpm_chart", None)):
+            if chart is not None:
+                chart.set_series(series)
 
     def _refresh_temperature_chart(self) -> None:
         if not hasattr(self, "temperature_chart"):
             return
         names = sorted(self._sensor_history, key=_temperature_sensor_priority)[:4]
         series = {name: list(self._sensor_history[name]) for name in names if self._sensor_history[name]}
-        self.temperature_chart.set_series(series)
+        for chart in (self.temperature_chart, getattr(self, "overview_temperature_chart", None)):
+            if chart is not None:
+                chart.set_series(series)
 
     def _sensor_unit(self, sensor_name: str) -> str:
         for sensor in self._sensors:
@@ -5882,12 +5897,14 @@ class FanControlHostPage(QWidget):
     def _summary_card(self, title: str, value: QLabel) -> QFrame:
         card = QFrame()
         card.setObjectName("MetricCard")
+        card.setMinimumHeight(108)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(14, 12, 14, 12)
         card_layout.setSpacing(6)
         title_label = QLabel(title)
         title_label.setObjectName("SectionLabel")
-        value.setObjectName("HomeMetricValue")
+        value.setObjectName("FanSummaryValue")
         value.setWordWrap(True)
         card_layout.addWidget(title_label)
         card_layout.addWidget(value, 1)

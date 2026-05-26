@@ -101,6 +101,9 @@ def test_fan_host_layout_separates_dense_sections():
         "权限明细",
         "诊断建议",
     ]
+    assert page.fan_count_value.objectName() == "FanSummaryValue"
+    assert page.overview_rpm_chart.parentWidget().objectName() == "FanOverviewCharts"
+    assert page.overview_temperature_chart.parentWidget().objectName() == "FanOverviewCharts"
     assert page.fan_overview_headline_label.text()
     assert page.fan_role_summary_label.isHidden()
     assert page.fan_role_speed_label.isHidden()
