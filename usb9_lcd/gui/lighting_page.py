@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from usb9_lcd.gui.debug import log_event, log_exception
+from usb9_lcd.gui.operation_queue import HardwareOperation, HardwareOperationQueue
 from usb9_lcd.gui.settings import GuiSettings, LightingUiSettings, save_settings as _save_settings_impl
 from usb9_lcd.lighting import LightingSettings, LightingTarget, OpenRgbLightingController, OpenRgbServerManager
 from usb9_lcd.lighting.effects import LIGHTING_EFFECTS, LIGHTING_EFFECT_MAP, effect_label
@@ -214,6 +215,7 @@ class LightingPage(QWidget):
         self._lighting_closed = False
 
         self._lighting_threads: list[threading.Thread] = []
+        self._lighting_operation_queue = HardwareOperationQueue()
 
         self._selected_scene_name = self.settings.lighting.active_scene
 
@@ -1392,15 +1394,19 @@ class LightingPage(QWidget):
 
     def _run_lighting_operation(self, busy_message: str, error_event: str, operation: Callable[[], str]) -> None:
 
-        if self._lighting_operation_active:
-
-            self.openrgb_status_label.setText("灯效操作正在执行...")
-
+        hardware_operation = HardwareOperation(busy_message, error_event, operation)
+        pending_count = self._lighting_operation_queue.submit(hardware_operation)
+        if pending_count:
+            self.openrgb_status_label.setText(f"已加入队列：{pending_count} 个等待")
+            self.status_changed.emit(self.home_status_text())
             return
 
+        self._start_lighting_operation(hardware_operation)
 
 
-        self._set_lighting_busy(True, busy_message)
+    def _start_lighting_operation(self, hardware_operation: HardwareOperation) -> None:
+
+        self._set_lighting_busy(True, self._queued_busy_message(hardware_operation.busy_message))
 
 
 
@@ -1408,11 +1414,11 @@ class LightingPage(QWidget):
 
             try:
 
-                message = operation()
+                message = hardware_operation.operation()
 
             except Exception as error:  # pragma: no cover - delivered through signal
 
-                log_exception(error_event, error)
+                log_exception(hardware_operation.error_event, error)
 
                 if not self._lighting_closed:
 
@@ -2066,13 +2072,20 @@ class LightingPage(QWidget):
 
     def _lighting_operation_finished(self, message: str, error: object) -> None:
 
-        self._set_lighting_busy(False, "")
+        next_operation = self._lighting_operation_queue.complete_current()
 
         if error is not None:
 
             self.openrgb_status_label.setText(f"操作失败：{error}")
 
             self.status_changed.emit(self.home_status_text())
+            if next_operation is None:
+
+                self._set_lighting_busy(False, "")
+
+            else:
+
+                self._start_lighting_operation(next_operation)
 
             return
 
@@ -2096,9 +2109,30 @@ class LightingPage(QWidget):
 
             self._argb_wizard_restore = []
 
-        self.openrgb_status_label.setText(message)
+        if next_operation is None:
+
+            self._set_lighting_busy(False, "")
+
+            self.openrgb_status_label.setText(message)
+
+        else:
+
+            self.openrgb_status_label.setText(message)
+
+            self._start_lighting_operation(next_operation)
 
         self.status_changed.emit(self.home_status_text())
+
+
+    def _queued_busy_message(self, message: str) -> str:
+
+        pending_count = self._lighting_operation_queue.pending_count
+
+        if pending_count <= 0:
+
+            return message
+
+        return f"{message}（队列剩余 {pending_count} 个）"
 
 
 
@@ -2944,6 +2978,8 @@ class LightingPage(QWidget):
     def release_lighting_resources(self) -> None:
 
         self._lighting_closed = True
+
+        self._lighting_operation_queue.clear()
 
         for thread in list(self._lighting_threads):
 

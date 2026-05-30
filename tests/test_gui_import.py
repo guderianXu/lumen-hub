@@ -4193,6 +4193,48 @@ def test_lighting_page_openrgb_test_window_runs_static_probe(monkeypatch):
     app.quit()
 
 
+def test_lighting_page_queues_openrgb_operations(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.pages as pages
+    from usb9_lcd.gui.pages import LightingPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    monkeypatch.setattr(pages, "save_settings", lambda settings: None)
+    app = QApplication.instance() or QApplication([])
+    page = LightingPage(controller=FakeLightingController(), settings=GuiSettings())
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def first_operation() -> str:
+        started.set()
+        release.wait(timeout=1)
+        calls.append("first")
+        return "first done"
+
+    def second_operation() -> str:
+        calls.append("second")
+        return "second done"
+
+    page._run_lighting_operation("first busy", "first_failed", first_operation)
+    assert started.wait(timeout=1)
+
+    page._run_lighting_operation("second busy", "second_failed", second_operation)
+    assert "1 个等待" in page.openrgb_status_label.text()
+
+    release.set()
+
+    assert _process_events_until(
+        app,
+        lambda: calls == ["first", "second"] and page.openrgb_status_label.text() == "second done",
+        timeout=2.0,
+    )
+
+    page.close()
+    app.quit()
+
+
 def test_lighting_page_reconnects_when_selected_target_is_disconnected():
     from PySide6.QtWidgets import QApplication
 
