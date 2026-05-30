@@ -1,7 +1,11 @@
 from usb9_lcd.lighting import LightingSettings, LightingTarget, OpenRgbLightingController
 from usb9_lcd.lighting.effects import effect_uses_color
 from usb9_lcd.lighting.engine import build_lighting_apply_plan
-from usb9_lcd.lighting.software_effects import SOFTWARE_LIGHTING_EFFECTS, render_software_effect_frame
+from usb9_lcd.lighting.software_effects import (
+    SOFTWARE_LIGHTING_EFFECTS,
+    render_software_effect_frame,
+    software_effect_interval_seconds,
+)
 
 
 class FakeMode:
@@ -414,6 +418,16 @@ def test_software_effect_renderer_produces_distinct_frames_for_expanded_effects(
 def test_expanded_software_effects_are_color_aware():
     for effect in SOFTWARE_LIGHTING_EFFECTS:
         assert effect_uses_color(effect) is True
+
+
+def test_meteor_effect_has_no_long_black_gap():
+    frames = [
+        render_software_effect_frame("meteor", led_count=30, frame_index=index, base_color=(255, 0, 0))
+        for index in range(90)
+    ]
+
+    assert all(any(color != (0, 0, 0) for color in frame) for frame in frames)
+    assert software_effect_interval_seconds(50) <= 0.08
 
 
 def test_openrgb_missing_expanded_effect_starts_software_animation_on_zone():

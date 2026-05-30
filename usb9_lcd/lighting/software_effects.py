@@ -15,7 +15,7 @@ def is_software_lighting_effect(effect: str) -> bool:
 
 def software_effect_interval_seconds(speed_percent: int) -> float:
     speed = max(0, min(100, int(speed_percent))) / 100
-    return 0.18 - 0.14 * speed
+    return 0.12 - 0.09 * speed
 
 
 def render_software_effect_frame(
@@ -73,15 +73,13 @@ def _tail_frame(
     tail_ratio: float,
     white_head: bool,
 ) -> list[Rgb]:
-    cycle = total + max(4, round(total * tail_ratio))
+    cycle = total
     position = frame_index % cycle
     tail = max(3, round(total * tail_ratio))
     frame: list[Rgb] = []
     for index in range(count):
         global_index = index + offset
-        distance = position - global_index
-        if distance < 0:
-            distance += cycle
+        distance = (position - global_index) % cycle
         if distance == 0 and white_head:
             frame.append((255, 255, 255))
         elif 0 <= distance <= tail:
