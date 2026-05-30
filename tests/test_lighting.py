@@ -430,6 +430,25 @@ def test_meteor_effect_has_no_long_black_gap():
     assert software_effect_interval_seconds(50) <= 0.08
 
 
+def test_software_effects_keep_segmented_zones_visible():
+    for effect in SOFTWARE_LIGHTING_EFFECTS:
+        for offset in (0, 30, 60):
+            frames = [
+                render_software_effect_frame(
+                    effect,
+                    led_count=30,
+                    frame_index=index,
+                    base_color=(255, 64, 16),
+                    global_offset=offset,
+                    total_leds=90,
+                )
+                for index in range(90)
+            ]
+
+            assert all(any(color != (0, 0, 0) for color in frame) for frame in frames), effect
+            assert max(_frame_brightness(frame) for frame in frames) > 80, effect
+
+
 def test_openrgb_missing_expanded_effect_starts_software_animation_on_zone():
     controller = OpenRgbLightingController()
     controller.client = FakeClient()
@@ -497,3 +516,7 @@ def test_openrgb_native_expanded_effect_is_not_overwritten_by_static_color():
     assert controller.client.devices[0].set_modes == [("Matrix", False, True)]
     assert controller.client.devices[0].colors == []
     assert controller.client.devices[0].color_frames == []
+
+
+def _frame_brightness(frame):
+    return max((sum(color) for color in frame), default=0)
