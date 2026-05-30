@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from .effects import effect_aliases, effect_uses_color
 from .profiles import mode_aliases_for_device, profile_for_device_name
+from .software_effects import is_software_lighting_effect
 
 
 @dataclass(frozen=True)
@@ -14,10 +15,13 @@ class LightingApplyPlan:
     stable_whole_device_color: bool
     color_reapply_count: int
     uses_color: bool
+    supports_software_animation: bool
 
     def should_apply_explicit_color(self, mode_result: str) -> bool:
         if mode_result == "none":
             return True
+        if self.supports_software_animation:
+            return False
         if self.effect in {"static", "direct"}:
             return True
         return self.uses_color and mode_result != "mode-color"
@@ -51,4 +55,5 @@ def build_lighting_apply_plan(
         stable_whole_device_color=stable_whole_device_color and bool(zone_size),
         color_reapply_count=max(default_static_reapply_count, profile.static_reapply_count),
         uses_color=effect_uses_color(effect),
+        supports_software_animation=is_software_lighting_effect(effect),
     )

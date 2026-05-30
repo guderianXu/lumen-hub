@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+import threading
 import time
 from typing import Any
 
 from .effects import effect_aliases, effect_uses_color
 from .engine import build_lighting_apply_plan
+from .software_effects import render_software_effect_frame, software_effect_interval_seconds
 
 
 STATIC_COLOR_REAPPLY_DELAY_SECONDS = 0.08
 STATIC_COLOR_REAPPLY_COUNT = 4
+_LOGGER = logging.getLogger(__name__)
 
 
 class OpenRgbUnavailableError(RuntimeError):
@@ -42,6 +46,9 @@ class OpenRgbLightingController:
         self.port = port
         self.client: Any | None = None
         self.targets: list[LightingTarget] = []
+        self._software_effect_stop: threading.Event | None = None
+        self._software_effect_thread: threading.Thread | None = None
+        self._write_lock = threading.RLock()
 
     @property
     def connected(self) -> bool:
@@ -67,6 +74,7 @@ class OpenRgbLightingController:
         return list(self.targets)
 
     def disconnect(self) -> None:
+        self._stop_software_effect()
         if self.client is not None:
             self.client.disconnect()
         self.client = None
@@ -78,6 +86,7 @@ class OpenRgbLightingController:
         return list(self.targets)
 
     def apply(self, settings: LightingSettings) -> None:
+        self._stop_software_effect()
         client = self._require_client()
         target = self._target_by_id(settings.target_id)
         device = client.devices[target.device_index]
@@ -108,6 +117,9 @@ class OpenRgbLightingController:
             settings.brightness_percent,
             settings.save,
         )
+        if mode_result == "none" and plan.supports_software_animation:
+            self._apply_software_effect(device, target, settings, color, zone_size)
+            return
         if plan.should_apply_explicit_color(mode_result):
             if plan.stable_whole_device_color and zone_size:
                 self._apply_stable_static_color(
@@ -122,6 +134,125 @@ class OpenRgbLightingController:
                 if settings.effect in {"static", "direct"} and zone_size:
                     time.sleep(STATIC_COLOR_REAPPLY_DELAY_SECONDS)
                     self._set_target_color(device, target, color, zone_size)
+
+    def _apply_software_effect(
+        self,
+        device: Any,
+        target: LightingTarget,
+        settings: LightingSettings,
+        color: Any,
+        zone_size: int | None,
+    ) -> None:
+        self._prepare_software_frame_mode(device, settings.save)
+        self._write_software_effect_frame(device, target, settings.effect, color, zone_size, frame_index=0)
+        stop_event = threading.Event()
+        thread = threading.Thread(
+            target=self._run_software_effect_loop,
+            args=(stop_event, device, target, settings.effect, color, settings.speed_percent, zone_size),
+            name=f"openrgb-software-{settings.effect}",
+            daemon=True,
+        )
+        self._software_effect_stop = stop_event
+        self._software_effect_thread = thread
+        thread.start()
+
+    def _run_software_effect_loop(
+        self,
+        stop_event: threading.Event,
+        device: Any,
+        target: LightingTarget,
+        effect: str,
+        color: Any,
+        speed_percent: int,
+        zone_size: int | None,
+    ) -> None:
+        interval = software_effect_interval_seconds(speed_percent)
+        frame_index = 1
+        while not stop_event.wait(interval):
+            try:
+                self._write_software_effect_frame(device, target, effect, color, zone_size, frame_index=frame_index)
+            except Exception:
+                _LOGGER.exception("openrgb software effect frame failed: %s", effect)
+                return
+            frame_index += 1
+
+    def _stop_software_effect(self) -> None:
+        stop_event = self._software_effect_stop
+        if stop_event is not None:
+            stop_event.set()
+        thread = self._software_effect_thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=0.5)
+        self._software_effect_stop = None
+        self._software_effect_thread = None
+
+    def _prepare_software_frame_mode(self, device: Any, save: bool) -> None:
+        mode = _find_mode(getattr(device, "modes", []), ("direct", "custom"))
+        with self._write_lock:
+            if mode is not None:
+                device.set_mode(mode, save=save, force=True)
+                return
+            set_custom_mode = getattr(device, "set_custom_mode", None)
+            if callable(set_custom_mode):
+                set_custom_mode()
+
+    def _write_software_effect_frame(
+        self,
+        device: Any,
+        target: LightingTarget,
+        effect: str,
+        color: Any,
+        zone_size: int | None,
+        *,
+        frame_index: int,
+    ) -> None:
+        targets = self._software_frame_targets(device, target, zone_size)
+        total_leds = sum(count for _writer, count in targets)
+        if total_leds <= 0:
+            self._set_target_color(device, target, color, zone_size)
+            return
+        base_color = _rgb_tuple(color)
+        offset = 0
+        with self._write_lock:
+            for writer, led_count in targets:
+                frame = render_software_effect_frame(
+                    effect,
+                    led_count=led_count,
+                    frame_index=frame_index,
+                    base_color=base_color,
+                    global_offset=offset,
+                    total_leds=total_leds,
+                )
+                self._write_color_frame(writer, [_rgb_color_from_tuple(color, item) for item in frame])
+                offset += led_count
+
+    def _software_frame_targets(self, device: Any, target: LightingTarget, zone_size: int | None) -> list[tuple[Any, int]]:
+        if target.zone_index is not None:
+            zone = device.zones[target.zone_index]
+            self._resize_zone_object_if_needed(zone, zone_size)
+            return [(zone, _object_led_count(zone, zone_size))]
+
+        zones = list(getattr(device, "zones", []))
+        frame_targets: list[tuple[Any, int]] = []
+        for zone in zones:
+            self._resize_zone_object_if_needed(zone, zone_size)
+            led_count = _object_led_count(zone, zone_size)
+            if led_count > 0:
+                frame_targets.append((zone, led_count))
+        if frame_targets:
+            return frame_targets
+        return [(device, _object_led_count(device, zone_size))]
+
+    def _write_color_frame(self, target: Any, colors: list[Any]) -> None:
+        set_colors = getattr(target, "set_colors", None)
+        if callable(set_colors):
+            set_colors(colors, fast=True)
+            return
+        set_color = getattr(target, "set_color", None)
+        if callable(set_color) and colors:
+            set_color(colors[0], fast=True)
+            return
+        raise RuntimeError("OpenRGB 目标不支持逐灯颜色写入")
 
     def _build_targets(self) -> list[LightingTarget]:
         client = self._require_client()
@@ -363,3 +494,43 @@ def _set_mode_numeric(mode: Any, attr: str, min_attr: str, max_attr: str, percen
         return
     value = int(minimum + (maximum - minimum) * (max(0, min(100, percent)) / 100))
     setattr(mode, attr, value)
+
+
+def _object_led_count(target: Any, fallback: int | None = None) -> int:
+    leds = getattr(target, "leds", None)
+    try:
+        count = len(leds)
+    except TypeError:
+        count = 0
+    if count > 0:
+        return count
+    try:
+        parsed = int(fallback or 0)
+    except (TypeError, ValueError):
+        parsed = 0
+    return max(1, parsed)
+
+
+def _rgb_tuple(color: Any) -> tuple[int, int, int]:
+    try:
+        return (
+            max(0, min(255, int(getattr(color, "red")))),
+            max(0, min(255, int(getattr(color, "green")))),
+            max(0, min(255, int(getattr(color, "blue")))),
+        )
+    except (TypeError, ValueError):
+        pass
+    if isinstance(color, (tuple, list)) and len(color) >= 3:
+        return (
+            max(0, min(255, int(color[0]))),
+            max(0, min(255, int(color[1]))),
+            max(0, min(255, int(color[2]))),
+        )
+    return (255, 255, 255)
+
+
+def _rgb_color_from_tuple(reference: Any, color: tuple[int, int, int]) -> Any:
+    try:
+        return reference.__class__(*color)
+    except Exception:
+        return color

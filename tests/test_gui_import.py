@@ -3879,7 +3879,7 @@ def test_lighting_page_exposes_expanded_openrgb_effects():
     page = LightingPage(controller=FakeLightingController())
     labels = {button.text() for button in page.effect_group.buttons()}
 
-    assert {"波浪", "颜色循环", "颜色脉冲", "闪烁", "流星", "矩阵", "渐变", "星空"} <= labels
+    assert {"波浪", "颜色循环", "颜色脉冲", "闪烁", "星空", "流星", "彗星", "扫描", "遮罩", "矩阵", "渐变"} <= labels
     assert page.effect_map["波浪"] == "wave"
     assert page.effect_map["颜色脉冲"] == "color_pulse"
 

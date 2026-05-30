@@ -1,5 +1,7 @@
 from usb9_lcd.lighting import LightingSettings, LightingTarget, OpenRgbLightingController
+from usb9_lcd.lighting.effects import effect_uses_color
 from usb9_lcd.lighting.engine import build_lighting_apply_plan
+from usb9_lcd.lighting.software_effects import SOFTWARE_LIGHTING_EFFECTS, render_software_effect_frame
 
 
 class FakeMode:
@@ -25,13 +27,21 @@ class FakeDevice:
         self.modes = [FakeMode("Static"), FakeMode("Off")]
         self.set_modes = []
         self.colors = []
+        self.color_frames = []
         self.zones = []
+        self.custom_mode_set = False
 
     def set_mode(self, mode, save=False, force=False):
         self.set_modes.append((mode.name, save, force))
 
     def set_color(self, color, fast=False):
         self.colors.append((color, fast))
+
+    def set_colors(self, colors, fast=False):
+        self.color_frames.append((list(colors), fast))
+
+    def set_custom_mode(self):
+        self.custom_mode_set = True
 
 
 class FakeClient:
@@ -72,6 +82,7 @@ class FakeZone:
     def __init__(self):
         self.leds = []
         self.colors = []
+        self.color_frames = []
         self.resized_to = None
 
     def resize(self, size):
@@ -80,6 +91,9 @@ class FakeZone:
 
     def set_color(self, color, fast=False):
         self.colors.append((color, fast))
+
+    def set_colors(self, colors, fast=False):
+        self.color_frames.append((list(colors), fast))
 
 
 def test_openrgb_whole_device_static_also_updates_child_zones():
@@ -383,3 +397,89 @@ def test_openrgb_resizes_empty_addressable_zone_before_setting_color():
 
     assert zone.resized_to == 30
     assert len(zone.colors) == 2
+
+
+def test_software_effect_renderer_produces_distinct_frames_for_expanded_effects():
+    base = (255, 32, 16)
+    for effect in SOFTWARE_LIGHTING_EFFECTS:
+        first = render_software_effect_frame(effect, led_count=30, frame_index=0, base_color=base)
+        second = render_software_effect_frame(effect, led_count=30, frame_index=6, base_color=base)
+
+        assert len(first) == 30
+        assert len(second) == 30
+        assert any(color != (0, 0, 0) for color in first + second)
+        assert first != second
+
+
+def test_expanded_software_effects_are_color_aware():
+    for effect in SOFTWARE_LIGHTING_EFFECTS:
+        assert effect_uses_color(effect) is True
+
+
+def test_openrgb_missing_expanded_effect_starts_software_animation_on_zone():
+    controller = OpenRgbLightingController()
+    controller.client = FakeClient()
+    zone = FakeZone()
+    controller.client.devices[0].modes = [FakeMode("Static"), FakeMode("Direct"), FakeMode("Off")]
+    controller.client.devices[0].zones = [zone]
+    controller.targets = [
+        LightingTarget(
+            id="device:0:zone:0",
+            name="ARGB Controller / Zone 0",
+            device_index=0,
+            zone_index=0,
+            modes=("Static", "Direct", "Off"),
+        )
+    ]
+    controller.refresh = lambda: list(controller.targets)
+
+    controller.apply(
+        LightingSettings(
+            target_id="device:0:zone:0",
+            effect="meteor",
+            color="#ff0000",
+            brightness_percent=100,
+            speed_percent=80,
+            zone_size=12,
+        )
+    )
+
+    try:
+        assert controller.client.devices[0].set_modes == [("Direct", False, True)]
+        assert zone.resized_to == 12
+        assert zone.color_frames
+        colors, fast = zone.color_frames[0]
+        assert fast is True
+        assert len(colors) == 12
+        assert any(getattr(color, "red", 0) > 0 for color in colors)
+    finally:
+        controller._stop_software_effect()
+
+
+def test_openrgb_native_expanded_effect_is_not_overwritten_by_static_color():
+    controller = OpenRgbLightingController()
+    controller.client = FakeClient()
+    controller.client.devices[0].modes = [FakeMode("Matrix"), FakeMode("Off")]
+    controller.targets = [
+        LightingTarget(
+            id="device:0",
+            name="ARGB Controller / 全部",
+            device_index=0,
+            zone_index=None,
+            modes=("Matrix", "Off"),
+        )
+    ]
+
+    controller.apply(
+        LightingSettings(
+            target_id="device:0",
+            effect="matrix",
+            color="#00ff00",
+            brightness_percent=100,
+            speed_percent=50,
+        )
+    )
+
+    assert controller.client.devices[0].set_modes == [("Matrix", False, True)]
+    assert controller.client.devices[0].colors == []
+    assert controller.client.devices[0].color_frames == []
