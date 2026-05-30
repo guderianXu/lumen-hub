@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from usb9_lcd.monitoring.models import FanTelemetry, SystemTelemetry
 from usb9_lcd.monitoring.service import collect_system_telemetry
+from usb9_lcd.monitoring.windows import WindowsFanChannel, collect_windows_fan_channels, set_windows_fan_control_percent
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class GenericFanChannel:
     percent: float | None = None
     pwm_path: Path | None = None
     pwm_enable_path: Path | None = None
+    windows_control_id: str = ""
     control_available: bool = False
     control_reason: str = ""
 
@@ -154,22 +156,43 @@ def collect_generic_fan_snapshot(
         return GenericFanSnapshot(platform_name, telemetry, channels, bool(writable_count), reason)
 
     if sys.platform.startswith("win"):
-        channels = _channels_from_telemetry(telemetry.fans)
+        channels = _channels_from_windows_backend()
         admin_note = (
             "Current GUI is running as administrator; if motherboard fans are still missing, this board is not exposed by the current Windows sensor backend"
             if _is_windows_admin()
             else "Current GUI is not running as administrator; motherboard fan sensors often require elevated access to the Super I/O or EC driver"
         )
+        writable_count = sum(1 for channel in channels if channel.control_available)
+        if writable_count:
+            reason = f"{writable_count} writable motherboard/controller fan channel(s) detected"
+        elif channels:
+            reason = f"No writable motherboard/controller fan channel is available. {admin_note}."
+        else:
+            reason = f"No Windows fan sensors detected. {admin_note}."
         return GenericFanSnapshot(
             platform_name,
             telemetry,
             channels,
-            False,
-            f"{admin_note}. Windows PWM writes still need a supported vendor/backend plugin.",
+            bool(writable_count),
+            reason,
         )
 
     channels = _channels_from_telemetry(telemetry.fans)
     return GenericFanSnapshot(platform_name, telemetry, channels, False, "Fan control is not implemented for this platform yet")
+
+
+def _channels_from_windows_backend() -> list[GenericFanChannel]:
+    return [
+        GenericFanChannel(
+            name=channel.name,
+            rpm=channel.rpm,
+            percent=channel.percent,
+            windows_control_id=channel.control_id,
+            control_available=channel.control_available,
+            control_reason=channel.control_reason,
+        )
+        for channel in collect_windows_fan_channels()
+    ]
 
 
 def _format_channel(channel: GenericFanChannel) -> str:
@@ -367,17 +390,25 @@ class FanControlHostPage(QWidget):
             self._explain_control_limit()
             return
         value = round(self.pwm_slider.value() * 255 / 100)
+        percent_value = self.pwm_slider.value()
         written: list[str] = []
         errors: list[str] = []
         for channel in self._snapshot.channels:
             if not channel.control_available or channel.pwm_path is None:
-                continue
+                if not channel.control_available or not channel.windows_control_id:
+                    continue
             try:
-                if self.enable_manual.isChecked() and channel.pwm_enable_path is not None:
+                if channel.windows_control_id:
+                    set_windows_fan_control_percent(channel.windows_control_id, percent_value)
+                elif self.enable_manual.isChecked() and channel.pwm_enable_path is not None:
                     channel.pwm_enable_path.write_text("1\n", encoding="utf-8")
-                channel.pwm_path.write_text(f"{value}\n", encoding="utf-8")
+                    channel.pwm_path.write_text(f"{value}\n", encoding="utf-8")
+                elif channel.pwm_path is not None:
+                    channel.pwm_path.write_text(f"{value}\n", encoding="utf-8")
                 written.append(channel.name)
             except OSError as exc:
+                errors.append(f"{channel.name}: {exc}")
+            except Exception as exc:  # noqa: BLE001 - hardware write errors should stay in the UI.
                 errors.append(f"{channel.name}: {exc}")
         if errors:
             self.details.append("\n写入失败:\n" + "\n".join(errors))

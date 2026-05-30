@@ -10,6 +10,7 @@ from usb9_lcd.monitoring.cpu import collect_cpu_temperature_from_hwmon
 from usb9_lcd.monitoring.models import CpuTelemetry, GpuTelemetry
 from usb9_lcd.monitoring.nvidia import collect_nvidia_gpu, parse_nvidia_smi_csv
 from usb9_lcd.monitoring.service import collect_system_telemetry
+from usb9_lcd.monitoring.windows import collect_windows_fan_channels, set_windows_fan_control_percent
 
 
 def test_parse_nvidia_smi_csv_parses_first_gpu():
@@ -167,3 +168,119 @@ def test_collect_system_telemetry_combines_cpu_gpu_and_timestamp():
     assert telemetry.cpu.package_temperature_c == 50.0
     assert telemetry.gpu.temperature_c == 61
     assert telemetry.captured_at == now
+
+
+def test_collect_windows_fan_channels_pairs_rpm_and_control_sensors():
+    data = [
+        {
+            "Name": "Fan #1",
+            "SensorType": "Fan",
+            "Value": 1234,
+            "HardwareName": "Nuvoton NCT6799D",
+            "HardwareType": "SuperIO",
+            "Identifier": "/lpc/nct6799d/fan/0",
+            "Source": "LibreHardwareMonitorLib",
+        },
+        {
+            "Name": "Fan Control #1",
+            "SensorType": "Control",
+            "Value": 45,
+            "HardwareName": "Nuvoton NCT6799D",
+            "HardwareType": "SuperIO",
+            "Identifier": "/lpc/nct6799d/control/0",
+            "Source": "LibreHardwareMonitorLib",
+        },
+    ]
+
+    channels = collect_windows_fan_channels(sensor_data_provider=lambda *_args: data)
+
+    assert len(channels) == 1
+    assert channels[0].name == "Nuvoton NCT6799D Fan #1"
+    assert channels[0].rpm == 1234
+    assert channels[0].percent == 45
+    assert channels[0].control_available is True
+    assert channels[0].control_id == "/lpc/nct6799d/control/0"
+
+
+def test_collect_windows_fan_channels_keeps_readonly_fans_visible():
+    data = [
+        {
+            "Name": "GPU Fan 1",
+            "SensorType": "Fan",
+            "Value": 701,
+            "HardwareName": "NVIDIA GeForce RTX 5080",
+            "HardwareType": "GpuNvidia",
+            "Identifier": "/gpu-nvidia/0/fan/0",
+            "Source": "LibreHardwareMonitorLib",
+        }
+    ]
+
+    channels = collect_windows_fan_channels(sensor_data_provider=lambda *_args: data)
+
+    assert len(channels) == 1
+    assert channels[0].name == "NVIDIA GeForce RTX 5080 GPU Fan 1"
+    assert channels[0].rpm == 701
+    assert channels[0].control_available is False
+    assert "No matching Control" in channels[0].control_reason
+
+
+def test_collect_windows_fan_channels_does_not_enable_gpu_control_on_motherboard_page():
+    data = [
+        {
+            "Name": "GPU Fan 1",
+            "SensorType": "Fan",
+            "Value": 701,
+            "HardwareName": "NVIDIA GeForce RTX 5080",
+            "HardwareType": "GpuNvidia",
+            "Identifier": "/gpu-nvidia/0/fan/0",
+            "Source": "LibreHardwareMonitorLib",
+        },
+        {
+            "Name": "GPU Fan Control 1",
+            "SensorType": "Control",
+            "Value": 30,
+            "HardwareName": "NVIDIA GeForce RTX 5080",
+            "HardwareType": "GpuNvidia",
+            "Identifier": "/gpu-nvidia/0/control/0",
+            "Source": "LibreHardwareMonitorLib",
+        },
+    ]
+
+    channels = collect_windows_fan_channels(sensor_data_provider=lambda *_args: data)
+
+    assert channels[0].control_available is False
+    assert channels[0].control_id == "/gpu-nvidia/0/control/0"
+    assert "GPU fan control" in channels[0].control_reason
+
+
+def test_set_windows_fan_control_percent_rejects_unsafe_low_values():
+    calls = []
+
+    def runner(script, *, timeout=8):
+        calls.append((script, timeout))
+        return {"ok": True}
+
+    try:
+        set_windows_fan_control_percent("/lpc/nct6799d/control/0", 20, runner=runner)
+    except ValueError as error:
+        assert "30" in str(error)
+    else:
+        raise AssertionError("expected low fan control value to be rejected")
+
+    assert calls == []
+
+
+def test_set_windows_fan_control_percent_targets_identifier_with_software_mode():
+    calls = []
+
+    def runner(script, *, timeout=8):
+        calls.append((script, timeout))
+        return {"ok": True}
+
+    set_windows_fan_control_percent("/lpc/nct6799d/control/0", 44, runner=runner)
+
+    assert len(calls) == 1
+    script, timeout = calls[0]
+    assert timeout == 20
+    assert "/lpc/nct6799d/control/0" in script
+    assert "SetSoftware(44)" in script
