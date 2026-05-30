@@ -4,7 +4,6 @@ from contextlib import AbstractContextManager
 from collections.abc import Callable
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -87,6 +86,7 @@ from usb9_lcd.gui.asset_page import AssetLibraryPage
 from usb9_lcd.gui.monitor_page import MonitorPage
 from usb9_lcd.gui.lianli_wireless_page import LianLiWirelessPage
 from usb9_lcd.gui.lighting_page import LightingPage
+from usb9_lcd.gui.platform_diagnostics import PlatformDiagnosticsDialog
 from usb9_lcd.gui.preview import fit_preview_geometry
 from usb9_lcd.gui.settings import DEFAULT_SETTINGS_PATH, GuiSettings, load_settings, save_settings
 from usb9_lcd.gui.theme import gui_stylesheet
@@ -95,6 +95,7 @@ from usb9_lcd.image import FitMode, FrameConfig, Rotation, image_to_jpeg_bytes
 from usb9_lcd.monitoring.models import SystemTelemetry
 from usb9_lcd.monitoring.render import render_monitoring_frame, render_monitoring_image
 from usb9_lcd.monitoring.service import collect_system_telemetry
+from usb9_lcd.platforms import current_platform
 from usb9_lcd.render import ImageRenderSettings, render_static_image
 
 
@@ -227,6 +228,7 @@ class MainWindow(QMainWindow):
         self.telemetry_provider = telemetry_provider
         self.asset_library = asset_library or AssetLibrary()
         self.settings = settings or load_settings()
+        self.platform_adapter = current_platform()
         self._lcd_output_lock = threading.Lock()
         self.devices: list[DisplayDevice] = []
         self.image_path: Path | None = None
@@ -248,9 +250,10 @@ class MainWindow(QMainWindow):
         self._telemetry_thread: threading.Thread | None = None
         self._telemetry_result: SystemTelemetry | None = None
         self._telemetry_error: Exception | None = None
-        self._last_uploaded_frame_path = Path(".cache/usb9-lcd/last-frame.bin")
+        self._last_uploaded_frame_path = self.platform_adapter.last_frame_path()
         self._last_uploaded_device: DisplayDevice | None = None
         self._sleep_mode_active = False
+        self._platform_diagnostics_dialog: PlatformDiagnosticsDialog | None = None
         stop_existing_keepalive()
 
         self.setWindowTitle("usb9-lcd")
@@ -433,6 +436,9 @@ class MainWindow(QMainWindow):
         self.sleep_all_off_button.setToolTip("关闭屏幕并尝试关闭灯光（需要 OpenRGB 可用）")
         self.sleep_all_off_button.clicked.connect(self.sleep_all_off)
         layout.addWidget(self.sleep_all_off_button)
+        platform_diagnostics_button = QPushButton("平台诊断")
+        platform_diagnostics_button.clicked.connect(self.open_platform_diagnostics)
+        layout.addWidget(platform_diagnostics_button)
         return top_bar
 
     def _screen_page(self) -> QWidget:
@@ -622,18 +628,27 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("设置已保存")
 
     def clear_gif_cache(self) -> None:
-        cache = Path(".cache/usb9-lcd/gif-preview")
+        cache = self.platform_adapter.gif_preview_cache_dir()
         if cache.exists():
             shutil.rmtree(cache)
         self.statusBar().showMessage("GIF 缓存已清理")
 
     def clear_logs(self) -> None:
-        for log_path in Path("logs").glob("*.log"):
+        for log_path in self.platform_adapter.log_dir().glob("*.log"):
             try:
                 log_path.unlink()
             except OSError:
                 pass
         self.statusBar().showMessage("日志已清理")
+
+    def open_platform_diagnostics(self) -> None:
+        if self._platform_diagnostics_dialog is not None and self._platform_diagnostics_dialog.isVisible():
+            self._platform_diagnostics_dialog.raise_()
+            self._platform_diagnostics_dialog.activateWindow()
+            return
+        self._platform_diagnostics_dialog = PlatformDiagnosticsDialog(self.settings, self)
+        self._platform_diagnostics_dialog.destroyed.connect(lambda: setattr(self, "_platform_diagnostics_dialog", None))
+        self._platform_diagnostics_dialog.show()
 
     def reset_settings_file(self) -> None:
         try:
@@ -1445,29 +1460,26 @@ class MainWindow(QMainWindow):
         )
 
     def run_diagnostics(self) -> None:
-        rows = [
-            self._diagnostic_row("LCD 设备", bool(self.devices), "已发现" if self.devices else "未发现"),
-            self._diagnostic_row(
-                "LCD 写权限",
-                any(device.connection.writable for device in self.devices),
-                "可写" if any(device.connection.writable for device in self.devices) else "不可写，检查 hidraw udev 规则",
-            ),
-            self._diagnostic_row("OpenRGB SDK", self._openrgb_port_open(), "127.0.0.1:6742"),
-            self._diagnostic_row("OpenRGB udev rules", Path("/etc/udev/rules.d/60-openrgb.rules").is_file(), "/etc/udev/rules.d/60-openrgb.rules"),
-            self._diagnostic_row("NVIDIA telemetry", shutil.which("nvidia-smi") is not None, "nvidia-smi"),
-            self._diagnostic_row("CPU hwmon", any(Path("/sys/class/hwmon").glob("hwmon*/temp*_input")), "/sys/class/hwmon"),
-        ]
+        items = self.platform_adapter.diagnostic_items(
+            openrgb_path=self.settings.openrgb.app_path,
+            openrgb_host=self.settings.openrgb.host,
+            openrgb_port=self.settings.openrgb.port,
+        )
+        rows = [self._diagnostic_row(item.label, item.ok, item.detail) for item in items]
+        rows.extend(
+            [
+                self._diagnostic_row("LCD 设备", bool(self.devices), "已发现" if self.devices else "未发现"),
+                self._diagnostic_row(
+                    "LCD 写权限",
+                    any(device.connection.writable for device in self.devices),
+                    "可写" if any(device.connection.writable for device in self.devices) else "不可写，检查 USB/HID 权限",
+                ),
+            ]
+        )
         self.diagnostics_text.setPlainText("\n".join(rows))
 
     def _diagnostic_row(self, label: str, ok: bool, detail: str) -> str:
         return f"{'OK' if ok else 'WARN'}  {label}: {detail}"
-
-    def _openrgb_port_open(self) -> bool:
-        try:
-            with socket.create_connection(("127.0.0.1", 6742), timeout=0.2):
-                return True
-        except OSError:
-            return False
 
     def _friendly_error(self, error: Exception) -> str:
         if isinstance(error, PermissionError):

@@ -5,9 +5,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from usb9_lcd.platforms import current_platform
 
-DEFAULT_SETTINGS_PATH = Path.home() / ".config" / "usb9-lcd" / "settings.json"
-DEFAULT_OPENRGB_PATH = Path.home() / ".local" / "share" / "openrgb-usb9" / "squashfs-root" / "AppRun"
+_PLATFORM = current_platform()
+DEFAULT_SETTINGS_PATH = _PLATFORM.settings_path()
+DEFAULT_OPENRGB_PATH = _PLATFORM.default_openrgb_path()
 CONFIG_VERSION = 2
 
 

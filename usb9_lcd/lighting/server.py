@@ -5,12 +5,21 @@ import subprocess
 import time
 from pathlib import Path
 
+from usb9_lcd.platforms import current_platform
+
 
 class OpenRgbServerManager:
-    def __init__(self, app_path: str | Path, host: str = "127.0.0.1", port: int = 6742) -> None:
+    def __init__(
+        self,
+        app_path: str | Path,
+        host: str = "127.0.0.1",
+        port: int = 6742,
+        log_path: str | Path | None = None,
+    ) -> None:
         self.app_path = Path(app_path)
         self.host = host
         self.port = port
+        self.log_path = Path(log_path) if log_path is not None else current_platform().openrgb_server_log_path()
         self.process: subprocess.Popen | None = None
 
     def is_running(self) -> bool:
@@ -26,7 +35,7 @@ class OpenRgbServerManager:
         if not self.app_path.is_file():
             raise FileNotFoundError(f"OpenRGB executable not found: {self.app_path}")
 
-        log_path = self.app_path.parent.parent / "openrgb-server.log"
+        log_path = self.log_path
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log = log_path.open("ab")
         self.process = subprocess.Popen(

@@ -17,6 +17,7 @@ from usb9_lcd.gui.monitor_page import (
     format_gpu_detail,
     format_gpu_temperature,
 )
+from usb9_lcd.gui.platform_diagnostics import PlatformDiagnosticsDialog, render_platform_diagnostic_report
 
 __all__ = [
     "AssetLibraryPage",
@@ -28,8 +29,10 @@ __all__ = [
     "LianLiWirelessTestDialog",
     "LightingPage",
     "MonitorPage",
+    "PlatformDiagnosticsDialog",
     "QColorDialog",
     "QFileDialog",
+    "render_platform_diagnostic_report",
     "save_settings",
     "scan_known_usb_devices",
     "format_cpu_temperature",

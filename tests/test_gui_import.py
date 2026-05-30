@@ -1886,6 +1886,30 @@ def test_main_window_fan_navigation_loads_readonly_without_driver_probe(monkeypa
     app.quit()
 
 
+def test_main_window_opens_platform_diagnostics_window():
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    from usb9_lcd.gui.settings import GuiSettings
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+        settings=GuiSettings(),
+    )
+
+    button = next(button for button in window.findChildren(QPushButton) if button.text() == "平台诊断")
+    button.click()
+
+    assert window._platform_diagnostics_dialog is not None
+    assert "平台诊断" in window._platform_diagnostics_dialog.report_text.toPlainText()
+
+    window.close()
+    app.quit()
+
+
 def test_main_window_home_fan_shortcut_uses_interactive_driver_probe(monkeypatch):
     from PySide6.QtCore import Signal
     from PySide6.QtWidgets import QApplication, QPushButton, QWidget

@@ -7,11 +7,12 @@ import time
 from pathlib import Path
 
 from usb9_lcd.device import choose_interfaces, discover_from_sysfs
+from usb9_lcd.platforms import current_platform
 from usb9_lcd.protocol import LcdProtocol
 from usb9_lcd.transport import HidrawTransport
 
 
-DEFAULT_PID_FILE = Path(".cache/usb9-lcd/keepalive.pid")
+DEFAULT_PID_FILE = current_platform().keepalive_pid_path()
 
 
 def stop_existing_keepalive(pid_file: Path = DEFAULT_PID_FILE) -> None:

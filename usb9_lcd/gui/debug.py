@@ -11,6 +11,8 @@ from typing import Any
 
 from PySide6.QtCore import QtMsgType, qInstallMessageHandler, qVersion
 
+from usb9_lcd.platforms import current_platform
+
 try:  # pragma: no cover - version attributes are integration details
     import PySide6
     import shiboken6
@@ -25,7 +27,7 @@ _QT_HANDLER_INSTALLED = False
 
 
 def configure_debug_logging(log_path: str | Path | None = None) -> Path:
-    path = Path(log_path or os.environ.get("USB9_LCD_LOG", "logs/usb9-lcd-gui.log"))
+    path = Path(log_path or os.environ.get("USB9_LCD_LOG", current_platform().gui_log_path()))
     path.parent.mkdir(parents=True, exist_ok=True)
 
     global _LOG_FILE

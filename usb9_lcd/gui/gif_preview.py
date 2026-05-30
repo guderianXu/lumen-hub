@@ -11,6 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageSequence
 
 from usb9_lcd.gui.debug import log_event
+from usb9_lcd.platforms import current_platform
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ class GifPreviewFrame:
 
 def decode_gif_preview_frames(
     path: Path,
-    cache_root: Path = Path(".cache/usb9-lcd/gif-preview"),
+    cache_root: Path = current_platform().gif_preview_cache_dir(),
     *,
     max_frames: int = 90,
     width: int = 280,

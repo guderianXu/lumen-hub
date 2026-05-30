@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lumen-hub"
 version = "0.1.0"
-description = "Linux hardware control center for LCD screens, OpenRGB lighting, PWM fans, and LIAN LI wireless devices"
+description = "Linux and Windows hardware control center for LCD screens, OpenRGB lighting, PWM fans, and LIAN LI wireless devices"
 requires-python = ">=3.10"
 dependencies = [
   "openrgb-python>=0.3.6",
