@@ -4,6 +4,7 @@ import json
 
 from usb9_lcd.gui.platform_diagnostics import render_platform_diagnostic_report
 from usb9_lcd.gui.settings import GuiSettings
+from usb9_lcd.lighting.server import resolve_openrgb_app_path
 from usb9_lcd.platforms.linux import LinuxPlatformAdapter
 from usb9_lcd.platforms.windows import WindowsPlatformAdapter
 
@@ -49,3 +50,16 @@ def test_platform_diagnostic_report_includes_openrgb_and_paths(tmp_path, monkeyp
     assert "平台诊断" in report
     assert "OpenRGB 路径" in report
     assert str(tmp_path / "state" / "lumen-hub" / "logs") in report
+
+
+def test_openrgb_server_uses_installed_candidate_when_configured_path_is_missing(tmp_path):
+    missing = tmp_path / "missing" / "OpenRGB.exe"
+    installed = tmp_path / "installed" / "OpenRGB.exe"
+    installed.parent.mkdir()
+    installed.write_text("placeholder", encoding="utf-8")
+
+    class Adapter:
+        def openrgb_candidate_paths(self):
+            return [missing, installed]
+
+    assert resolve_openrgb_app_path(missing, Adapter()) == installed
