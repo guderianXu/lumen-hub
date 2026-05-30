@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -26,7 +26,17 @@ class CpuTelemetry:
 
 
 @dataclass(frozen=True)
+class FanTelemetry:
+    name: str
+    rpm: int | None = None
+    percent: float | None = None
+    available: bool = False
+    error: str = ""
+
+
+@dataclass(frozen=True)
 class SystemTelemetry:
     cpu: CpuTelemetry
     gpu: GpuTelemetry
     captured_at: datetime
+    fans: list[FanTelemetry] = field(default_factory=list)

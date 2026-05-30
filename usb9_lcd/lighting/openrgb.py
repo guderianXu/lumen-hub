@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Any
+
+from .effects import effect_aliases, effect_uses_color
+from .profiles import mode_aliases_for_device, profile_for_device_name
+
+
+STATIC_COLOR_REAPPLY_DELAY_SECONDS = 0.08
+STATIC_COLOR_REAPPLY_COUNT = 4
 
 
 class OpenRgbUnavailableError(RuntimeError):
@@ -73,18 +81,47 @@ class OpenRgbLightingController:
         client = self._require_client()
         target = self._target_by_id(settings.target_id)
         device = client.devices[target.device_index]
+        device_name = str(getattr(device, "name", ""))
+        device_profile = profile_for_device_name(device_name)
 
         if settings.effect == "off":
             self._apply_off(device, target, settings.save)
             return
 
-        self._resize_zone_if_needed(device, target, settings.zone_size)
+        zone_size = settings.zone_size
+        if (
+            zone_size is None
+            and settings.effect in {"static", "direct"}
+            and target.zone_index is None
+            and device_profile.static_strategy == "whole-device-static-all-zones-same-color"
+        ):
+            zone_size = device_profile.static_zone_size
+
+        self._resize_zone_if_needed(device, target, zone_size)
         color = self._rgb_color(settings.color, settings.brightness_percent)
-        self._apply_mode(device, settings.effect, color, settings.speed_percent, settings.brightness_percent, settings.save)
-        if target.zone_index is None:
-            device.set_color(color, fast=True)
-        else:
-            device.zones[target.zone_index].set_color(color, fast=True)
+        mode_result = self._apply_mode(
+            device,
+            target,
+            settings.effect,
+            color,
+            settings.speed_percent,
+            settings.brightness_percent,
+            settings.save,
+        )
+        if self._should_apply_explicit_color(settings.effect, mode_result):
+            if settings.effect in {"static", "direct"} and target.zone_index is None and zone_size:
+                self._apply_stable_static_color(
+                    device,
+                    target,
+                    color,
+                    zone_size,
+                    max(STATIC_COLOR_REAPPLY_COUNT, device_profile.static_reapply_count),
+                )
+            else:
+                self._set_target_color(device, target, color, zone_size)
+                if settings.effect in {"static", "direct"} and zone_size:
+                    time.sleep(STATIC_COLOR_REAPPLY_DELAY_SECONDS)
+                    self._set_target_color(device, target, color, zone_size)
 
     def _build_targets(self) -> list[LightingTarget]:
         client = self._require_client()
@@ -115,24 +152,106 @@ class OpenRgbLightingController:
     def _apply_mode(
         self,
         device: Any,
+        target: LightingTarget,
         effect: str,
         color: Any,
         speed_percent: int,
         brightness_percent: int,
         save: bool,
-    ) -> None:
-        mode = _find_mode(getattr(device, "modes", []), _mode_aliases(effect))
+    ) -> str:
+        device_name = str(getattr(device, "name", ""))
+        aliases = mode_aliases_for_device(effect, device_name, _mode_aliases(effect))
+        mode = _find_mode(getattr(device, "modes", []), aliases)
         if mode is None:
             if effect in {"static", "direct"} and hasattr(device, "set_custom_mode"):
                 device.set_custom_mode()
-            return
+                return "custom"
+            return "none"
 
         _set_mode_numeric(mode, "speed", "speed_min", "speed_max", speed_percent)
         _set_mode_numeric(mode, "brightness", "brightness_min", "brightness_max", brightness_percent)
-        colors_max = getattr(mode, "colors_max", None)
-        if getattr(mode, "colors", None) is not None and colors_max:
-            mode.colors = [color] * max(1, int(colors_max))
+        mode_specific_color = _set_mode_colors(mode, color)
         device.set_mode(mode, save=save, force=True)
+        return "mode-color" if mode_specific_color else "mode"
+
+    @staticmethod
+    def _should_apply_explicit_color(effect: str, mode_result: str) -> bool:
+        if mode_result == "none":
+            return True
+        if effect in {"static", "direct"}:
+            return True
+        return effect_uses_color(effect) and mode_result != "mode-color"
+
+    def _set_target_color(
+        self,
+        device: Any,
+        target: LightingTarget,
+        color: Any,
+        zone_size: int | None = None,
+    ) -> None:
+        if target.zone_index is None:
+            applied = False
+            errors: list[Exception] = []
+            try:
+                device.set_color(color, fast=True)
+                applied = True
+            except Exception as error:
+                errors.append(error)
+            for zone in getattr(device, "zones", []):
+                self._resize_zone_object_if_needed(zone, zone_size)
+                set_color = getattr(zone, "set_color", None)
+                if callable(set_color):
+                    try:
+                        set_color(color, fast=True)
+                        applied = True
+                    except Exception as error:
+                        errors.append(error)
+            if not applied and errors:
+                raise errors[0]
+            return
+        self._resize_zone_object_if_needed(device.zones[target.zone_index], zone_size)
+        device.zones[target.zone_index].set_color(color, fast=True)
+
+    def _apply_stable_static_color(
+        self,
+        device: Any,
+        target: LightingTarget,
+        color: Any,
+        zone_size: int,
+        reapply_count: int = STATIC_COLOR_REAPPLY_COUNT,
+    ) -> None:
+        applied = False
+        errors: list[Exception] = []
+        try:
+            device.set_color(color, fast=True)
+            applied = True
+        except Exception as error:
+            errors.append(error)
+
+        zones = list(getattr(device, "zones", []))
+        for _attempt in range(max(1, reapply_count)):
+            for zone in zones:
+                self._resize_zone_object_if_needed(zone, zone_size)
+                set_color = getattr(zone, "set_color", None)
+                if not callable(set_color):
+                    continue
+                try:
+                    set_color(color, fast=True)
+                    applied = True
+                except Exception as error:
+                    errors.append(error)
+            if _attempt < max(1, reapply_count) - 1:
+                time.sleep(STATIC_COLOR_REAPPLY_DELAY_SECONDS)
+
+        if not zones:
+            try:
+                device.set_color(color, fast=True)
+                return
+            except Exception as error:
+                errors.append(error)
+
+        if not applied and errors:
+            raise errors[0]
 
     def _apply_off(self, device: Any, target: LightingTarget, save: bool) -> None:
         mode = _find_mode(getattr(device, "modes", []), ("off",))
@@ -150,13 +269,20 @@ class OpenRgbLightingController:
         if target.zone_index is None or zone_size is None or zone_size <= 0:
             return
         zone = device.zones[target.zone_index]
+        if self._resize_zone_object_if_needed(zone, zone_size):
+            self.refresh()
+
+    @staticmethod
+    def _resize_zone_object_if_needed(zone: Any, zone_size: int | None) -> bool:
+        if zone_size is None or zone_size <= 0:
+            return False
         if len(getattr(zone, "leds", [])) > 0:
-            return
+            return False
         resize = getattr(zone, "resize", None)
         if not callable(resize):
-            return
+            return False
         resize(zone_size)
-        self.refresh()
+        return True
 
     def _target_by_id(self, target_id: str) -> LightingTarget:
         for target in self.targets:
@@ -191,29 +317,44 @@ def _parse_hex_color(value: str) -> tuple[int, int, int]:
 
 
 def _mode_aliases(effect: str) -> tuple[str, ...]:
-    return {
-        "static": ("static", "direct", "custom", "fixed"),
-        "breathing": ("breathing", "breath"),
-        "rainbow": ("rainbow", "spectrum cycle", "spectrum"),
-        "spectrum": ("spectrum cycle", "spectrum", "rainbow"),
-        "chase": ("chase", "chase fade"),
-        "star": ("star", "starry night", "sparkle"),
-        "direct": ("direct", "custom"),
-        "off": ("off", "static", "direct"),
-    }.get(effect, (effect,))
+    return effect_aliases(effect)
 
 
 def _find_mode(modes: list[Any], aliases: tuple[str, ...]) -> Any | None:
     normalized = [alias.lower() for alias in aliases]
-    for mode in modes:
-        name = str(getattr(mode, "name", "")).lower()
-        if name in normalized:
-            return mode
-    for mode in modes:
-        name = str(getattr(mode, "name", "")).lower()
-        if any(alias in name for alias in normalized):
-            return mode
+    named_modes = [(str(getattr(mode, "name", "")).lower(), mode) for mode in modes]
+    for alias in normalized:
+        for name, mode in named_modes:
+            if name == alias:
+                return mode
+    for alias in normalized:
+        for name, mode in named_modes:
+            if alias in name:
+                return mode
     return None
+
+
+def _set_mode_colors(mode: Any, color: Any) -> bool:
+    if not _mode_uses_specific_color(mode):
+        return False
+    colors_max = getattr(mode, "colors_max", None)
+    colors_min = getattr(mode, "colors_min", None)
+    try:
+        count = int(colors_max if colors_max is not None else colors_min)
+    except (TypeError, ValueError):
+        count = 1
+    mode.colors = [color] * max(1, count)
+    return True
+
+
+def _mode_uses_specific_color(mode: Any) -> bool:
+    color_mode = getattr(mode, "color_mode", None)
+    if color_mode is None:
+        return False
+    value = getattr(color_mode, "value", color_mode)
+    if value == 2:
+        return True
+    return str(color_mode).lower().endswith("mode_specific")
 
 
 def _set_mode_numeric(mode: Any, attr: str, min_attr: str, max_attr: str, percent: int) -> None:

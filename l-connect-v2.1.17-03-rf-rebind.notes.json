@@ -1,0 +1,78 @@
+{
+  "operation": "windows-capture-note",
+  "schema_version": "lianli-windows-capture-note/v1",
+  "version": "2.1.17",
+  "capture_base": "l-connect-v2.1.17",
+  "scenario_id": "rf-rebind",
+  "capture_file": "l-connect-v2.1.17-03-rf-rebind.pcapng",
+  "captured_at": "",
+  "operator": "",
+  "environment": "auto",
+  "lconnect_version": "2.1.17",
+  "usbpcap_interfaces": [
+    "0416:8040",
+    "0416:8041"
+  ],
+  "target_context": {
+    "receiver_mac": "",
+    "master_mac": "",
+    "channel": "",
+    "rx_type": "",
+    "device_type": "",
+    "fan_count": "",
+    "led_count": ""
+  },
+  "expected_parameters": {
+    "pwm_values": "",
+    "fallback_pwm": "",
+    "motherboard_pwm": "",
+    "current_pwm": "",
+    "pre_unbind_pwm": "",
+    "post_bind_pwm": "",
+    "frame_count": "",
+    "interval_ms": "",
+    "effect_index": "",
+    "color": ""
+  },
+  "windows_actions_completed": [
+    {
+      "action": "Start USBPcap capture with the receiver already bound.",
+      "done": false
+    },
+    {
+      "action": "Unbind the target RF receiver in L-Connect.",
+      "done": false
+    },
+    {
+      "action": "Wait for the device list to refresh.",
+      "done": false
+    },
+    {
+      "action": "Bind the receiver back to the same master/controller.",
+      "done": false
+    },
+    {
+      "action": "Apply one manual fan speed after rebinding.",
+      "done": false
+    },
+    {
+      "action": "Stop capture.",
+      "done": false
+    }
+  ],
+  "interface_focus": {},
+  "interface_capture_actions": [],
+  "interface_actions_completed": [],
+  "observations": [],
+  "expected_evidence": [
+    "live-unbind",
+    "receiver snapshot with changed master MAC/bind state",
+    "live-bind",
+    "post-bind live-pwm"
+  ],
+  "status": "needs-action-confirmation",
+  "artifact_capture_context_status": "analysis-error",
+  "artifact_dir": ".cache\\lianli",
+  "capture_note_file": "l-connect-v2.1.17-03-rf-rebind.notes.json",
+  "recommended_save_path": "l-connect-v2.1.17-03-rf-rebind.notes.json"
+}

@@ -34,6 +34,7 @@ from usb9_lcd.lianli.capture import (
     capture_timeline_report_file,
     capture_transport_report_file,
     capture_triage_report_file,
+    capture_unknown_rf_diff_report,
     capture_set_report,
     compare_capture_file,
     linux_control_action_plan_report,
@@ -62,6 +63,9 @@ from usb9_lcd.lianli.readiness import lianli_validation_gate
 from usb9_lcd.lianli.wireless import (
     LianLiWirelessBackend,
     LianLiWirelessError,
+    PyUsbEndpointTransport,
+    RF_SENDER_PID,
+    RF_SENDER_VID,
     WirelessDeviceInfo,
     build_master_query_request,
     build_wireless_list_request,
@@ -320,6 +324,12 @@ def _build_parser() -> argparse.ArgumentParser:
     triage_report.add_argument("--rainbow-frames", type=int, default=3)
     triage_report.add_argument("--interval-ms", type=int, default=40)
     triage_report.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+
+    unknown_rf_diff = subparsers.add_parser(
+        "capture-unknown-rf-diff",
+        help="Compare unknown RF payloads across captures to reverse-engineer new operations",
+    )
+    unknown_rf_diff.add_argument("paths", type=Path, nargs="+")
 
     capture_summary = subparsers.add_parser(
         "summarize-captures",
@@ -591,7 +601,7 @@ def _build_parser() -> argparse.ArgumentParser:
     compare_capture.add_argument("--fallback-pwm", type=int, default=100)
     compare_capture.add_argument("--color", default="0,0,0", help="RGB triple for rgb")
     compare_capture.add_argument("--frame-count", type=int, default=24, help="Frame count for rainbow")
-    compare_capture.add_argument("--interval-ms", type=int, default=50, help="Frame interval for rainbow")
+    compare_capture.add_argument("--interval-ms", type=int, default=60, help="Frame interval for rgb/rainbow")
     compare_capture.add_argument("--led-count", type=int, help="LED count override for rgb/rainbow")
     compare_capture.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
 
@@ -684,6 +694,141 @@ def _build_parser() -> argparse.ArgumentParser:
     windows_note.add_argument("--observation", action="append", default=[])
     windows_note.add_argument("--mark-actions-done", action="store_true")
 
+    windows_checklist = subparsers.add_parser(
+        "windows-capture-checklist",
+        help="Compatibility command: same planning payload as windows-capture-runbook",
+    )
+    windows_checklist.add_argument("path", type=Path, nargs="?", default=Path(".cache/lianli/captures"))
+    windows_checklist.add_argument("--version", default="2.1.17", help="L-Connect version under test")
+    windows_checklist.add_argument("--installer", type=Path, help="Optional local L-Connect installer path")
+    windows_checklist.add_argument("--capture-base", help="Output capture filename prefix")
+    windows_checklist.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Optional directory containing artifact/changelog evidence used to prioritize tasks",
+    )
+    windows_checklist.add_argument(
+        "--environment",
+        choices=("auto", "vm", "wine", "docker"),
+        default="auto",
+        help="Environment being considered; VM USB passthrough remains the protocol-capture recommendation",
+    )
+    windows_checklist.add_argument("--experiment-dir", type=Path, help="Attach summarize-experiments output from a Linux validation/experiment directory")
+    windows_checklist.add_argument("--led-count", type=int, default=12)
+    windows_checklist.add_argument("--rainbow-frames", type=int, default=3)
+    windows_checklist.add_argument("--interval-ms", type=int, default=40)
+    windows_checklist.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+    windows_checklist.add_argument("--max-tasks", type=int, help="Return only the first N checklist tasks")
+    windows_checklist.add_argument("--target-context-from", type=Path, help="Compatibility-only placeholder argument")
+
+    windows_queue = subparsers.add_parser(
+        "windows-capture-queue",
+        help="Compatibility command: emit pending sidecar note queue from the runbook",
+    )
+    windows_queue.add_argument("path", type=Path, nargs="?", default=Path(".cache/lianli/captures"))
+    windows_queue.add_argument("--version", default="2.1.17", help="L-Connect version under test")
+    windows_queue.add_argument("--installer", type=Path, help="Optional local L-Connect installer path")
+    windows_queue.add_argument("--capture-base", help="Output capture filename prefix")
+    windows_queue.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Optional directory containing artifact/changelog evidence used to prioritize tasks",
+    )
+    windows_queue.add_argument(
+        "--environment",
+        choices=("auto", "vm", "wine", "docker"),
+        default="auto",
+        help="Environment being considered; VM USB passthrough remains the protocol-capture recommendation",
+    )
+    windows_queue.add_argument("--experiment-dir", type=Path, help="Attach summarize-experiments output from a Linux validation/experiment directory")
+    windows_queue.add_argument("--led-count", type=int, default=12)
+    windows_queue.add_argument("--rainbow-frames", type=int, default=3)
+    windows_queue.add_argument("--interval-ms", type=int, default=40)
+    windows_queue.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+    windows_queue.add_argument("--max-tasks", type=int, help="Return only the first N queue tasks")
+    windows_queue.add_argument("--target-context-from", type=Path, help="Compatibility-only placeholder argument")
+
+    windows_note_batch = subparsers.add_parser(
+        "windows-capture-note-batch",
+        help="Build and optionally write all windows-capture-note payloads from a capture set",
+    )
+    windows_note_batch.add_argument("path", type=Path, nargs="?", default=Path(".cache/lianli/captures"))
+    windows_note_batch.add_argument("--version", default="2.1.17", help="L-Connect version under test")
+    windows_note_batch.add_argument("--capture-base", help="Capture filename prefix")
+    windows_note_batch.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Optional directory containing artifact/changelog evidence used to annotate scenarios",
+    )
+    windows_note_batch.add_argument(
+        "--environment",
+        choices=("auto", "vm", "wine", "docker"),
+        default="auto",
+        help="Environment being considered",
+    )
+    windows_note_batch.add_argument("--led-count", type=int, default=12)
+    windows_note_batch.add_argument("--rainbow-frames", type=int, default=3)
+    windows_note_batch.add_argument("--interval-ms", type=int, default=40)
+    windows_note_batch.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+    windows_note_batch.add_argument("--max-tasks", type=int, help="Generate only the first N notes")
+    windows_note_batch.add_argument("--write-files", action="store_true", help="Persist generated notes to recommended_save_path")
+    windows_note_batch.add_argument("--target-context-from", type=Path, help="Compatibility-only placeholder argument")
+
+    windows_note_update = subparsers.add_parser(
+        "windows-capture-note-update",
+        help="Update a windows capture sidecar note in place",
+    )
+    windows_note_update.add_argument("note_path", type=Path)
+    windows_note_update.add_argument("--captured-at")
+    windows_note_update.add_argument("--operator")
+    windows_note_update.add_argument("--environment")
+    windows_note_update.add_argument("--receiver-mac", dest="receiver_mac")
+    windows_note_update.add_argument("--master-mac", dest="master_mac")
+    windows_note_update.add_argument("--channel", type=lambda value: int(value, 0))
+    windows_note_update.add_argument("--rx-type", type=lambda value: int(value, 0))
+    windows_note_update.add_argument("--device-type", type=lambda value: int(value, 0))
+    windows_note_update.add_argument("--fan-count", type=int)
+    windows_note_update.add_argument("--led-count", type=int)
+    windows_note_update.add_argument("--pwm-values")
+    windows_note_update.add_argument("--fallback-pwm")
+    windows_note_update.add_argument("--motherboard-pwm", type=lambda value: int(value, 0))
+    windows_note_update.add_argument("--current-pwm")
+    windows_note_update.add_argument("--pre-unbind-pwm")
+    windows_note_update.add_argument("--post-bind-pwm")
+    windows_note_update.add_argument("--frame-count", type=int)
+    windows_note_update.add_argument("--interval-ms", type=int)
+    windows_note_update.add_argument("--effect-index", type=lambda value: int(value, 0))
+    windows_note_update.add_argument("--color")
+    windows_note_update.add_argument("--observation", action="append", default=[])
+    windows_note_update.add_argument("--mark-actions-done", action="store_true")
+
+    windows_capture_ingest = subparsers.add_parser(
+        "windows-capture-ingest",
+        help="Compatibility command: same as capture-set-report for existing pipeline steps",
+    )
+    windows_capture_ingest.add_argument("path", type=Path)
+    windows_capture_ingest.add_argument("--version", default="2.1.17")
+    windows_capture_ingest.add_argument("--capture-base", default=None)
+    windows_capture_ingest.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Compatibility-only placeholder argument",
+    )
+    windows_capture_ingest.add_argument(
+        "--target-context-from",
+        type=Path,
+        help="Compatibility-only placeholder argument",
+    )
+    windows_capture_ingest.add_argument(
+        "--experiment-dir",
+        type=Path,
+        help="Attach summarize-experiments output from a Linux validation/experiment directory",
+    )
+    windows_capture_ingest.add_argument("--led-count", type=int, default=12)
+    windows_capture_ingest.add_argument("--rainbow-frames", type=int, default=3)
+    windows_capture_ingest.add_argument("--interval-ms", type=int, default=40)
+    windows_capture_ingest.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+
     usb_readiness = subparsers.add_parser(
         "usb-capture-readiness",
         help="Check local USB visibility and next steps for L-Wireless capture/control validation",
@@ -757,9 +902,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_target_args(rainbow)
     rainbow.add_argument("--frame-count", type=int, default=24)
-    rainbow.add_argument("--interval-ms", type=int, default=50)
+    rainbow.add_argument("--interval-ms", type=int, default=48)
     rainbow.add_argument("--led-count", type=int)
     rainbow.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+    rainbow.add_argument("--brightness", type=int, default=100)
+    rainbow.add_argument("--direction", choices=("left", "right"), default="left")
 
     lcd = subparsers.add_parser(
         "dry-run-lcd",
@@ -869,10 +1016,25 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     live_rainbow.add_argument("--mac", required=True)
     live_rainbow.add_argument("--frame-count", type=int, default=24)
-    live_rainbow.add_argument("--interval-ms", type=int, default=50)
+    live_rainbow.add_argument("--interval-ms", type=int, default=48)
     live_rainbow.add_argument("--led-count", type=int)
     live_rainbow.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+    live_rainbow.add_argument("--brightness", type=int, default=100)
+    live_rainbow.add_argument("--direction", choices=("left", "right"), default="left")
     _add_write_confirm_arg(live_rainbow)
+
+    live_rainbow_direct = subparsers.add_parser(
+        "live-rainbow-direct",
+        help="Guarded live generated rainbow RGB write using explicit target context and sender only",
+    )
+    _add_target_args(live_rainbow_direct)
+    live_rainbow_direct.add_argument("--frame-count", type=int, default=24)
+    live_rainbow_direct.add_argument("--interval-ms", type=int, default=48)
+    live_rainbow_direct.add_argument("--led-count", type=int)
+    live_rainbow_direct.add_argument("--effect-index", type=lambda value: int(value, 0), default=1)
+    live_rainbow_direct.add_argument("--brightness", type=int, default=100)
+    live_rainbow_direct.add_argument("--direction", choices=("left", "right"), default="left")
+    _add_write_confirm_arg(live_rainbow_direct)
 
     safe_rgb = subparsers.add_parser(
         "safe-rgb-experiment",
@@ -1187,6 +1349,172 @@ def _emit_payload(payload: dict[str, object], save_json: Path | None = None) -> 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _read_json_with_fallback(path: Path) -> object:
+    raw = path.read_bytes()
+    for encoding in ("utf-8", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "gbk", "cp936", "latin1"):
+        try:
+            return json.loads(raw.decode(encoding))
+        except UnicodeDecodeError:
+            continue
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError("unable to decode JSON payload", "", 0)
+
+
+def _trim_task_list(value: list[dict[str, object]], max_tasks: int | None) -> list[dict[str, object]]:
+    if not max_tasks or max_tasks < 0:
+        return value
+    return value[: max_tasks]
+
+
+def _note_target_context(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _normalize_note_action_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _note_context_missing_fields(context: dict[str, object]) -> list[str]:
+    return [
+        field
+        for field in (
+            "receiver_mac",
+            "master_mac",
+            "channel",
+            "rx_type",
+            "device_type",
+            "fan_count",
+            "led_count",
+        )
+        if str(context.get(field) or "") == ""
+    ]
+
+
+def _note_operator_status(payload: dict[str, object]) -> str:
+    context = _note_target_context(payload.get("target_context"))
+    if _note_context_missing_fields(context):
+        return "needs-target-context"
+    windows_actions = _normalize_note_action_list(payload.get("windows_actions_completed"))
+    interface_actions = _normalize_note_action_list(payload.get("interface_actions_completed"))
+    if not windows_actions or any(not bool(item.get("done")) for item in windows_actions):
+        return "needs-action-confirmation"
+    if interface_actions and any(not bool(item.get("done")) for item in interface_actions):
+        return "needs-action-confirmation"
+    return "ready"
+
+
+def _windows_capture_note_update_payload(
+    note_path: Path,
+    *,
+    captured_at: str | None = None,
+    operator: str | None = None,
+    environment: str | None = None,
+    receiver_mac: str | None = None,
+    master_mac: str | None = None,
+    channel: int | str | None = None,
+    rx_type: int | str | None = None,
+    device_type: int | str | None = None,
+    fan_count: int | str | None = None,
+    led_count: int | str | None = None,
+    pwm_values: str | None = None,
+    fallback_pwm: str | None = None,
+    motherboard_pwm: int | str | None = None,
+    current_pwm: str | None = None,
+    pre_unbind_pwm: str | None = None,
+    post_bind_pwm: str | None = None,
+    frame_count: int | str | None = None,
+    interval_ms: int | str | None = None,
+    effect_index: int | str | None = None,
+    color: str | None = None,
+    observations: list[str] | None = None,
+    mark_actions_done: bool = False,
+) -> dict[str, object]:
+    expanded = note_path.expanduser()
+    try:
+        loaded = _read_json_with_fallback(expanded)
+    except (OSError, json.JSONDecodeError) as error:
+        raise LianLiWirelessError(f"failed to load note {expanded}: {error}") from error
+    payload = loaded
+    if not isinstance(payload, dict):
+        raise LianLiWirelessError(f"invalid note payload in {expanded}")
+
+    target_context = _note_target_context(payload.get("target_context"))
+    expected_parameters = payload.get("expected_parameters")
+    if not isinstance(expected_parameters, dict):
+        expected_parameters = {}
+        payload["expected_parameters"] = expected_parameters
+
+    if captured_at is not None:
+        payload["captured_at"] = captured_at
+    if operator is not None:
+        payload["operator"] = operator
+    if environment is not None:
+        payload["environment"] = environment
+
+    if receiver_mac is not None:
+        target_context["receiver_mac"] = receiver_mac
+    if master_mac is not None:
+        target_context["master_mac"] = master_mac
+    if channel is not None:
+        target_context["channel"] = channel
+    if rx_type is not None:
+        target_context["rx_type"] = rx_type
+    if device_type is not None:
+        target_context["device_type"] = device_type
+    if fan_count is not None:
+        target_context["fan_count"] = fan_count
+    if led_count is not None:
+        target_context["led_count"] = led_count
+    payload["target_context"] = target_context
+
+    if pwm_values is not None:
+        expected_parameters["pwm_values"] = pwm_values
+    if fallback_pwm is not None:
+        expected_parameters["fallback_pwm"] = fallback_pwm
+    if motherboard_pwm is not None:
+        expected_parameters["motherboard_pwm"] = str(motherboard_pwm)
+    if current_pwm is not None:
+        expected_parameters["current_pwm"] = current_pwm
+    if pre_unbind_pwm is not None:
+        expected_parameters["pre_unbind_pwm"] = pre_unbind_pwm
+    if post_bind_pwm is not None:
+        expected_parameters["post_bind_pwm"] = post_bind_pwm
+    if frame_count is not None:
+        expected_parameters["frame_count"] = str(frame_count)
+    if interval_ms is not None:
+        expected_parameters["interval_ms"] = str(interval_ms)
+    if effect_index is not None:
+        expected_parameters["effect_index"] = str(effect_index)
+    if color is not None:
+        expected_parameters["color"] = color
+    payload["expected_parameters"] = expected_parameters
+
+    if observations:
+        existing_observations = payload.get("observations")
+        if not isinstance(existing_observations, list):
+            existing_observations = []
+        payload["observations"] = [
+            str(item) for item in existing_observations if isinstance(item, str)
+        ] + [str(item) for item in observations]
+
+    if mark_actions_done:
+        payload["windows_actions_completed"] = [
+            {**dict(item), "done": True}
+            for item in _normalize_note_action_list(payload.get("windows_actions_completed"))
+        ]
+        payload["interface_actions_completed"] = [
+            {**dict(item), "done": True}
+            for item in _normalize_note_action_list(payload.get("interface_actions_completed"))
+        ]
+
+    payload["status"] = _note_operator_status(payload)
+    _write_json(expanded, payload)
+    return {"operation": "windows-capture-note-update", "note_path": str(expanded), "note": payload}
 
 
 def _validation_step(
@@ -2036,6 +2364,145 @@ def main(argv: list[str] | None = None) -> int:
             observations=args.observation,
             mark_actions_done=args.mark_actions_done,
         )
+    elif command == "windows-capture-checklist":
+        payload = windows_capture_runbook(
+            args.path,
+            version=args.version,
+            installer=args.installer,
+            capture_base=args.capture_base,
+            artifact_dir=args.artifact_dir,
+            environment=args.environment,
+            experiment_dir=args.experiment_dir,
+            led_count=args.led_count,
+            rainbow_frames=args.rainbow_frames,
+            interval_ms=args.interval_ms,
+            effect_index=args.effect_index,
+        )
+        payload["operation"] = "windows-capture-checklist"
+        if args.max_tasks is not None:
+            payload["tasks"] = _trim_task_list(payload.get("tasks", []), args.max_tasks)
+            payload["scenario_count"] = len(payload["tasks"])
+    elif command == "windows-capture-queue":
+        runbook_payload = windows_capture_runbook(
+            args.path,
+            version=args.version,
+            installer=args.installer,
+            capture_base=args.capture_base,
+            artifact_dir=args.artifact_dir,
+            environment=args.environment,
+            experiment_dir=args.experiment_dir,
+            led_count=args.led_count,
+            rainbow_frames=args.rainbow_frames,
+            interval_ms=args.interval_ms,
+            effect_index=args.effect_index,
+        )
+        queue = _trim_task_list(
+            runbook_payload.get("capture_note_sidecar_queue", []),
+            args.max_tasks,
+        )
+        payload = {
+            "operation": "windows-capture-queue",
+            "version": str(runbook_payload.get("version") or args.version),
+            "capture_base": str(
+                runbook_payload.get("capture_base")
+                or args.capture_base
+                or f"l-connect-v{args.version}"
+            ),
+            "capture_dir": str(runbook_payload.get("capture_dir") or args.path),
+            "status": str(runbook_payload.get("status") or ""),
+            "next_task": runbook_payload.get("next_task", {}),
+            "capture_note_sidecar_queue": queue,
+            "capture_note_sidecar_command_count": len(queue),
+            "capture_note_sidecar_commands": [
+                str(item.get("capture_note_command") or "")
+                for item in queue
+                if str(item.get("capture_note_command") or "")
+            ],
+        }
+    elif command == "windows-capture-note-batch":
+        runbook = windows_capture_runbook(
+            args.path,
+            version=args.version,
+            installer=None,
+            capture_base=args.capture_base,
+            artifact_dir=args.artifact_dir,
+            environment=args.environment,
+            experiment_dir=None,
+            led_count=args.led_count,
+            rainbow_frames=args.rainbow_frames,
+            interval_ms=args.interval_ms,
+            effect_index=args.effect_index,
+        )
+        tasks = _trim_task_list(runbook.get("tasks", []), args.max_tasks)
+        notes: list[dict[str, object]] = []
+        for task in tasks:
+            scenario_id = str(task.get("id") or "")
+            capture_file = str(task.get("capture_file") or "")
+            if not scenario_id:
+                continue
+            note = windows_capture_note(
+                scenario_id,
+                version=args.version,
+                capture_base=args.capture_base,
+                capture_file=capture_file,
+                artifact_dir=args.artifact_dir,
+                environment=args.environment,
+            )
+            if args.write_files:
+                note_path = Path(str(note.get("recommended_save_path") or ""))
+                if note_path:
+                    _write_json(note_path, note)
+            notes.append(note)
+        payload = {
+            "operation": "windows-capture-note-batch",
+            "version": str(runbook.get("version") or args.version),
+            "capture_base": str(
+                runbook.get("capture_base")
+                or args.capture_base
+                or f"l-connect-v{args.version}"
+            ),
+            "capture_dir": str(runbook.get("capture_dir") or args.path),
+            "note_count": len(notes),
+            "write_files": bool(args.write_files),
+            "notes": notes,
+        }
+    elif command == "windows-capture-note-update":
+        payload = _windows_capture_note_update_payload(
+            args.note_path,
+            captured_at=args.captured_at,
+            operator=args.operator,
+            environment=args.environment,
+            receiver_mac=args.receiver_mac,
+            master_mac=args.master_mac,
+            channel=args.channel,
+            rx_type=args.rx_type,
+            device_type=args.device_type,
+            fan_count=args.fan_count,
+            led_count=args.led_count,
+            pwm_values=args.pwm_values,
+            fallback_pwm=args.fallback_pwm,
+            motherboard_pwm=args.motherboard_pwm,
+            current_pwm=args.current_pwm,
+            pre_unbind_pwm=args.pre_unbind_pwm,
+            post_bind_pwm=args.post_bind_pwm,
+            frame_count=args.frame_count,
+            interval_ms=args.interval_ms,
+            effect_index=args.effect_index,
+            color=args.color,
+            observations=args.observation,
+            mark_actions_done=args.mark_actions_done,
+        )
+    elif command == "windows-capture-ingest":
+        payload = capture_set_report(
+            args.path,
+            version=args.version,
+            capture_base=args.capture_base,
+            experiment_dir=args.experiment_dir,
+            led_count=args.led_count,
+            rainbow_frames=args.rainbow_frames,
+            interval_ms=args.interval_ms,
+            effect_index=args.effect_index,
+        )
     elif command == "analyze-capture":
         payload = analyze_capture_file(args.path)
     elif command == "capture-replay-plan":
@@ -2069,6 +2536,8 @@ def main(argv: list[str] | None = None) -> int:
             interval_ms=args.interval_ms,
             effect_index=args.effect_index,
         )
+    elif command == "capture-unknown-rf-diff":
+        payload = capture_unknown_rf_diff_report(args.paths)
     elif command == "summarize-captures":
         payload = summarize_capture_dir(args.path)
     elif command == "capture-set-report":
@@ -2346,6 +2815,8 @@ def main(argv: list[str] | None = None) -> int:
             interval_ms=interval_ms,
             effect_index=args.effect_index,
             led_count=args.led_count,
+            brightness=args.brightness,
+            direction=args.direction,
         )
         led_count = args.led_count if args.led_count is not None else infer_led_count(target)
         payload = {
@@ -2354,6 +2825,8 @@ def main(argv: list[str] | None = None) -> int:
             "led_count": led_count,
             "frame_count": frame_count,
             "interval_ms": interval_ms,
+            "brightness": args.brightness,
+            "direction": args.direction,
             **_packet_summary(packets),
         }
     elif command == "dry-run-lcd":
@@ -2483,6 +2956,8 @@ def main(argv: list[str] | None = None) -> int:
             interval_ms=args.interval_ms,
             effect_index=args.effect_index,
             led_count=args.led_count,
+            brightness=args.brightness,
+            direction=args.direction,
         )
         after_payload = _snapshot_payload_from_backend(backend)
         payload = {
@@ -2490,11 +2965,45 @@ def main(argv: list[str] | None = None) -> int:
             "target": target.mac,
             "frame_count": args.frame_count,
             "interval_ms": args.interval_ms,
+            "brightness": args.brightness,
+            "direction": args.direction,
             "led_count": led_count,
             "effect_index": args.effect_index,
             "packets_written": packets_written,
             "before": _wireless_device_payload(target),
             "after": after_payload,
+        }
+    elif command == "live-rainbow-direct":
+        _require_write_confirmation(args)
+        target = _fake_target(args)
+        led_count = _rainbow_led_count(args, target)
+        sender = PyUsbEndpointTransport(RF_SENDER_VID, RF_SENDER_PID)
+        try:
+            backend = LianLiWirelessBackend(sender=sender)
+            packets_written = backend.send_rainbow_rgb(
+                target,
+                frame_count=args.frame_count,
+                interval_ms=args.interval_ms,
+                effect_index=args.effect_index,
+                led_count=args.led_count,
+                brightness=args.brightness,
+                direction=args.direction,
+            )
+        finally:
+            sender.close()
+        payload = {
+            "operation": "live-rainbow-direct",
+            "target": target.mac,
+            "master_mac": target.master_mac,
+            "channel": target.channel,
+            "rx_type": target.rx_type,
+            "frame_count": args.frame_count,
+            "interval_ms": args.interval_ms,
+            "brightness": args.brightness,
+            "direction": args.direction,
+            "led_count": led_count,
+            "effect_index": args.effect_index,
+            "packets_written": packets_written,
         }
     elif command == "safe-rgb-experiment":
         payload = _safe_rgb_experiment_payload(args)

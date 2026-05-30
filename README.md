@@ -122,6 +122,33 @@ On this machine the installed rule is:
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1c7b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 ```
 
+## LIAN LI reverse workflow (cross-platform probe entrypoint)
+
+If you are working on LIAN LI reverse packets and Linux-side matching, use the project-local probe wrapper to avoid `usb9_lcd` import/path issues:
+
+```powershell
+# PowerShell / Windows
+cd .\scripts
+.\lianli-wireless-probe.ps1 scan
+.\lianli-wireless-probe.ps1 usb-capture-readiness
+.\lianli-wireless-probe.ps1 validate-readonly --output-dir .cache\lianli\validation-live
+```
+
+```bash
+# Linux / bash
+cd ./scripts
+./lianli-wireless-probe.sh scan
+./lianli-wireless-probe.sh usb-capture-readiness
+./lianli-wireless-probe.sh validate-readonly --output-dir .cache/lianli/validation-live
+```
+
+For Windows USBPcap capture generation, continue with:
+
+```powershell
+cd ..\lumen-hub
+.\scripts\lianli-reverse-operator-plan.ps1 -Run
+```
+
 ## Hardware Notes
 
 - `python -m usb9_lcd detect` found the ASUS LCD at `/dev/hidraw10` and `/dev/hidraw11`.

@@ -13,7 +13,7 @@ from typing import cast
 from weakref import ref
 
 from PIL import Image
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QComboBox,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QStackedWidget,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -42,9 +43,50 @@ from usb9_lcd.assets import AssetLibrary
 from usb9_lcd.drivers import AsusLcIiiDriver, DisplayDriver
 from usb9_lcd.drivers.base import DisplayDevice, PixelFormat
 from usb9_lcd.gui.debug import log_event, log_exception
-from usb9_lcd.gui.fan_host import FanControlHostPage
+try:
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+except Exception as fan_host_import_error:  # noqa: BLE001 - keep the GUI usable on Windows if Linux fan page is unavailable.
+    FAN_HOST_IMPORT_ERROR = fan_host_import_error
+
+    class FanControlHostPage(QWidget):
+        status_changed = Signal(str)
+
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            super().__init__()
+            self._error = FAN_HOST_IMPORT_ERROR
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(24, 22, 24, 24)
+            title = QLabel("Linux fan control unavailable on this platform")
+            title.setObjectName("PageTitle")
+            message = QLabel(
+                "The Linux PWM fan control page could not be loaded. "
+                "Other Windows-compatible pages, including LIAN LI tooling, remain available."
+            )
+            message.setWordWrap(True)
+            details = QTextEdit()
+            details.setReadOnly(True)
+            details.setPlainText(str(self._error))
+            layout.addWidget(title)
+            layout.addWidget(message)
+            layout.addWidget(details, 1)
+            layout.addStretch(1)
+
+        def home_status_text(self) -> str:
+            return "Fan page unavailable on Windows"
+
+        def load_fan_control(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            self.status_changed.emit(self.home_status_text())
+
+        def reload_fan_control(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            self.load_fan_control(*args, **kwargs)
+
+        def release(self) -> None:
+            return None
 from usb9_lcd.gui.home import ControlCenterPage
-from usb9_lcd.gui.pages import AssetLibraryPage, LianLiWirelessPage, LightingPage, MonitorPage
+from usb9_lcd.gui.asset_page import AssetLibraryPage
+from usb9_lcd.gui.monitor_page import MonitorPage
+from usb9_lcd.gui.lianli_wireless_page import LianLiWirelessPage
+from usb9_lcd.gui.lighting_page import LightingPage
 from usb9_lcd.gui.preview import fit_preview_geometry
 from usb9_lcd.gui.settings import DEFAULT_SETTINGS_PATH, GuiSettings, load_settings, save_settings
 from usb9_lcd.gui.theme import gui_stylesheet
@@ -203,6 +245,9 @@ class MainWindow(QMainWindow):
         self._monitor_error: str | None = None
         self._monitor_frame_count = 0
         self._monitor_presented_frame_count = 0
+        self._telemetry_thread: threading.Thread | None = None
+        self._telemetry_result: SystemTelemetry | None = None
+        self._telemetry_error: Exception | None = None
         self._last_uploaded_frame_path = Path(".cache/usb9-lcd/last-frame.bin")
         self._last_uploaded_device: DisplayDevice | None = None
         self._sleep_mode_active = False
@@ -215,7 +260,7 @@ class MainWindow(QMainWindow):
         self.navigation = QListWidget()
         self.navigation.setObjectName("SideNav")
         self.navigation.setFixedWidth(196)
-        for label in ("首页", "监控", "风扇", "灯效", "素材库", "上传", "设备", "联力无线", "设置"):
+        for label in ("首页", "屏幕", "风扇", "灯效", "设备", "联力无线", "设置"):
             self.navigation.addItem(QListWidgetItem(label))
 
         self.pages = QStackedWidget()
@@ -271,22 +316,23 @@ class MainWindow(QMainWindow):
         )
         self.asset_list_text = self.asset_page.asset_list_text
         self.asset_links_text = self.asset_page.asset_links_text
+        self.screen_page = self._screen_page()
         self.fan_page = FanControlHostPage(
             auto_load=False,
             auto_grant_pwm_permissions=False,
             auto_enable_pwm_control=False,
         )
-        self.lianli_page = LianLiWirelessPage(require_write_gate=True)
+        self.lianli_page = LianLiWirelessPage(settings=self.settings)
         self.page_indexes = {
             "home": 0,
+            "screen": 1,
             "monitor": 1,
+            "assets": 1,
             "fan": 2,
             "lighting": 3,
-            "assets": 4,
-            "upload": 5,
-            "device": 6,
-            "lianli": 7,
-            "settings": 8,
+            "device": 4,
+            "lianli": 5,
+            "settings": 6,
         }
         self.home_page = ControlCenterPage(
             self._navigate_to_page,
@@ -302,11 +348,9 @@ class MainWindow(QMainWindow):
         self.home_page.update_lighting_status(self.lighting_page.home_status_text())
         self.home_page.update_lianli_status(self.lianli_page.home_status_text())
         self.pages.addWidget(_scrollable_page(self.home_page))
-        self.pages.addWidget(_scrollable_page(self.monitor_page))
+        self.pages.addWidget(_scrollable_page(self.screen_page))
         self.pages.addWidget(_scrollable_page(self.fan_page))
         self.pages.addWidget(_scrollable_page(self.lighting_page))
-        self.pages.addWidget(_scrollable_page(self.asset_page))
-        self.pages.addWidget(_scrollable_page(self._upload_page()))
         self.pages.addWidget(_scrollable_page(self._device_page()))
         self.pages.addWidget(_scrollable_page(self.lianli_page))
         self.pages.addWidget(_scrollable_page(self._settings_page()))
@@ -333,6 +377,9 @@ class MainWindow(QMainWindow):
         self.telemetry_timer = QTimer(self)
         self.telemetry_timer.setInterval(2000)
         self.telemetry_timer.timeout.connect(self.request_telemetry_refresh)
+        self.telemetry_poll_timer = QTimer(self)
+        self.telemetry_poll_timer.setInterval(100)
+        self.telemetry_poll_timer.timeout.connect(self._poll_telemetry_worker)
         self.animation_timer = QTimer(self)
         self.animation_timer.setInterval(250)
         self.animation_timer.timeout.connect(self._poll_animation_worker)
@@ -346,6 +393,10 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.refresh_assets)
 
     def _navigate_to_page(self, page: str) -> None:
+        tab_indexes = {"monitor": 0, "assets": 1}
+        if page in tab_indexes and hasattr(self, "screen_tabs"):
+            self.screen_tabs.setCurrentIndex(tab_indexes[page])
+            page = "screen"
         index = self.page_indexes.get(page, -1)
         if 0 <= index < self.pages.count():
             self.navigation.setCurrentRow(index)
@@ -379,12 +430,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.device_summary_label)
         self.sleep_all_off_button = QPushButton("睡眠全关")
         self.sleep_all_off_button.setObjectName("DangerButton")
-        self.sleep_all_off_button.setToolTip("停止实时屏幕内容，上传黑屏帧，并关闭 OpenRGB 灯光")
+        self.sleep_all_off_button.setToolTip("关闭屏幕并尝试关闭灯光（需要 OpenRGB 可用）")
         self.sleep_all_off_button.clicked.connect(self.sleep_all_off)
         layout.addWidget(self.sleep_all_off_button)
         return top_bar
 
-    def _upload_page(self) -> QWidget:
+    def _screen_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(24, 22, 24, 24)
@@ -392,87 +443,76 @@ class MainWindow(QMainWindow):
 
         header_row = QHBoxLayout()
         title_box = QVBoxLayout()
-        header = QLabel("屏幕内容")
+        header = QLabel("USB9 屏幕")
         header.setObjectName("PageTitle")
-        subtitle = QLabel("图片、动图和监控画面都会按当前设备尺寸与协议生成上传帧")
+        subtitle = QLabel("集中管理 LCD 设备、硬件监控画面和本地图片/GIF 素材")
         subtitle.setObjectName("PageSubtitle")
         title_box.addWidget(header)
         title_box.addWidget(subtitle)
         header_row.addLayout(title_box, 1)
-
         refresh_button = QPushButton("刷新设备")
         refresh_button.clicked.connect(self.refresh_devices)
         header_row.addWidget(refresh_button)
         layout.addLayout(header_row)
 
-        body = QHBoxLayout()
-        body.setSpacing(16)
+        device_panel = QFrame()
+        device_panel.setObjectName("MetricCard")
+        device_layout = QGridLayout(device_panel)
+        device_layout.setContentsMargins(14, 12, 14, 12)
+        device_layout.setHorizontalSpacing(10)
+        device_layout.setVerticalSpacing(8)
 
-        control_panel = QFrame()
-        control_panel.setObjectName("MetricCard")
-        control_layout = QVBoxLayout(control_panel)
-        control_layout.setSpacing(12)
-
-        device_title = QLabel("目标设备")
+        device_title = QLabel("LCD 设备与静态图片")
         device_title.setObjectName("SectionLabel")
-        control_layout.addWidget(device_title)
         self.device_combo = QComboBox()
         self.device_combo.currentIndexChanged.connect(self._selected_device_changed)
-        control_layout.addWidget(self.device_combo)
-
         self.device_status_label = QLabel("未发现设备")
         self.device_status_label.setWordWrap(True)
         self.device_status_label.setObjectName("FieldHint")
-        control_layout.addWidget(self.device_status_label)
-
-        asset_title = QLabel("素材")
-        asset_title.setObjectName("SectionLabel")
-        control_layout.addWidget(asset_title)
         self.image_path_label = QLabel("未选择图片")
         self.image_path_label.setWordWrap(True)
         self.image_path_label.setObjectName("FilePathLabel")
         choose_button = QPushButton("选择图片")
         choose_button.clicked.connect(self.choose_image)
-        control_layout.addWidget(choose_button)
-        control_layout.addWidget(self.image_path_label)
 
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         self.fit_combo = QComboBox()
         self.fit_combo.addItems(["cover", "contain", "stretch"])
-        form.addRow("适配", self.fit_combo)
 
         self.rotate_combo = QComboBox()
         self.rotate_combo.addItems(["0", "90", "180", "270"])
         self.rotate_combo.setCurrentText("180")
-        form.addRow("旋转", self.rotate_combo)
 
         self.background_input = QLineEdit("#000000")
-        form.addRow("背景", self.background_input)
-        control_layout.addLayout(form)
 
-        upload_button = QPushButton("上传")
+        upload_button = QPushButton("发送静态图片")
         upload_button.setObjectName("PrimaryButton")
         upload_button.clicked.connect(self.upload_selected_image)
-        control_layout.addWidget(upload_button)
-        control_layout.addStretch(1)
-        body.addWidget(control_panel, 0)
 
-        preview_panel = QWidget()
-        preview_layout = QVBoxLayout(preview_panel)
-        preview_header = QGridLayout()
-        preview_title = QLabel("设备预览")
-        preview_title.setObjectName("SectionLabel")
-        preview_meta = QLabel("按设备比例、方向和屏幕类型自适应")
-        preview_meta.setObjectName("FieldHint")
-        preview_header.addWidget(preview_title, 0, 0)
-        preview_header.addWidget(preview_meta, 1, 0)
-        preview_layout.addLayout(preview_header)
         self.preview = PreviewWidget()
-        preview_layout.addWidget(self.preview, 1)
-        body.addWidget(preview_panel, 1)
 
-        layout.addLayout(body, 1)
+        device_layout.addWidget(device_title, 0, 0, 1, 4)
+        device_layout.addWidget(QLabel("目标设备"), 1, 0)
+        device_layout.addWidget(self.device_combo, 1, 1, 1, 3)
+        device_layout.addWidget(self.device_status_label, 2, 0, 1, 4)
+        device_layout.addWidget(QLabel("图片"), 3, 0)
+        device_layout.addWidget(choose_button, 3, 1)
+        device_layout.addWidget(self.image_path_label, 3, 2, 1, 2)
+        device_layout.addWidget(QLabel("适配"), 4, 0)
+        device_layout.addWidget(self.fit_combo, 4, 1)
+        device_layout.addWidget(QLabel("旋转"), 4, 2)
+        device_layout.addWidget(self.rotate_combo, 4, 3)
+        device_layout.addWidget(QLabel("背景"), 5, 0)
+        device_layout.addWidget(self.background_input, 5, 1)
+        device_layout.addWidget(upload_button, 5, 2, 1, 2)
+        device_layout.addWidget(self.preview, 0, 4, 6, 1)
+        device_layout.setColumnStretch(2, 1)
+        device_layout.setColumnStretch(4, 1)
+        layout.addWidget(device_panel)
+
+        self.screen_tabs = QTabWidget()
+        self.screen_tabs.addTab(self.monitor_page, "监控画面")
+        self.screen_tabs.addTab(self.asset_page, "素材库")
+        layout.addWidget(self.screen_tabs, 1)
         return page
 
     def _device_page(self) -> QWidget:
@@ -618,8 +658,47 @@ class MainWindow(QMainWindow):
         self.update_monitor_preview()
 
     def request_telemetry_refresh(self) -> None:
-        log_event("telemetry_sync_refresh_started")
-        self.refresh_telemetry()
+        thread = self._telemetry_thread
+        if thread is not None and thread.is_alive():
+            log_event("telemetry_refresh_skipped_busy")
+            return
+        log_event("telemetry_async_refresh_started")
+        self._telemetry_result = None
+        self._telemetry_error = None
+        self._telemetry_thread = threading.Thread(
+            target=self._run_telemetry_refresh,
+            name="usb9-lcd-telemetry-refresh",
+            daemon=True,
+        )
+        self._telemetry_thread.start()
+        self.telemetry_poll_timer.start()
+
+    def _run_telemetry_refresh(self) -> None:
+        try:
+            self._telemetry_result = self.telemetry_provider()
+        except Exception as error:  # pragma: no cover - polled by GUI
+            self._telemetry_error = error
+            log_exception("telemetry_async_refresh_failed", error)
+
+    def _poll_telemetry_worker(self) -> None:
+        thread = self._telemetry_thread
+        if thread is not None and thread.is_alive():
+            return
+        self.telemetry_poll_timer.stop()
+        self._telemetry_thread = None
+        if self._telemetry_error is not None:
+            self.latest_telemetry = None
+            self.monitor_page.show_unavailable()
+            self._telemetry_error = None
+            return
+        telemetry = self._telemetry_result
+        self._telemetry_result = None
+        if telemetry is None:
+            return
+        self.latest_telemetry = telemetry
+        self.monitor_page.update_telemetry(telemetry)
+        self.home_page.update_telemetry(telemetry)
+        self.update_monitor_preview()
 
     def _connect_monitor_customization(self) -> None:
         self.monitor_page.monitor_background_combo.currentIndexChanged.connect(self.update_monitor_preview)
@@ -803,6 +882,7 @@ class MainWindow(QMainWindow):
             except Exception as error:  # pragma: no cover - defensive shutdown
                 log_exception(name, error)
         self.telemetry_timer.stop()
+        self.telemetry_poll_timer.stop()
         super().closeEvent(event)
 
     def _remember_uploaded_frame(self, device: DisplayDevice, frame: bytes, *, sleep_mode: bool = False) -> None:

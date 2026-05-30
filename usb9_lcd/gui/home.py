@@ -27,7 +27,7 @@ class ControlCenterPage(QWidget):
         title_box = QVBoxLayout()
         header = QLabel("控制中心")
         header.setObjectName("PageTitle")
-        subtitle = QLabel("整机状态、运行模式和睡前一键关闭集中在这里")
+        subtitle = QLabel("集中查看屏幕、硬件监控、风扇、灯效和联力无线状态")
         subtitle.setObjectName("PageSubtitle")
         title_box.addWidget(header)
         title_box.addWidget(subtitle)
@@ -76,13 +76,13 @@ class ControlCenterPage(QWidget):
         layout.setVerticalSpacing(8)
         title = QLabel("运行模式")
         title.setObjectName("SectionLabel")
-        hint = QLabel("选择当前使用场景，睡眠模式会立即关闭屏幕和灯光")
+        hint = QLabel("选择当前使用场景。睡眠模式会立即关闭屏幕和灯光。")
         hint.setObjectName("FieldHint")
         self.mode_group = QButtonGroup(self)
         modes = (
-            ("日常", "屏幕监控、风扇自动、灯效默认关闭", None),
-            ("游戏", "GPU 联动、性能优先、保留监控画面", None),
-            ("静音", "低噪声策略、灯光低亮度或关闭", None),
+            ("日常", "屏幕监控、风扇自动、灯效默认", None),
+            ("游戏", "性能优先，保留监控画面", None),
+            ("静音", "低噪声策略，降低灯光亮度", None),
             ("睡眠", "黑屏并关闭所有灯光", sleep_all_off),
         )
         layout.addWidget(title, 0, 0)
@@ -104,7 +104,7 @@ class ControlCenterPage(QWidget):
 
     def _set_mode(self, mode: str, action: Callable[[], None] | None = None) -> None:
         self.set_mode_indicator(mode)
-        self.add_event(f"切换到{mode}模式")
+        self.add_event(f"切换到 {mode} 模式")
         if action is not None:
             action()
 
@@ -135,16 +135,15 @@ class ControlCenterPage(QWidget):
         layout.addWidget(title, 0, 0, 1, columns)
         actions: tuple[tuple[str, Callable[[], None], bool], ...] = (
             ("睡眠全关", sleep_all_off, False),
-            ("上传一次", upload_monitor, True),
-            ("打开监控", lambda: navigate("monitor"), True),
+            ("发送监控", upload_monitor, True),
+            ("打开屏幕", lambda: navigate("screen"), True),
+            ("素材库", lambda: navigate("assets"), False),
             ("打开风扇", lambda: navigate("fan"), True),
             ("扫描风扇", load_fan_control, False),
             ("打开灯效", lambda: navigate("lighting"), True),
             ("连接灯效", connect_lighting, False),
-            ("打开上传", lambda: navigate("upload"), True),
-            ("素材库", lambda: navigate("assets"), False),
             ("打开联力", lambda: navigate("lianli"), True),
-            ("读取状态", lambda: navigate("lianli"), False),
+            ("读取联力状态", lambda: navigate("lianli"), False),
         )
         for index, (label, action, primary) in enumerate(actions):
             button = QPushButton(label)
@@ -188,7 +187,7 @@ class ControlCenterPage(QWidget):
             self.device_value.setText("未发现设备")
             return
         writable = "可写" if device.connection.writable else "只读"
-        self.device_value.setText(f"{device.display_name}\n{device.width}x{device.height} · {writable}")
+        self.device_value.setText(f"{device.display_name}\n{device.width}x{device.height} | {writable}")
 
     def update_telemetry(self, telemetry: SystemTelemetry | None) -> None:
         if telemetry is None:

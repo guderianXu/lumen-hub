@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>联力无线灯光 GUI 设计稿</title>
+  <style>
+    :root {
+      --ink: #102033;
+      --muted: #6f7f8f;
+      --line: #d9e4ef;
+      --panel: rgba(255, 255, 255, 0.82);
+      --panel-strong: rgba(255, 255, 255, 0.94);
+      --blue: #04a8ff;
+      --green: #0edb9a;
+      --orange: #ff9c2f;
+      --red: #ff4c61;
+      --shadow: 0 24px 80px rgba(26, 54, 93, 0.18);
+      --radius: 28px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: "Segoe UI Variable", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at 16% 12%, rgba(4, 168, 255, 0.22), transparent 28%),
+        radial-gradient(circle at 85% 8%, rgba(14, 219, 154, 0.22), transparent 24%),
+        linear-gradient(135deg, #eef7ff 0%, #f8fbff 44%, #fff8ee 100%);
+      overflow-x: hidden;
+    }
+
+    .shell {
+      width: min(1440px, calc(100vw - 36px));
+      margin: 28px auto;
+      display: grid;
+      grid-template-columns: 272px 1fr;
+      gap: 22px;
+    }
+
+    .sidebar,
+    .main {
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.78);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(22px);
+    }
+
+    .sidebar {
+      border-radius: var(--radius);
+      padding: 24px;
+      min-height: calc(100vh - 56px);
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 22px;
+      font-weight: 760;
+      letter-spacing: 0.01em;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 15px;
+      background: conic-gradient(from 210deg, #04a8ff, #0edb9a, #ffde59, #ff4c61, #04a8ff);
+      box-shadow: inset 0 0 0 7px rgba(255, 255, 255, 0.78);
+    }
+
+    .nav {
+      display: grid;
+      gap: 10px;
+    }
+
+    .nav button {
+      border: 0;
+      border-radius: 18px;
+      padding: 14px 16px;
+      text-align: left;
+      color: var(--muted);
+      background: transparent;
+      font: inherit;
+      font-weight: 650;
+    }
+
+    .nav button.active {
+      color: #ffffff;
+      background: linear-gradient(135deg, #0a9df0, #11c999);
+      box-shadow: 0 16px 34px rgba(4, 168, 255, 0.26);
+    }
+
+    .side-note {
+      margin-top: auto;
+      padding: 16px;
+      border-radius: 22px;
+      background: rgba(16, 32, 51, 0.06);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .main {
+      border-radius: var(--radius);
+      min-height: calc(100vh - 56px);
+      overflow: hidden;
+    }
+
+    .hero {
+      padding: 28px 32px 24px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.86), rgba(255,255,255,0.56)),
+        repeating-linear-gradient(135deg, rgba(4, 168, 255, 0.06) 0 1px, transparent 1px 16px);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 3vw, 44px);
+      line-height: 1.04;
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 780px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+
+    .connection-pill {
+      display: inline-grid;
+      gap: 4px;
+      min-width: 210px;
+      padding: 14px 16px;
+      border-radius: 22px;
+      color: #ffffff;
+      background: #102033;
+      box-shadow: 0 18px 44px rgba(16, 32, 51, 0.22);
+    }
+
+    .connection-pill small {
+      color: rgba(255, 255, 255, 0.68);
+    }
+
+    .content {
+      padding: 24px 32px 32px;
+      display: grid;
+      grid-template-columns: minmax(520px, 1.25fr) minmax(320px, 0.75fr);
+      gap: 22px;
+    }
+
+    .card {
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      padding: 22px;
+      box-shadow: 0 14px 42px rgba(26, 54, 93, 0.08);
+    }
+
+    .card-title {
+      margin: 0 0 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      font-size: 18px;
+      font-weight: 780;
+    }
+
+    .status {
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: #067a58;
+      background: rgba(14, 219, 154, 0.14);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .target-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .field {
+      padding: 12px 14px;
+      border-radius: 18px;
+      background: rgba(16, 32, 51, 0.045);
+    }
+
+    .field span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .field strong {
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 13px;
+      word-break: break-all;
+    }
+
+    .effect-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .effect {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 15px;
+      background: #ffffff;
+      min-height: 112px;
+      cursor: default;
+      transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+    }
+
+    .effect:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 16px 34px rgba(26, 54, 93, 0.12);
+    }
+
+    .effect.active {
+      border-color: rgba(4, 168, 255, 0.75);
+      box-shadow: 0 18px 44px rgba(4, 168, 255, 0.18);
+    }
+
+    .effect.disabled {
+      opacity: 0.52;
+      background: rgba(255, 255, 255, 0.62);
+    }
+
+    .effect input {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      accent-color: var(--blue);
+    }
+
+    .effect strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    .effect p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .badge {
+      display: inline-block;
+      margin-top: 12px;
+      border-radius: 999px;
+      padding: 5px 8px;
+      color: #ffffff;
+      background: #102033;
+      font-size: 11px;
+      font-weight: 760;
+    }
+
+    .badge.todo {
+      color: #8a5a00;
+      background: rgba(255, 156, 47, 0.18);
+    }
+
+    .controls {
+      display: grid;
+      gap: 18px;
+    }
+
+    .control-line {
+      display: grid;
+      grid-template-columns: 92px 1fr 58px;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-weight: 680;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--blue);
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 6px;
+      border-radius: 18px;
+      background: rgba(16, 32, 51, 0.06);
+    }
+
+    .segmented button,
+    .action-row button,
+    .small-button {
+      border: 0;
+      border-radius: 14px;
+      padding: 11px 14px;
+      font: inherit;
+      font-weight: 760;
+      background: #ffffff;
+      color: var(--ink);
+    }
+
+    .segmented button.active {
+      color: #ffffff;
+      background: var(--ink);
+    }
+
+    .palette {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .swatch {
+      width: 38px;
+      height: 38px;
+      border-radius: 14px;
+      border: 3px solid #ffffff;
+      box-shadow: 0 8px 18px rgba(16, 32, 51, 0.18);
+    }
+
+    .swatch.add {
+      display: grid;
+      place-items: center;
+      color: var(--blue);
+      background: rgba(4, 168, 255, 0.1);
+      border: 1px dashed rgba(4, 168, 255, 0.6);
+      font-weight: 900;
+      box-shadow: none;
+    }
+
+    .rotation-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .selectish {
+      padding: 12px;
+      border-radius: 16px;
+      background: rgba(16, 32, 51, 0.05);
+    }
+
+    .selectish span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 6px;
+    }
+
+    .selectish strong {
+      font-size: 14px;
+    }
+
+    .action-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .action-row button.primary {
+      color: #ffffff;
+      background: linear-gradient(135deg, var(--blue), var(--green));
+      box-shadow: 0 16px 34px rgba(4, 168, 255, 0.24);
+    }
+
+    .action-row button.stop {
+      color: #ffffff;
+      background: var(--red);
+    }
+
+    .preview {
+      position: relative;
+      min-height: 260px;
+      overflow: hidden;
+      color: #ffffff;
+      background: #102033;
+    }
+
+    .fan-ring {
+      position: absolute;
+      inset: 42px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, #102033 0 38%, transparent 39%),
+        conic-gradient(#fe0000, #df1f00, #00fe00, #007f7f, #0000fe, #7f007f, #fe0000);
+      filter: saturate(1.15);
+      animation: spin 4.8s linear infinite;
+    }
+
+    .fan-ring::after {
+      content: "";
+      position: absolute;
+      inset: 28px;
+      border-radius: inherit;
+      border: 18px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .preview-label {
+      position: relative;
+      z-index: 1;
+      margin-top: 202px;
+      text-align: center;
+      font-weight: 780;
+    }
+
+    .log {
+      height: 210px;
+      overflow: auto;
+      padding: 14px;
+      border-radius: 18px;
+      color: #d7f7ff;
+      background: #0d1726;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .log b {
+      color: #5dffcb;
+      font-weight: 700;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @media (max-width: 1080px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        min-height: auto;
+      }
+
+      .content {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .hero,
+      .content {
+        padding-left: 18px;
+        padding-right: 18px;
+      }
+
+      .hero {
+        flex-direction: column;
+      }
+
+      .effect-grid,
+      .target-grid,
+      .rotation-grid,
+      .action-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"></div>
+        <div>Lumen Hub</div>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <button>系统监控</button>
+        <button>普通风扇</button>
+        <button class="active">联力无线灯光</button>
+        <button>屏幕素材</button>
+        <button>设置</button>
+      </nav>
+      <div class="side-note">
+        设计稿：默认使用 direct sender 写入，避免 Windows receiver snapshot 不稳定。未验证的官方灯效先显示为待实现。
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="hero">
+        <div>
+          <h1>联力无线灯光控制</h1>
+          <p class="subtitle">
+            静态色和彩虹已经通过 Windows 实机写入验证。这里先把完整灯效入口、颜色旋转和动画循环控制设计出来，后续每抓完一个官方效果就解锁一个卡片。
+          </p>
+        </div>
+        <div class="connection-pill">
+          <small>当前写入路径</small>
+          <strong>WinUSB direct sender</strong>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="left-column">
+          <article class="card">
+            <h2 class="card-title">目标设备 <span class="status">已验证</span></h2>
+            <div class="target-grid">
+              <div class="field"><span>Target MAC</span><strong>14:55:f9:62:32:e1</strong></div>
+              <div class="field"><span>Master MAC</span><strong>24:69:dd:62:32:dc</strong></div>
+              <div class="field"><span>Channel</span><strong>8</strong></div>
+              <div class="field"><span>RX Type</span><strong>1</strong></div>
+              <div class="field"><span>LED Count</span><strong>26</strong></div>
+              <div class="field"><span>USB Sender</span><strong>0416:8040</strong></div>
+            </div>
+          </article>
+
+          <article class="card" style="margin-top:22px">
+            <h2 class="card-title">灯效选择 <span class="status">单选效果</span></h2>
+            <div class="effect-grid">
+              <label class="effect active">
+                <input type="radio" checked>
+                <strong>彩虹</strong>
+                <p>官方 RGB 帧已解析，支持速度、亮度、方向。</p>
+                <span class="badge">可用</span>
+              </label>
+              <label class="effect">
+                <input type="radio">
+                <strong>静态颜色</strong>
+                <p>任意 RGB、预设色、关灯均已实机验证。</p>
+                <span class="badge">可用</span>
+              </label>
+              <label class="effect">
+                <input type="radio">
+                <strong>颜色旋转</strong>
+                <p>软件帧生成：按颜色队列循环切换或渐变。</p>
+                <span class="badge">可用</span>
+              </label>
+              <label class="effect disabled">
+                <input type="radio" disabled>
+                <strong>渐变彩虹</strong>
+                <p>待抓包确认官方帧形态。</p>
+                <span class="badge todo">待实现</span>
+              </label>
+              <label class="effect disabled">
+                <input type="radio" disabled>
+                <strong>呼吸</strong>
+                <p>将使用颜色队列和亮度曲线。</p>
+                <span class="badge todo">待实现</span>
+              </label>
+              <label class="effect disabled">
+                <input type="radio" disabled>
+                <strong>流星</strong>
+                <p>待确认方向、尾迹长度、速度字段。</p>
+                <span class="badge todo">待实现</span>
+              </label>
+              <label class="effect disabled">
+                <input type="radio" disabled>
+                <strong>跑道</strong>
+                <p>适合用多色追逐帧生成。</p>
+                <span class="badge todo">待实现</span>
+              </label>
+              <label class="effect disabled">
+                <input type="radio" disabled>
+                <strong>星空</strong>
+                <p>待确认随机闪烁是否由主机刷新。</p>
+                <span class="badge todo">待实现</span>
+              </label>
+              <label class="effect disabled">
+                <input type="radio" disabled>
+                <strong>色彩循环</strong>
+                <p>将复用颜色旋转组件。</p>
+                <span class="badge todo">待实现</span>
+              </label>
+              <label class="effect disabled">
+                <input type="radio" disabled>
+                <strong>覆盖周期</strong>
+                <p>疑似官方参数，需要单独抓包。</p>
+                <span class="badge todo">待实现</span>
+              </label>
+              <label class="effect disabled">
+                <input type="radio" disabled>
+                <strong>波浪</strong>
+                <p>待确认波宽、方向、速度关系。</p>
+                <span class="badge todo">待实现</span>
+              </label>
+              <label class="effect">
+                <input type="radio">
+                <strong>关灯</strong>
+                <p>发送静态黑色 RGB。</p>
+                <span class="badge">可用</span>
+              </label>
+            </div>
+          </article>
+        </div>
+
+        <div class="right-column">
+          <article class="card preview">
+            <div class="fan-ring"></div>
+            <div class="preview-label">彩虹预览：速度 75% / 亮度 100% / 左方向</div>
+          </article>
+
+          <article class="card" style="margin-top:22px">
+            <h2 class="card-title">参数</h2>
+            <div class="controls">
+              <div class="control-line">
+                <label>速度</label>
+                <input type="range" min="0" max="100" value="75">
+                <strong>75%</strong>
+              </div>
+              <div class="control-line">
+                <label>亮度</label>
+                <input type="range" min="0" max="100" value="100">
+                <strong>100%</strong>
+              </div>
+              <div>
+                <div class="segmented">
+                  <button class="active">左方向</button>
+                  <button>右方向</button>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card" style="margin-top:22px">
+            <h2 class="card-title">颜色旋转</h2>
+            <div class="palette" aria-label="颜色队列">
+              <div class="swatch" style="background:#fe0000"></div>
+              <div class="swatch" style="background:#00fe00"></div>
+              <div class="swatch" style="background:#0000fe"></div>
+              <div class="swatch" style="background:#ffd60a"></div>
+              <div class="swatch add">+</div>
+            </div>
+            <div class="rotation-grid" style="margin-top:16px">
+              <div class="selectish"><span>旋转模式</span><strong>顺序</strong></div>
+              <div class="selectish"><span>每色停留</span><strong>800 ms</strong></div>
+              <div class="selectish"><span>过渡时间</span><strong>300 ms</strong></div>
+            </div>
+            <div class="action-row">
+              <button>预览包</button>
+              <button>应用一次</button>
+              <button class="primary">开始循环</button>
+              <button class="stop">停止</button>
+            </div>
+          </article>
+
+          <article class="card" style="margin-top:22px">
+            <h2 class="card-title">运行日志</h2>
+            <div class="log">
+              <b>ready</b> target=14:55:f9:62:32:e1 led_count=26<br>
+              <b>info</b> rainbow decoded hash matched official capture<br>
+              <b>write</b> live-rainbow-direct packets_written=20<br>
+              <b>note</b> animation loop required for smoother dynamic playback
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

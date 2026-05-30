@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import site
 from pathlib import Path
 from typing import Any, Iterable, Protocol
+import sys
+import time
 
 
 RF_SENDER_VID = 0x0416
@@ -57,6 +60,80 @@ class WirelessSenderTransport(Protocol):
     def write(self, payload: bytes) -> int: ...
 
     def read(self, size: int) -> bytes: ...
+
+def _resolve_libusb_backend() -> Any | None:
+    try:
+        import usb.backend.libusb1  # type: ignore[import-not-found]
+    except Exception:
+        return None
+
+    try:
+        backend = usb.backend.libusb1.get_backend()  # type: ignore[attr-defined]
+        if backend is not None:
+            return backend
+    except Exception:
+        pass
+
+    candidate_dlls: list[Path] = []
+    try:
+        for site_dir in site.getsitepackages():
+            candidate_dlls.append(Path(site_dir) / "usb1" / "libusb-1.0.dll")
+            candidate_dlls.append(Path(site_dir) / "lib" / "site-packages" / "usb1" / "libusb-1.0.dll")
+    except Exception:
+        pass
+
+    try:
+        user_site = site.getusersitepackages()
+        if user_site:
+            candidate_dlls.append(Path(user_site) / "usb1" / "libusb-1.0.dll")
+    except Exception:
+        pass
+
+    candidate_dlls.append(Path(sys.executable).resolve().parent / "Lib" / "site-packages" / "usb1" / "libusb-1.0.dll")
+    candidate_dlls.append(Path(sys.executable).resolve().parent / "site-packages" / "usb1" / "libusb-1.0.dll")
+
+    seen: set[Path] = set()
+    for dll_path in candidate_dlls:
+        if not dll_path.is_file():
+            continue
+        dll_path = dll_path.resolve()
+        if dll_path in seen:
+            continue
+        seen.add(dll_path)
+        try:
+            backend = usb.backend.libusb1.get_backend(find_library=lambda _name: str(dll_path))  # type: ignore[attr-defined]
+            if backend is not None:
+                return backend
+        except Exception:
+            continue
+    return None
+
+
+def _permission_guidance() -> str:
+    if sys.platform.startswith("win"):
+        return (
+            "Run Python as Administrator, and ensure LIAN LI devices are bound to libusbK/WinUSB "
+            "(not HID or vendor HID filter driver) using Zadig."
+        )
+    return (
+        "Run with sufficient permissions (root or a user permitted by udev), then replug LIAN LI devices."
+    )
+
+
+def _is_access_denied_error(error: object) -> bool:
+    text = str(error).lower()
+    if "errn 13" in text:
+        return True
+    if "access denied" in text:
+        return True
+    if "insufficient permissions" in text:
+        return True
+    if "permission denied" in text:
+        return True
+    errno = getattr(error, "errno", None)
+    if isinstance(errno, int) and errno == 13:
+        return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -122,13 +199,45 @@ class LianLiWirelessBackend:
         if self.receiver is None:
             raise LianLiWirelessError("receiver transport is not configured")
         request = build_wireless_list_request(page_count)
-        written = self.receiver.write(request)
-        if written != len(request):
-            raise LianLiWirelessError(
-                f"incomplete receiver request write ({written}/{len(request)})"
-            )
-        raw = self.receiver.read(expected_snapshot_length(page_count))
-        return WirelessSnapshot(devices=parse_wireless_snapshot(raw), raw=raw)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                written = self.receiver.write(request)
+                if written != len(request):
+                    raise LianLiWirelessError(
+                        f"incomplete receiver request write ({written}/{len(request)})"
+                    )
+                raw = self.receiver.read(64)
+                if not raw:
+                    return WirelessSnapshot(devices=[], raw=raw)
+                if raw[0] != RF_GET_DEV_CMD:
+                    # Some receiver firmware revisions intermittently return a transient
+                    # empty/status frame (e.g. 0x00) before the real snapshot frame.
+                    for _ in range(2):
+                        follow = self.receiver.read(64)
+                        if follow and follow[0] == RF_GET_DEV_CMD:
+                            raw = follow
+                            break
+                    if raw[0] != RF_GET_DEV_CMD:
+                        raise LianLiWirelessError(f"unexpected RF snapshot header 0x{raw[0]:02x}")
+                reported_count = int(raw[1]) if len(raw) > 1 else 0
+                max_count = max(1, int(page_count)) * MAX_DEVICES_PER_PAGE
+                record_count = max(0, min(reported_count, max_count))
+                expected_length = 4 + record_count * 42
+                while len(raw) < expected_length:
+                    raw += self.receiver.read(min(64, expected_length - len(raw)))
+                return WirelessSnapshot(devices=parse_wireless_snapshot(raw), raw=raw)
+            except Exception as error:
+                last_error = error
+                # Receiver reads can transiently return stale/invalid headers (0x00/0xff) or overflow.
+                # A short retry is enough in most cases and avoids failing GUI re-discovery immediately.
+                if attempt < 2:
+                    time.sleep(0.12 * (attempt + 1))
+                    continue
+                break
+        if last_error is None:
+            raise LianLiWirelessError("receiver snapshot read failed")
+        raise last_error
 
     def query_master_mac(self, *, channel: int = 8) -> tuple[str, int | None] | None:
         if self.sender is None:
@@ -322,7 +431,7 @@ class LianLiWirelessBackend:
         target: WirelessDeviceInfo,
         color: tuple[int, int, int],
         *,
-        interval_ms: int = 50,
+        interval_ms: int = 60,
         effect_index: int = 1,
         led_count: int | None = None,
         repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
@@ -347,9 +456,11 @@ class LianLiWirelessBackend:
         target: WirelessDeviceInfo,
         *,
         frame_count: int = 24,
-        interval_ms: int = 50,
+        interval_ms: int = 48,
         effect_index: int = 1,
         led_count: int | None = None,
+        brightness: int = 100,
+        direction: str = "left",
         repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
     ) -> list[bytes]:
         payloads = build_rainbow_rgb_payloads(
@@ -358,6 +469,8 @@ class LianLiWirelessBackend:
             interval_ms=interval_ms,
             effect_index=effect_index,
             led_count=led_count,
+            brightness=brightness,
+            direction=direction,
         )
         packets: list[bytes] = []
         first_repeat = max(1, int(repeat_first_payload))
@@ -372,7 +485,7 @@ class LianLiWirelessBackend:
         target: WirelessDeviceInfo,
         color: tuple[int, int, int],
         *,
-        interval_ms: int = 50,
+        interval_ms: int = 60,
         effect_index: int = 1,
         led_count: int | None = None,
         repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
@@ -400,9 +513,11 @@ class LianLiWirelessBackend:
         target: WirelessDeviceInfo,
         *,
         frame_count: int = 24,
-        interval_ms: int = 50,
+        interval_ms: int = 48,
         effect_index: int = 1,
         led_count: int | None = None,
+        brightness: int = 100,
+        direction: str = "left",
         repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
     ) -> int:
         if self.sender is None:
@@ -413,6 +528,8 @@ class LianLiWirelessBackend:
             interval_ms=interval_ms,
             effect_index=effect_index,
             led_count=led_count,
+            brightness=brightness,
+            direction=direction,
             repeat_first_payload=repeat_first_payload,
         )
         for packet in packets:
@@ -447,14 +564,24 @@ class PyUsbEndpointTransport:
         self.vendor_id = vendor_id
         self.product_id = product_id
         self.timeout_ms = timeout_ms
-        self._device = usb.core.find(idVendor=vendor_id, idProduct=product_id)
+        backend = _resolve_libusb_backend()
+        try:
+            self._device = usb.core.find(
+                idVendor=vendor_id,
+                idProduct=product_id,
+                backend=backend,
+            )
+        except Exception as error:
+            raise LianLiWirelessError(
+                f"failed to enumerate USB device {vendor_id:04x}:{product_id:04x}; install a working libusb backend"
+            ) from error
         if self._device is None:
             raise LianLiWirelessError(
                 f"USB device {vendor_id:04x}:{product_id:04x} not found"
             )
         self._ensure_configuration()
-        self._interface = interface
-        self._claim_interface(interface)
+        self._interface: int | None = None
+        self._claimed_interface: int | None = None
         self._out_endpoint, self._in_endpoint = self._find_endpoints(
             interface,
             write_endpoint,
@@ -475,7 +602,8 @@ class PyUsbEndpointTransport:
 
     def close(self) -> None:
         try:
-            self._usb_util.release_interface(self._device, self._interface)
+            if self._claimed_interface is not None:
+                self._usb_util.release_interface(self._device, self._claimed_interface)
         except Exception:
             pass
         try:
@@ -486,16 +614,118 @@ class PyUsbEndpointTransport:
     def _ensure_configuration(self) -> None:
         try:
             self._device.get_active_configuration()
-        except Exception:
-            self._device.set_configuration()
+        except Exception as error:
+            try:
+                self._device.set_configuration()
+            except Exception as set_error:
+                if _is_access_denied_error(set_error):
+                    raise LianLiWirelessError(
+                        f"USB access denied while setting configuration for "
+                        f"{self.vendor_id:04x}:{self.product_id:04x}. {_permission_guidance()}"
+                    ) from set_error
+                raise
+            return
 
     def _claim_interface(self, interface: int) -> None:
+        if self._claimed_interface == interface:
+            return
+        if self._claimed_interface is not None:
+            self._release_interface(self._claimed_interface)
         try:
             if self._device.is_kernel_driver_active(interface):
                 self._device.detach_kernel_driver(interface)
         except Exception:
             pass
         self._usb_util.claim_interface(self._device, interface)
+        self._claimed_interface = interface
+
+    def _release_interface(self, interface: int) -> None:
+        try:
+            self._usb_util.release_interface(self._device, interface)
+        except Exception:
+            pass
+        if self._claimed_interface == interface:
+            self._claimed_interface = None
+
+    def _iter_candidate_interfaces(
+        self,
+        configuration: Any,
+        requested_interface: int,
+    ) -> list[Any]:
+        ordered: list[Any] = []
+        seen: set[int] = set()
+
+        def _add(candidate: Any) -> None:
+            number = int(getattr(candidate, "bInterfaceNumber"))
+            if number in seen:
+                return
+            seen.add(number)
+            ordered.append(candidate)
+
+        primary: Any | None = None
+        try:
+            primary = configuration[(requested_interface, 0)]
+        except Exception:
+            primary = None
+        if primary is not None:
+            _add(primary)
+        for interface_descriptor in configuration:
+            _add(interface_descriptor)
+
+        return ordered
+
+    def _is_bulk_endpoint(self, endpoint: Any) -> bool:
+        transfer_type_mask = getattr(self._usb_util, "TRANSFER_TYPE_MASK", 0x03)
+        transfer_type_bulk = getattr(self._usb_util, "TRANSFER_TYPE_BULK", 0x02)
+        return (getattr(endpoint, "bmAttributes", 0) & transfer_type_mask) == transfer_type_bulk
+
+    def _endpoint_direction(self, endpoint: Any) -> str:
+        address = int(endpoint.bEndpointAddress)
+        if address & self._usb_util.ENDPOINT_IN:
+            return "IN"
+        return "OUT"
+
+    def _find_endpoints_for_interface(
+        self,
+        interface: int,
+        write_endpoint: int | None,
+        read_endpoint: int | None,
+        *,
+        require_exact: bool = True,
+    ) -> tuple[Any, Any]:
+        self._claim_interface(interface)
+        descriptor = self._device.get_active_configuration()[(interface, 0)]
+
+        out_endpoint = None
+        in_endpoint = None
+        for endpoint in descriptor:
+            if not self._is_bulk_endpoint(endpoint):
+                continue
+            address = int(endpoint.bEndpointAddress)
+            if write_endpoint is not None and address == write_endpoint:
+                out_endpoint = endpoint
+            elif read_endpoint is not None and address == read_endpoint:
+                in_endpoint = endpoint
+            elif not require_exact:
+                direction = self._endpoint_direction(endpoint)
+                if direction == "OUT" and out_endpoint is None:
+                    out_endpoint = endpoint
+                elif direction == "IN" and in_endpoint is None:
+                    in_endpoint = endpoint
+
+        if write_endpoint is not None and out_endpoint is None:
+            raise LianLiWirelessError(
+                f"USB OUT endpoint 0x{write_endpoint:02x} not found"
+            )
+        if read_endpoint is not None and in_endpoint is None:
+            raise LianLiWirelessError(
+                f"USB IN endpoint 0x{read_endpoint:02x} not found"
+            )
+        if out_endpoint is None:
+            raise LianLiWirelessError("USB OUT endpoint could not be inferred for this interface")
+        if in_endpoint is None:
+            raise LianLiWirelessError("USB IN endpoint could not be inferred for this interface")
+        return out_endpoint, in_endpoint
 
     def _find_endpoints(
         self,
@@ -504,20 +734,34 @@ class PyUsbEndpointTransport:
         read_endpoint: int,
     ) -> tuple[Any, Any]:
         configuration = self._device.get_active_configuration()
-        descriptor = configuration[(interface, 0)]
-        out_endpoint = None
-        in_endpoint = None
-        for endpoint in descriptor:
-            address = int(endpoint.bEndpointAddress)
-            if address == write_endpoint:
-                out_endpoint = endpoint
-            elif address == read_endpoint:
-                in_endpoint = endpoint
-        if out_endpoint is None or in_endpoint is None:
+        candidates = self._iter_candidate_interfaces(configuration, interface)
+        last_error: Exception | None = None
+        for require_exact in (True, False):
+            for interface_descriptor in candidates:
+                candidate_interface = int(interface_descriptor.bInterfaceNumber)
+                try:
+                    out_endpoint, in_endpoint = self._find_endpoints_for_interface(
+                        candidate_interface,
+                        write_endpoint=write_endpoint if require_exact else None,
+                        read_endpoint=read_endpoint if require_exact else None,
+                        require_exact=require_exact,
+                    )
+                    self._interface = candidate_interface
+                    return out_endpoint, in_endpoint
+                except Exception as error:
+                    last_error = error
+                    self._release_interface(candidate_interface)
+                    continue
+            if require_exact is False:
+                break
+
+        if last_error is None:
             raise LianLiWirelessError(
                 f"USB endpoints 0x{write_endpoint:02x}/0x{read_endpoint:02x} not found"
             )
-        return out_endpoint, in_endpoint
+        raise LianLiWirelessError(
+            f"USB endpoints 0x{write_endpoint:02x}/0x{read_endpoint:02x} not found: {last_error}"
+        )
 
 
 def create_pyusb_backend(timeout_ms: int = 1000) -> LianLiWirelessBackend:
@@ -567,6 +811,14 @@ def expected_snapshot_length(page_count: int) -> int:
     return RF_PAGE_STRIDE * max(1, int(page_count))
 
 
+def _decode_fan_rpm(high_byte: int, low_byte: int) -> int:
+    # Receiver snapshots encode RPM as a big-endian 16-bit tach value.
+    raw = ((high_byte & 0xFF) << 8) | (low_byte & 0xFF)
+    rpm = raw & 0x7FFF
+    # L-Wireless fan UI range is 0-1800 RPM; clamp for safety.
+    return max(0, min(1800, int(rpm)))
+
+
 def parse_wireless_snapshot(payload: bytes) -> list[WirelessDeviceInfo]:
     if not payload:
         return []
@@ -593,7 +845,7 @@ def parse_wireless_snapshot(payload: bytes) -> list[WirelessDeviceInfo]:
                 fan_count=fan_count,
                 pwm_values=tuple(record[36:40]),  # type: ignore[arg-type]
                 fan_rpm=tuple(
-                    (record[28 + index * 2] << 8) | record[29 + index * 2]
+                    _decode_fan_rpm(record[28 + index * 2], record[29 + index * 2])
                     for index in range(4)
                 ),  # type: ignore[arg-type]
                 command_sequence=record[40],
@@ -685,7 +937,7 @@ def build_static_rgb_payloads(
     target: WirelessDeviceInfo,
     color: tuple[int, int, int],
     *,
-    interval_ms: int = 50,
+    interval_ms: int = 60,
     effect_index: int = 1,
     led_count: int | None = None,
 ) -> list[bytes]:
@@ -709,14 +961,21 @@ def build_rainbow_rgb_payloads(
     target: WirelessDeviceInfo,
     *,
     frame_count: int = 24,
-    interval_ms: int = 50,
+    interval_ms: int = 48,
     effect_index: int = 1,
     led_count: int | None = None,
+    brightness: int = 100,
+    direction: str = "left",
 ) -> list[bytes]:
     if not target.is_bound:
         raise LianLiWirelessError("receiver is not bound to a master controller")
     resolved_led_count = infer_led_count(target) if led_count is None else led_count
-    rgb = generate_rainbow_rgb_frames(resolved_led_count, frame_count=frame_count)
+    rgb = generate_rainbow_rgb_frames(
+        resolved_led_count,
+        frame_count=frame_count,
+        brightness=brightness,
+        direction=direction,
+    )
     return build_rgb_frame_payloads(
         target,
         rgb,
@@ -752,7 +1011,7 @@ def build_rgb_frame_payloads(
     send_interval = int(interval_ms)
     if not 0 <= send_interval <= 65535:
         raise LianLiWirelessError("interval_ms must be in range 0-65535")
-    compressed = tinyuz_compress_literal(raw_rgb)
+    compressed = tinyuz_compress(raw_rgb)
     data_packets = _ceil_div(len(compressed), LED_DATA_CHUNK)
     total_packets = 1 + data_packets
     if total_packets > 255:
@@ -777,12 +1036,6 @@ def build_rgb_frame_payloads(
             payload[25:27] = resolved_frame_count.to_bytes(2, "big", signed=False)
             payload[27] = resolved_led_count & 0xFF
             payload[32:34] = send_interval.to_bytes(2, "big", signed=False)
-            first_len = min(FIRST_LED_PACKET_DATA_MAX, len(compressed))
-            if first_len:
-                payload[
-                    FIRST_LED_PACKET_DATA_OFFSET : FIRST_LED_PACKET_DATA_OFFSET + first_len
-                ] = compressed[:first_len]
-                data_offset += first_len
         else:
             chunk_len = min(LED_DATA_CHUNK, len(compressed) - data_offset)
             if chunk_len:
@@ -800,6 +1053,8 @@ def generate_rainbow_rgb_frames(
     frame_count: int = 24,
     saturation: float = 1.0,
     value: float = 1.0,
+    brightness: int | None = None,
+    direction: str = "left",
 ) -> bytes:
     resolved_led_count = int(led_count)
     resolved_frame_count = int(frame_count)
@@ -807,12 +1062,31 @@ def generate_rainbow_rgb_frames(
         raise LianLiWirelessError("LED count must be positive")
     if resolved_frame_count <= 0:
         raise LianLiWirelessError("frame count must be positive")
+    brightness_percent = 100 if brightness is None else int(brightness)
+    if not 0 <= brightness_percent <= 100:
+        raise LianLiWirelessError("brightness must be in range 0-100")
+    normalized_direction = direction.lower().replace("_", "-")
+    if normalized_direction in ("right", "reverse", "rtl"):
+        step = -1
+        start_offset = -1
+    elif normalized_direction in ("left", "forward", "ltr"):
+        step = 1
+        start_offset = 0
+    else:
+        raise LianLiWirelessError("direction must be left or right")
+
+    value_scale = max(0.0, min(1.0, brightness_percent / 100.0))
+    # One full hue cycle across a group, with continuous per-frame phase shift.
+    spatial_cycles = 1.0
+    frame_step = 1.0 / resolved_frame_count
     frame_bytes = bytearray()
     for frame_index in range(resolved_frame_count):
-        offset = frame_index / resolved_frame_count
         for led_index in range(resolved_led_count):
-            hue = (led_index / max(1, resolved_led_count) + offset) % 1.0
-            frame_bytes.extend(_hsv_to_rgb(hue, saturation, value))
+            spatial_phase = (led_index / resolved_led_count) * spatial_cycles
+            temporal_phase = frame_index * frame_step
+            hue = (temporal_phase + step * spatial_phase + start_offset * frame_step) % 1.0
+            r, g, b = _hsv_to_rgb(hue, saturation, value * value_scale)
+            frame_bytes.extend((r, g, b))
     return bytes(frame_bytes)
 
 
@@ -896,7 +1170,179 @@ def tinyuz_compress_literal(
     return bytes(state.code)
 
 
+def tinyuz_compress(
+    payload: bytes,
+    *,
+    dict_size: int = DEFAULT_TINYUZ_DICT_SIZE,
+) -> bytes:
+    if not payload:
+        raise LianLiWirelessError("TinyUZ payload cannot be empty")
+    period = _repeating_period(payload, max_period=32)
+    generic = _tinyuz_compress_backrefs(payload, dict_size=dict_size)
+    literal = tinyuz_compress_literal(payload, dict_size=dict_size)
+    if period is None or len(payload) <= period + 2 or period > dict_size:
+        return generic if len(generic) < len(literal) else literal
+
+    state = _TinyUzLiteralState(period)
+    for byte in payload[:period]:
+        state.out_type(1)
+        state.code.append(byte)
+        state.have_data_back = True
+
+    remaining = len(payload) - period
+    state.out_type(0)
+    state.out_len(remaining - 2, pack_bit=1)
+    if state.have_data_back:
+        state.out_type(0)
+    state.out_dict_pos(period)
+    state.have_data_back = False
+
+    state.out_type(0)
+    state.out_len(3, pack_bit=1)
+    state.out_dict_pos(0)
+    state.reset_types()
+    periodic = bytes(state.code)
+    return min((periodic, generic, literal), key=len)
+
+
+def _tinyuz_compress_backrefs(
+    payload: bytes,
+    *,
+    dict_size: int,
+) -> bytes:
+    if dict_size <= 0 or dict_size >= 2**32:
+        raise LianLiWirelessError("TinyUZ dictionary size is out of range")
+    state = _TinyUzLiteralState(dict_size)
+    offset = 0
+    previous_distance: int | None = None
+    max_distance = min(dict_size, 0x7F)
+
+    while offset < len(payload):
+        distance, length = _find_tinyuz_match(payload, offset, max_distance=max_distance)
+        if length >= 3:
+            state.out_type(0)
+            state.out_len(length - 2, pack_bit=2)
+            if state.have_data_back:
+                reuse_previous = previous_distance == distance
+                state.out_type(1 if reuse_previous else 0)
+                if not reuse_previous:
+                    state.out_dict_pos(distance)
+            else:
+                state.out_dict_pos(distance)
+            state.have_data_back = False
+            previous_distance = distance
+            offset += length
+            continue
+
+        state.out_type(1)
+        state.code.append(payload[offset])
+        state.have_data_back = True
+        offset += 1
+
+    state.out_type(0)
+    state.out_len(3, pack_bit=1)
+    if state.have_data_back:
+        state.out_type(0)
+    state.out_dict_pos(0)
+    state.reset_types()
+    return bytes(state.code)
+
+
+def _find_tinyuz_match(
+    payload: bytes,
+    offset: int,
+    *,
+    max_distance: int,
+) -> tuple[int, int]:
+    best_distance = 0
+    best_length = 0
+    if offset <= 0:
+        return best_distance, best_length
+    search_limit = min(max_distance, offset)
+    remaining = len(payload) - offset
+    for distance in range(1, search_limit + 1):
+        length = 0
+        while length < remaining and payload[offset + length] == payload[offset + length - distance]:
+            length += 1
+        if length > best_length:
+            best_distance = distance
+            best_length = length
+    return best_distance, best_length
+
+
+def _repeating_period(payload: bytes, *, max_period: int) -> int | None:
+    limit = min(max_period, len(payload) // 2)
+    for period in range(1, limit + 1):
+        repeated = (payload[:period] * _ceil_div(len(payload), period))[: len(payload)]
+        if payload == repeated:
+            return period
+    return None
+
+
 def scan_known_usb_devices(sys_root: Path = Path("/sys")) -> list[LianLiUsbDevice]:
+    sys_devices = _scan_known_usb_devices_from_sys(sys_root)
+    if sys_devices:
+        return sys_devices
+    try:
+        return _scan_known_usb_devices_from_pyusb()
+    except LianLiWirelessError:
+        return []
+
+
+def _scan_known_usb_devices_from_pyusb() -> list[LianLiUsbDevice]:
+    try:
+        import usb.core  # type: ignore[import-not-found]
+        import usb.util  # type: ignore[import-not-found]
+    except ImportError:
+        return []
+
+    backend = _resolve_libusb_backend()
+    devices: list[LianLiUsbDevice] = []
+    find_kwargs: dict[str, Any] = {}
+    if backend is not None:
+        find_kwargs["backend"] = backend
+    for device in usb.core.find(find_all=True, **find_kwargs):
+        vendor_id = int(getattr(device, "idVendor", 0) or 0)
+        product_id = int(getattr(device, "idProduct", 0) or 0)
+        label = KNOWN_USB_DEVICES.get((vendor_id, product_id))
+        if label is None:
+            continue
+
+        busnum = str(getattr(device, "bus", "")) if getattr(device, "bus", None) else ""
+        devnum = str(getattr(device, "address", "")) if getattr(device, "address", None) else ""
+        serial = _read_usb_string(device, usb.util, getattr(device, "iSerialNumber", 0))
+        manufacturer = _read_usb_string(device, usb.util, getattr(device, "iManufacturer", 0))
+        product = _read_usb_string(device, usb.util, getattr(device, "iProduct", 0))
+        sysfs_path = (
+            f"libusb://{busnum}:{devnum}" if busnum and devnum else f"libusb://{vendor_id:04x}:{product_id:04x}"
+        )
+
+        devices.append(
+            LianLiUsbDevice(
+                vendor_id=vendor_id,
+                product_id=product_id,
+                label=label,
+                manufacturer=manufacturer,
+                product=product,
+                serial=serial,
+                sysfs_path=sysfs_path,
+                busnum=busnum,
+                devnum=devnum,
+            )
+        )
+    devices.sort(
+        key=lambda item: (
+            item.vendor_id,
+            item.product_id,
+            item.busnum,
+            item.devnum,
+            item.serial,
+        )
+    )
+    return devices
+
+
+def _scan_known_usb_devices_from_sys(sys_root: Path) -> list[LianLiUsbDevice]:
     usb_root = sys_root / "bus" / "usb" / "devices"
     if not usb_root.exists():
         return []
@@ -925,6 +1371,19 @@ def scan_known_usb_devices(sys_root: Path = Path("/sys")) -> list[LianLiUsbDevic
             )
         )
     return devices
+
+
+def _read_usb_string(
+    device: Any,
+    usb_util: Any,
+    index: int,
+) -> str:
+    if not index:
+        return ""
+    try:
+        return usb_util.get_string(device, index).strip()
+    except Exception:
+        return ""
 
 
 @dataclass

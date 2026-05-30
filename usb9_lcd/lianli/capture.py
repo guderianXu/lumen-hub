@@ -10,6 +10,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -296,6 +297,162 @@ def capture_triage_report_file(
         "protocol": protocol_report,
         "replay": _capture_triage_replay_summary(replay_plan),
     }
+
+
+def capture_unknown_rf_diff_report(paths: Iterable[Path]) -> dict[str, Any]:
+    captures: list[dict[str, Any]] = []
+    for path in paths:
+        analysis = analyze_capture_file(path)
+        frames = [
+            frame
+            for frame in analysis.get("rf_frames", [])
+            if isinstance(frame, dict) and frame.get("operation") == "unknown-rf-payload"
+        ]
+        payloads: list[bytes] = []
+        frame_items: list[dict[str, Any]] = []
+        for index, frame in enumerate(frames):
+            payload_hex = frame.get("payload_hex")
+            if not isinstance(payload_hex, str):
+                continue
+            try:
+                payload = bytes.fromhex(payload_hex)
+            except ValueError:
+                continue
+            digest = hashlib.sha256(payload).hexdigest()
+            payloads.append(payload)
+            frame_items.append(
+                {
+                    "index": index,
+                    "channel": frame.get("channel"),
+                    "outer_rx_type": frame.get("outer_rx_type"),
+                    "payload_len": len(payload),
+                    "payload_sha256": digest,
+                    "payload_prefix_hex": payload[:48].hex(),
+                    "payload_suffix_hex": payload[-24:].hex() if payload else "",
+                    "usb_frame_numbers": frame.get("usb_frame_numbers", []),
+                }
+            )
+        counter = Counter(hashlib.sha256(payload).hexdigest() for payload in payloads)
+        payload_by_hash = {hashlib.sha256(payload).hexdigest(): payload for payload in payloads}
+        unique_payloads = [
+            {
+                "sha256": digest,
+                "count": count,
+                "payload_len": len(payload_by_hash[digest]),
+                "prefix_hex": payload_by_hash[digest][:64].hex(),
+                "suffix_hex": payload_by_hash[digest][-32:].hex(),
+                "marker_offsets": _unknown_rf_marker_offsets(payload_by_hash[digest]),
+            }
+            for digest, count in counter.most_common()
+        ]
+        representative_hash = str(unique_payloads[0]["sha256"]) if unique_payloads else ""
+        representative = payload_by_hash.get(representative_hash, b"")
+        captures.append(
+            {
+                "path": str(path),
+                "name": path.name,
+                "status": "ok",
+                "rf_frame_count": len(analysis.get("rf_frames", [])),
+                "unknown_rf_frame_count": len(payloads),
+                "unique_unknown_payload_count": len(unique_payloads),
+                "representative_sha256": representative_hash,
+                "representative_prefix_hex": representative[:96].hex(),
+                "representative_marker_offsets": _unknown_rf_marker_offsets(representative),
+                "within_capture_varying_offsets": _payload_varying_offsets(payloads, limit=80),
+                "top_unknown_payloads": unique_payloads[:12],
+                "first_unknown_frames": frame_items[:12],
+            }
+        )
+    return {
+        "operation": "capture-unknown-rf-diff",
+        "capture_count": len(captures),
+        "captures": captures,
+        "cross_capture_diff": _cross_capture_unknown_diff(captures),
+    }
+
+
+def _unknown_rf_marker_offsets(payload: bytes) -> dict[str, list[int]]:
+    markers = {
+        "receiver_mac_1455f96232e1": bytes.fromhex("1455f96232e1"),
+        "master_mac_2469dd6232dc": bytes.fromhex("2469dd6232dc"),
+        "rgb_red_ff0000": bytes.fromhex("ff0000"),
+        "rgb_green_00ff00": bytes.fromhex("00ff00"),
+        "rgb_blue_0000ff": bytes.fromhex("0000ff"),
+        "rgb_white_ffffff": bytes.fromhex("ffffff"),
+    }
+    result: dict[str, list[int]] = {}
+    for name, marker in markers.items():
+        offsets: list[int] = []
+        start = 0
+        while marker:
+            offset = payload.find(marker, start)
+            if offset < 0:
+                break
+            offsets.append(offset)
+            start = offset + 1
+        if offsets:
+            result[name] = offsets[:20]
+    return result
+
+
+def _payload_varying_offsets(payloads: list[bytes], *, limit: int = 80) -> list[dict[str, Any]]:
+    if len(payloads) < 2:
+        return []
+    max_len = max(len(payload) for payload in payloads)
+    result: list[dict[str, Any]] = []
+    for offset in range(max_len):
+        values = sorted({payload[offset] for payload in payloads if offset < len(payload)})
+        if len(values) > 1:
+            result.append(
+                {
+                    "offset": offset,
+                    "values_hex": [f"{value:02x}" for value in values],
+                    "value_count": len(values),
+                }
+            )
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _cross_capture_unknown_diff(captures: list[dict[str, Any]]) -> dict[str, Any]:
+    representatives: list[tuple[str, bytes]] = []
+    for capture in captures:
+        payload_hex = str(capture.get("representative_prefix_hex") or "")
+        try:
+            payload = bytes.fromhex(payload_hex)
+        except ValueError:
+            payload = b""
+        representatives.append((str(capture.get("name") or ""), payload))
+    if len(representatives) < 2:
+        return {"status": "not-enough-captures"}
+    base_name, base = representatives[0]
+    comparisons: list[dict[str, Any]] = []
+    for name, payload in representatives[1:]:
+        offsets: list[dict[str, Any]] = []
+        max_len = max(len(base), len(payload))
+        for offset in range(max_len):
+            base_value = base[offset] if offset < len(base) else None
+            value = payload[offset] if offset < len(payload) else None
+            if base_value != value:
+                offsets.append(
+                    {
+                        "offset": offset,
+                        "base_hex": "" if base_value is None else f"{base_value:02x}",
+                        "other_hex": "" if value is None else f"{value:02x}",
+                    }
+                )
+            if len(offsets) >= 80:
+                break
+        comparisons.append(
+            {
+                "base": base_name,
+                "other": name,
+                "compared_prefix_bytes": min(len(base), len(payload)),
+                "first_differing_offsets": offsets,
+            }
+        )
+    return {"status": "ok", "comparisons": comparisons}
 
 
 def _capture_triage_status(
@@ -2301,20 +2458,20 @@ def windows_capture_plan(
         "scenarios": _windows_capture_plan_scenarios(base, artifact_context=artifact_context),
         "post_capture": {
             "preferred_linux_flow": [
-                f"python tools/lianli_wireless_probe.py analyze-capture {base}-00-baseline.pcapng",
-                f"python tools/lianli_wireless_probe.py capture-replay-plan {base}-00-baseline.pcapng",
-                f"python tools/lianli_wireless_probe.py capture-protocol-report {base}-00-baseline.pcapng",
-                f"python tools/lianli_wireless_probe.py capture-timeline-report {base}-00-baseline.pcapng",
+                _tool_command("analyze-capture", f"{base}-00-baseline.pcapng"),
+                _tool_command("capture-replay-plan", f"{base}-00-baseline.pcapng"),
+                _tool_command("capture-protocol-report", f"{base}-00-baseline.pcapng"),
+                _tool_command("capture-timeline-report", f"{base}-00-baseline.pcapng"),
             ],
             "manual_export_if_tshark_missing": (
                 f"tshark -r {base}-00-baseline.pcapng -T fields -E separator=\\t "
                 f"-E occurrence=a -e usb.capdata -e usbhid.data -e data.data > {base}-00-baseline-hex.txt"
             ),
             "after_export": [
-                f"python tools/lianli_wireless_probe.py analyze-capture {base}-00-baseline-hex.txt",
-                f"python tools/lianli_wireless_probe.py capture-replay-plan {base}-00-baseline-hex.txt",
-                f"python tools/lianli_wireless_probe.py capture-protocol-report {base}-00-baseline-hex.txt",
-                f"python tools/lianli_wireless_probe.py capture-timeline-report {base}-00-baseline-hex.txt",
+                _tool_command("analyze-capture", f"{base}-00-baseline-hex.txt"),
+                _tool_command("capture-replay-plan", f"{base}-00-baseline-hex.txt"),
+                _tool_command("capture-protocol-report", f"{base}-00-baseline-hex.txt"),
+                _tool_command("capture-timeline-report", f"{base}-00-baseline-hex.txt"),
             ],
         },
         "decision_rules": [
@@ -3430,7 +3587,28 @@ def _decode_rgb_sequence(first_index: int, frames: list[dict[str, Any]]) -> tupl
         return summary, group_indexes
 
     raw, decode_info = _decode_tinyuz_literal(compressed, summary["expected_decoded_length"])
+    if (
+        raw is None
+        and decode_info.get("decode_status") == "invalid-dict-size"
+        and decode_info.get("dict_size") == 0
+        and packet_count > 1
+    ):
+        alternate_compressed = _collect_rgb_compressed_bytes_data_packets_only(candidates, compressed_length)
+        alternate_raw, alternate_info = _decode_tinyuz_literal(
+            alternate_compressed,
+            summary["expected_decoded_length"],
+        )
+        if alternate_raw is not None:
+            raw = alternate_raw
+            compressed = alternate_compressed
+            decode_info = {
+                **alternate_info,
+                "collection_strategy": "data-packets-only",
+                "primary_decode_status": "invalid-dict-size",
+                "primary_dict_size": 0,
+            }
     summary.update(decode_info)
+    summary["collected_length"] = len(compressed)
     if raw is None:
         return summary, group_indexes
 
@@ -3482,6 +3660,28 @@ def _collect_rgb_compressed_bytes(
         else:
             offset = 20
             limit = min(LED_DATA_CHUNK, len(payload) - offset, remaining)
+        if limit <= 0:
+            break
+        collected.extend(payload[offset : offset + limit])
+    return bytes(collected)
+
+
+def _collect_rgb_compressed_bytes_data_packets_only(
+    candidates: dict[int, tuple[int, dict[str, Any]]],
+    compressed_length: int,
+) -> bytes:
+    collected = bytearray()
+    for packet_index in sorted(candidates):
+        if packet_index == 0:
+            continue
+        payload = _frame_payload_bytes(candidates[packet_index][1])
+        if payload is None:
+            break
+        remaining = compressed_length - len(collected)
+        if remaining <= 0:
+            break
+        offset = 20
+        limit = min(LED_DATA_CHUNK, len(payload) - offset, remaining)
         if limit <= 0:
             break
         collected.extend(payload[offset : offset + limit])
@@ -4541,8 +4741,22 @@ def _rf_payload_sha256s(frames: list[Any]) -> list[str]:
     return _unique_preserve_order(hashes)
 
 
+def _tool_probe_prefix() -> list[str]:
+    repo_root = Path(__file__).resolve().parents[2]
+    windows_probe = repo_root / "scripts" / "lianli-wireless-probe.ps1"
+    linux_probe = repo_root / "scripts" / "lianli-wireless-probe.sh"
+    fallback_probe = repo_root / "tools" / "lianli_wireless_probe.py"
+    if os.name == "nt" and windows_probe.exists():
+        return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(windows_probe)]
+    if linux_probe.exists():
+        return ["bash", str(linux_probe)]
+    if fallback_probe.exists():
+        return [sys.executable, str(fallback_probe)]
+    return [sys.executable, str(fallback_probe)]
+
+
 def _tool_argv(*args: str) -> list[str]:
-    return ["python", "tools/lianli_wireless_probe.py", *[str(arg) for arg in args if str(arg)]]
+    return [*_tool_probe_prefix(), *[str(arg) for arg in args if str(arg)]]
 
 
 def _target_cli_args(
@@ -11338,7 +11552,31 @@ def _transport_items_from_pcap_file(path: Path) -> list[dict[str, Any]]:
     ]
     for field in fields:
         command.extend(["-e", field])
-    result = _run_tshark_command(command, path)
+    try:
+        result = _run_tshark_command(command, path)
+    except LianLiWirelessError as error:
+        if "Some fields aren't valid" not in str(error):
+            raise
+        metadata_fields = [
+            field
+            for field in metadata_fields
+            if field not in {"usb.endpoint_direction", "usb.endpoint_number"}
+        ]
+        fields = ["frame.number", *payload_fields, *metadata_fields]
+        command = [
+            tshark,
+            "-r",
+            str(path),
+            "-T",
+            "fields",
+            "-E",
+            "separator=\t",
+            "-E",
+            "occurrence=a",
+        ]
+        for field in fields:
+            command.extend(["-e", field])
+        result = _run_tshark_command(command, path)
     items: list[dict[str, Any]] = []
     for line in result.stdout.splitlines():
         columns = line.split("\t")
@@ -11542,7 +11780,9 @@ def _usb_readiness_status(
         blockers.append("0416:8041 receiver is not visible; read-only device snapshot validation is incomplete.")
     else:
         status = "no-l-wireless-hardware"
-        blockers.append("No 0416:8040/0416:8041 L-Wireless USB devices are visible under sysfs.")
+        blockers.append(
+            "No 0416:8040/0416:8041 L-Wireless USB devices are visible on this host."
+        )
     if not tools.get("tshark", {}).get("available"):
         blockers.append("tshark is missing; raw pcap/pcapng decoding will require Wireshark field export.")
     return status, blockers
@@ -11623,11 +11863,11 @@ def _windows_capture_host_setup_commands(base: str) -> list[dict[str, Any]]:
         {
             "target": "linux-host-after-capture",
             "commands": [
-                f"python tools/lianli_wireless_probe.py capture-triage-report {base}-SCENARIO.pcapng",
-                f"python tools/lianli_wireless_probe.py analyze-capture {base}-SCENARIO.pcapng",
-                f"python tools/lianli_wireless_probe.py capture-replay-plan {base}-SCENARIO.pcapng",
-                f"python tools/lianli_wireless_probe.py capture-protocol-report {base}-SCENARIO.pcapng",
-                f"python tools/lianli_wireless_probe.py capture-timeline-report {base}-SCENARIO.pcapng",
+                _tool_command("capture-triage-report", f"{base}-SCENARIO.pcapng"),
+                _tool_command("analyze-capture", f"{base}-SCENARIO.pcapng"),
+                _tool_command("capture-replay-plan", f"{base}-SCENARIO.pcapng"),
+                _tool_command("capture-protocol-report", f"{base}-SCENARIO.pcapng"),
+                _tool_command("capture-timeline-report", f"{base}-SCENARIO.pcapng"),
             ],
         },
         {
@@ -11848,7 +12088,7 @@ def _scenario_linux_commands(capture_file: str) -> list[str]:
 
 
 def _tool_command(*args: str) -> str:
-    return " ".join(["python", "tools/lianli_wireless_probe.py", *(shlex.quote(str(arg)) for arg in args)])
+    return " ".join(shlex.quote(part) for part in _tool_argv(*args))
 
 
 def _artifact_dir_command_args(artifact_dir: Path | None) -> list[str]:

@@ -174,6 +174,29 @@ class FakeLightingController:
         self.applied.append(settings)
 
 
+class MultiDeviceLightingController(FakeLightingController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.targets.extend(
+            [
+                LightingTarget(
+                    id="device:1",
+                    name="G.Skill Memory / 全部",
+                    device_index=1,
+                    zone_index=None,
+                    modes=("Static", "Rainbow"),
+                ),
+                LightingTarget(
+                    id="device:1:zone:0",
+                    name="G.Skill Memory / DIMM 1",
+                    device_index=1,
+                    zone_index=0,
+                    modes=("Static", "Rainbow"),
+                ),
+            ]
+        )
+
+
 def _fake_telemetry() -> SystemTelemetry:
     return SystemTelemetry(
         cpu=CpuTelemetry(package_temperature_c=54.0, utilization_percent=18, available=True),
@@ -300,25 +323,26 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     assert window.windowTitle() == "usb9-lcd"
     assert [window.navigation.item(index).text() for index in range(window.navigation.count())] == [
         "首页",
-        "监控",
+        "屏幕",
         "风扇",
         "灯效",
-        "素材库",
-        "上传",
         "设备",
         "联力无线",
         "设置",
     ]
     assert window.navigation.currentRow() == 0
-    assert window.pages.count() == 9
+    assert window.pages.count() == 7
     assert "CPU" in window.cpu_temp_value.text()
     assert "GPU" in window.gpu_temp_value.text()
     assert "54°C" in window.home_page.cpu_value.text()
     assert "61°C" in window.home_page.gpu_value.text()
     assert window.home_page.mode_value.text() == "日常"
-    assert window.home_page.fan_value.text() == "未加载"
+    assert window.home_page.fan_value.text() in {"未加载", "未扫描"}
     assert window.home_page.lighting_value.text() == "默认关闭"
-    assert window.home_page.lianli_value.text() == "未连接" or window.home_page.lianli_value.text().startswith("USB ")
+    assert (
+        window.home_page.lianli_value.text() in {"未连接", "正在准备自动连接..."}
+        or window.home_page.lianli_value.text().startswith("USB ")
+    )
     assert window.home_page.event_labels[0].text() == "控制中心已就绪"
     assert window.lighting_page.brightness_slider.value() == 0
     assert window.device_summary_label.text() == "未发现设备"
@@ -338,6 +362,26 @@ def test_control_center_navigation_buttons_change_pages():
         telemetry_provider=lambda: _fake_telemetry(),
         auto_refresh=False,
     )
+
+    screen_button = next(
+        button
+        for button in window.home_page.findChildren(QPushButton)
+        if button.property("moduleAction") == "打开屏幕"
+    )
+    screen_button.click()
+
+    assert window.navigation.currentRow() == 1
+    assert window.screen_tabs.currentIndex() == 0
+
+    assets_button = next(
+        button
+        for button in window.home_page.findChildren(QPushButton)
+        if button.property("moduleAction") == "素材库"
+    )
+    assets_button.click()
+
+    assert window.navigation.currentRow() == 1
+    assert window.screen_tabs.currentIndex() == 1
 
     lighting_button = next(
         button
@@ -503,7 +547,7 @@ def test_control_center_opens_lianli_wireless_page():
     )
     lianli_button.click()
 
-    assert window.navigation.currentRow() == 7
+    assert window.navigation.currentRow() == 5
 
     window.close()
     app.quit()
@@ -523,10 +567,9 @@ def test_main_window_pages_are_scroll_wrapped():
 
     expected_widgets = [
         window.home_page,
-        window.monitor_page,
+        window.screen_page,
         window.fan_page,
         window.lighting_page,
-        window.asset_page,
     ]
     for index, expected in enumerate(expected_widgets):
         page = window.pages.widget(index)
@@ -3756,6 +3799,7 @@ def test_lighting_page_connects_to_openrgb_and_applies_settings():
     page.connect_openrgb()
     assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
     page.lighting_target_combo.setCurrentIndex(1)
+    page.apply_all_lighting_checkbox.setChecked(False)
     page.set_selected_color("#00e5ff")
     page.brightness_slider.setValue(60)
     page.speed_slider.setValue(7)
@@ -3797,6 +3841,23 @@ def test_lighting_defaults_to_off():
     assert page.brightness_slider.value() == 0
     assert page.brightness_value_label.text() == "0%"
     assert page.speed_value_label.text() == "50%"
+
+    page.close()
+    app.quit()
+
+
+def test_lighting_page_exposes_expanded_openrgb_effects():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LightingPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LightingPage(controller=FakeLightingController())
+    labels = {button.text() for button in page.effect_group.buttons()}
+
+    assert {"波浪", "颜色循环", "颜色脉冲", "闪烁", "流星", "矩阵", "渐变", "星空"} <= labels
+    assert page.effect_map["波浪"] == "wave"
+    assert page.effect_map["颜色脉冲"] == "color_pulse"
 
     page.close()
     app.quit()
@@ -3953,6 +4014,7 @@ def test_lighting_sync_tab_applies_current_sync_settings(monkeypatch):
     page.connect_openrgb()
     assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
     page.lighting_target_combo.setCurrentIndex(1)
+    page.apply_all_lighting_checkbox.setChecked(False)
     page.sync_mode_combo.setCurrentIndex(4)
     page.brightness_slider.setValue(70)
     page.apply_sync_lighting_button.click()
@@ -4019,6 +4081,113 @@ def test_lighting_page_apply_auto_connects_when_needed():
     assert page.lighting_target_combo.count() == 2
     assert controller.applied[0].target_id == "device:0"
     assert "已连接并应用灯效" in page.openrgb_status_label.text()
+
+    page.close()
+    app.quit()
+
+
+def test_lighting_page_prefers_argb_zone_after_connect():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LightingPage
+
+    app = QApplication.instance() or QApplication([])
+    controller = FakeLightingController()
+    page = LightingPage(controller=controller)
+
+    page.connect_openrgb()
+
+    assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
+    assert page.lighting_target_combo.currentData() == "device:0:zone:1"
+    assert "ARGB Header" in page.lighting_target_combo.currentText()
+
+    page.close()
+    app.quit()
+
+
+def test_lighting_page_visible_effect_auto_uses_visible_argb_output():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LightingPage
+
+    app = QApplication.instance() or QApplication([])
+    controller = FakeLightingController()
+    page = LightingPage(controller=controller)
+    for button in page.effect_group.buttons():
+        if button.text() == "静态":
+            button.setChecked(True)
+            break
+
+    page.apply_lighting()
+
+    assert _process_events_until(app, lambda: "已连接并应用灯效" in page.openrgb_status_label.text())
+    assert controller.applied[0].target_id == "device:0"
+    assert controller.applied[0].effect == "static"
+    assert controller.applied[0].color == "#ffffff"
+    assert controller.applied[0].brightness_percent == 80
+
+    page.close()
+    app.quit()
+
+
+def test_lighting_page_static_default_syncs_all_openrgb_devices(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.pages as pages
+    from usb9_lcd.gui.pages import LightingPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    monkeypatch.setattr(pages, "save_settings", lambda settings: None)
+    app = QApplication.instance() or QApplication([])
+    controller = MultiDeviceLightingController()
+    settings = GuiSettings()
+    page = LightingPage(controller=controller, settings=settings)
+    for button in page.effect_group.buttons():
+        if button.text() == "静态":
+            button.setChecked(True)
+            break
+    page.set_selected_color("#00e5ff")
+    page.brightness_slider.setValue(60)
+
+    page.apply_lighting()
+
+    assert _process_events_until(app, lambda: "2 个目标" in page.openrgb_status_label.text())
+    assert [item.target_id for item in controller.applied] == ["device:0", "device:1"]
+    assert all(item.color == "#00e5ff" for item in controller.applied)
+    assert all(item.brightness_percent == 60 for item in controller.applied)
+    assert {"device:0", "device:1"} <= set(settings.lighting.target_profiles)
+
+    page.close()
+    app.quit()
+
+
+def test_lighting_page_reconnects_when_selected_target_is_disconnected():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LightingPage
+
+    app = QApplication.instance() or QApplication([])
+    controller = FakeLightingController()
+    page = LightingPage(controller=controller)
+
+    page.connect_openrgb()
+    assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
+    controller.connected = False
+    page.apply_all_lighting_checkbox.setChecked(False)
+    page.set_selected_color("#00e5ff")
+    page.brightness_slider.setValue(60)
+    for button in page.effect_group.buttons():
+        if button.text() == "静态":
+            button.setChecked(True)
+            break
+
+    page.apply_lighting()
+
+    assert _process_events_until(app, lambda: "已连接并应用灯效" in page.openrgb_status_label.text())
+    assert controller.connected is True
+    assert controller.applied[0].target_id == "device:0:zone:1"
+    assert controller.applied[0].color == "#00e5ff"
+    assert controller.applied[0].brightness_percent == 60
 
     page.close()
     app.quit()
