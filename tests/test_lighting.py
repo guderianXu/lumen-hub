@@ -1,4 +1,5 @@
 from usb9_lcd.lighting import LightingSettings, LightingTarget, OpenRgbLightingController
+from usb9_lcd.lighting.engine import build_lighting_apply_plan
 
 
 class FakeMode:
@@ -138,6 +139,37 @@ def test_openrgb_whole_device_static_resizes_empty_child_zones_before_color():
 
     assert zone.resized_to == 26
     assert len(zone.leds) == 26
+    assert len(zone.colors) == 2
+
+
+def test_openrgb_asus_static_profile_reapplies_all_zone_color():
+    controller = OpenRgbLightingController()
+    controller.client = FakeClient()
+    controller.client.devices[0].name = "ASUS ROG STRIX B850-A GAMING WIFI S"
+    zone = FakeZone()
+    controller.client.devices[0].zones = [zone]
+    controller.targets = [
+        LightingTarget(
+            id="device:0",
+            name="ASUS ROG STRIX B850-A GAMING WIFI S / 全部",
+            device_index=0,
+            zone_index=None,
+            modes=("Static", "Off"),
+        )
+    ]
+
+    controller.apply(
+        LightingSettings(
+            target_id="device:0",
+            effect="static",
+            color="#ff0000",
+            brightness_percent=100,
+            speed_percent=50,
+            zone_size=26,
+        )
+    )
+
+    assert zone.resized_to == 26
     assert len(zone.colors) == 4
 
 
@@ -292,6 +324,34 @@ def test_openrgb_chase_prefers_clean_chase_mode_and_applies_selected_color():
     assert controller.client.devices[0].set_modes == [("Chase", False, True)]
     assert chase.colors
     assert chase_fade.colors == []
+
+
+def test_lighting_engine_builds_asus_static_stability_plan():
+    plan = build_lighting_apply_plan(
+        effect="static",
+        device_name="ASUS ROG STRIX B850-A GAMING WIFI S",
+        target_zone_index=None,
+        requested_zone_size=None,
+        default_static_reapply_count=2,
+    )
+
+    assert plan.zone_size == 30
+    assert plan.stable_whole_device_color is True
+    assert plan.color_reapply_count == 4
+    assert plan.should_apply_explicit_color("mode-color") is True
+
+
+def test_lighting_engine_prefers_clean_chase_alias_for_asus_profile():
+    plan = build_lighting_apply_plan(
+        effect="chase",
+        device_name="ASUS ROG STRIX B850-A GAMING WIFI S",
+        target_zone_index=None,
+        requested_zone_size=30,
+        default_static_reapply_count=2,
+    )
+
+    assert plan.mode_aliases[:2] == ("chase", "running lights")
+    assert plan.uses_color is True
 
 
 def test_openrgb_resizes_empty_addressable_zone_before_setting_color():

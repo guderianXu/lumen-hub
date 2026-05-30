@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from .effects import effect_aliases, effect_uses_color
-from .profiles import mode_aliases_for_device, profile_for_device_name
+from .engine import build_lighting_apply_plan
 
 
 STATIC_COLOR_REAPPLY_DELAY_SECONDS = 0.08
@@ -82,20 +82,19 @@ class OpenRgbLightingController:
         target = self._target_by_id(settings.target_id)
         device = client.devices[target.device_index]
         device_name = str(getattr(device, "name", ""))
-        device_profile = profile_for_device_name(device_name)
 
         if settings.effect == "off":
             self._apply_off(device, target, settings.save)
             return
 
-        zone_size = settings.zone_size
-        if (
-            zone_size is None
-            and settings.effect in {"static", "direct"}
-            and target.zone_index is None
-            and device_profile.static_strategy == "whole-device-static-all-zones-same-color"
-        ):
-            zone_size = device_profile.static_zone_size
+        plan = build_lighting_apply_plan(
+            effect=settings.effect,
+            device_name=device_name,
+            target_zone_index=target.zone_index,
+            requested_zone_size=settings.zone_size,
+            default_static_reapply_count=STATIC_COLOR_REAPPLY_COUNT,
+        )
+        zone_size = plan.zone_size
 
         self._resize_zone_if_needed(device, target, zone_size)
         color = self._rgb_color(settings.color, settings.brightness_percent)
@@ -103,19 +102,20 @@ class OpenRgbLightingController:
             device,
             target,
             settings.effect,
+            plan.mode_aliases,
             color,
             settings.speed_percent,
             settings.brightness_percent,
             settings.save,
         )
-        if self._should_apply_explicit_color(settings.effect, mode_result):
-            if settings.effect in {"static", "direct"} and target.zone_index is None and zone_size:
+        if plan.should_apply_explicit_color(mode_result):
+            if plan.stable_whole_device_color and zone_size:
                 self._apply_stable_static_color(
                     device,
                     target,
                     color,
                     zone_size,
-                    max(STATIC_COLOR_REAPPLY_COUNT, device_profile.static_reapply_count),
+                    plan.color_reapply_count,
                 )
             else:
                 self._set_target_color(device, target, color, zone_size)
@@ -154,13 +154,12 @@ class OpenRgbLightingController:
         device: Any,
         target: LightingTarget,
         effect: str,
+        aliases: tuple[str, ...],
         color: Any,
         speed_percent: int,
         brightness_percent: int,
         save: bool,
     ) -> str:
-        device_name = str(getattr(device, "name", ""))
-        aliases = mode_aliases_for_device(effect, device_name, _mode_aliases(effect))
         mode = _find_mode(getattr(device, "modes", []), aliases)
         if mode is None:
             if effect in {"static", "direct"} and hasattr(device, "set_custom_mode"):
