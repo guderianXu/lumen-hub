@@ -4161,6 +4161,38 @@ def test_lighting_page_static_default_syncs_all_openrgb_devices(monkeypatch):
     app.quit()
 
 
+def test_lighting_page_openrgb_test_window_runs_static_probe(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.pages as pages
+    from usb9_lcd.gui.pages import LightingPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    monkeypatch.setattr(pages, "save_settings", lambda settings: None)
+    app = QApplication.instance() or QApplication([])
+    controller = FakeLightingController()
+    page = LightingPage(controller=controller, settings=GuiSettings())
+
+    page.connect_openrgb()
+    assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
+    page.open_openrgb_test_window()
+    dialog = page._openrgb_test_dialog
+
+    assert dialog is not None
+    assert dialog.target_combo.count() == 2
+
+    dialog.static_red_button.click()
+
+    assert _process_events_until(app, lambda: "OpenRGB 测试完成" in page.openrgb_status_label.text())
+    assert controller.applied[-1].target_id == "device:0"
+    assert controller.applied[-1].effect == "static"
+    assert controller.applied[-1].color == "#ff0000"
+
+    dialog.close()
+    page.close()
+    app.quit()
+
+
 def test_lighting_page_reconnects_when_selected_target_is_disconnected():
     from PySide6.QtWidgets import QApplication
 

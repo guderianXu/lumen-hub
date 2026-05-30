@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -56,6 +57,106 @@ def save_settings(settings: GuiSettings) -> None:
         override(settings)
         return
     _save_settings_impl(settings)
+
+
+class OpenRgbTestDialog(QDialog):
+    def __init__(self, page: "LightingPage") -> None:
+        super().__init__(page)
+        self.page = page
+        self.setWindowTitle("OpenRGB 测试窗口")
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.resize(620, 420)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        title = QLabel("OpenRGB 测试窗口")
+        title.setObjectName("SectionLabel")
+        layout.addWidget(title)
+
+        hint = QLabel("用于验证主板、风扇和 ARGB 区域的真实写入策略；不会保存到设备固件。")
+        hint.setObjectName("FieldHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.target_combo = QComboBox()
+        layout.addWidget(QLabel("测试目标"))
+        layout.addWidget(self.target_combo)
+
+        button_row = QHBoxLayout()
+        self.refresh_button = QPushButton("刷新画像")
+        self.refresh_button.clicked.connect(self.refresh_targets)
+        self.static_red_button = QPushButton("稳定静态红")
+        self.static_red_button.setObjectName("PrimaryButton")
+        self.static_red_button.clicked.connect(self.apply_stable_static_red)
+        self.single_target_button = QPushButton("只亮选中目标")
+        self.single_target_button.clicked.connect(self.apply_selected_target_red)
+        self.off_button = QPushButton("全部关闭")
+        self.off_button.clicked.connect(self.turn_off_all)
+        for button in (
+            self.refresh_button,
+            self.static_red_button,
+            self.single_target_button,
+            self.off_button,
+        ):
+            button_row.addWidget(button)
+        layout.addLayout(button_row)
+
+        self.profile_text = QTextEdit()
+        self.profile_text.setReadOnly(True)
+        layout.addWidget(self.profile_text, 1)
+        self.refresh_targets()
+
+    def refresh_targets(self) -> None:
+        self.target_combo.clear()
+        for target in self.page.targets:
+            self.target_combo.addItem(self.page._target_display_name(target), target.id)
+        self._show_profiles()
+
+    def apply_stable_static_red(self) -> None:
+        self.page._run_lighting_operation(
+            "OpenRGB 测试：稳定静态红...",
+            "openrgb_test_static_failed",
+            lambda: self.page._openrgb_test_static_red_from_worker(),
+        )
+
+    def apply_selected_target_red(self) -> None:
+        target_id = str(self.target_combo.currentData() or "")
+        if not target_id:
+            self.profile_text.setPlainText("请先连接 OpenRGB 并选择测试目标。")
+            return
+        self.page._run_lighting_operation(
+            "OpenRGB 测试：只亮选中目标...",
+            "openrgb_test_target_failed",
+            lambda: self.page._openrgb_test_single_target_red_from_worker(target_id),
+        )
+
+    def turn_off_all(self) -> None:
+        self.page._run_lighting_operation(
+            "OpenRGB 测试：全部关闭...",
+            "openrgb_test_off_failed",
+            lambda: self.page._turn_off_all_lighting_from_worker(),
+        )
+
+    def _show_profiles(self) -> None:
+        lines: list[str] = []
+        for target in self.page.targets:
+            if target.zone_index is not None:
+                continue
+            payload = self.page.settings.lighting.device_profiles.get(target.id, {})
+            lines.append(f"{target.id} | {target.name}")
+            if isinstance(payload, dict) and payload:
+                lines.append(f"  profile={payload.get('key', 'default')}")
+                lines.append(f"  static={payload.get('static_strategy', 'standard')}")
+                lines.append(f"  zone_size={payload.get('static_zone_size', '--')}")
+                notes = payload.get("notes", [])
+                if isinstance(notes, list):
+                    for note in notes[:3]:
+                        lines.append(f"  note={note}")
+            else:
+                lines.append("  profile=尚未连接或未保存")
+        self.profile_text.setPlainText("\n".join(lines) or "尚未发现 OpenRGB 目标。")
 
 
 class LightingPage(QWidget):
@@ -121,6 +222,7 @@ class LightingPage(QWidget):
         self._argb_wizard_restore: list[LightingSettings] = []
 
         self._argb_wizard_index = -1
+        self._openrgb_test_dialog: OpenRgbTestDialog | None = None
 
         self.operation_finished.connect(self._lighting_operation_finished)
 
@@ -207,6 +309,9 @@ class LightingPage(QWidget):
         self.identify_lighting_button = QPushButton("闪烁识别")
 
         self.identify_lighting_button.clicked.connect(self.identify_selected_target)
+        self.openrgb_test_button = QPushButton("测试窗口")
+
+        self.openrgb_test_button.clicked.connect(self.open_openrgb_test_window)
 
         self.openrgb_status_label = QLabel("未连接")
 
@@ -229,8 +334,9 @@ class LightingPage(QWidget):
         layout.addWidget(self.refresh_lighting_button, 0, 6)
 
         layout.addWidget(self.identify_lighting_button, 0, 7)
+        layout.addWidget(self.openrgb_test_button, 0, 8)
 
-        layout.addWidget(self.openrgb_status_label, 1, 0, 1, 8)
+        layout.addWidget(self.openrgb_status_label, 1, 0, 1, 9)
 
         return panel
 
@@ -869,6 +975,21 @@ class LightingPage(QWidget):
             lambda: self._connect_from_worker(),
 
         )
+
+
+    def open_openrgb_test_window(self) -> None:
+
+        if self._openrgb_test_dialog is not None and self._openrgb_test_dialog.isVisible():
+
+            self._openrgb_test_dialog.raise_()
+
+            self._openrgb_test_dialog.activateWindow()
+
+            return
+
+        self._openrgb_test_dialog = OpenRgbTestDialog(self)
+
+        self._openrgb_test_dialog.show()
 
 
 
@@ -1650,6 +1771,72 @@ class LightingPage(QWidget):
         return f"所有灯光已关闭：{len(targets_to_disable)} 个目标"
 
 
+    def _openrgb_test_static_red_from_worker(self) -> str:
+
+        targets = self._refresh_or_connect_openrgb_from_worker()
+
+        whole_targets = [target for target in targets if target.zone_index is None] or targets
+
+        for target in whole_targets:
+
+            self.controller.apply(
+
+                LightingSettings(
+
+                    target_id=target.id,
+
+                    effect="static",
+
+                    color="#ff0000",
+
+                    brightness_percent=100,
+
+                    speed_percent=50,
+
+                    zone_size=self.argb_zone_size.value(),
+
+                    save=False,
+
+                )
+
+            )
+
+        return f"OpenRGB 测试完成：稳定静态红 {len(whole_targets)} 个目标"
+
+
+    def _openrgb_test_single_target_red_from_worker(self, target_id: str) -> str:
+
+        targets = self._refresh_or_connect_openrgb_from_worker()
+
+        if not any(target.id == target_id for target in targets):
+
+            raise ValueError("测试目标不存在，请先刷新 OpenRGB")
+
+        self.controller.apply(
+
+            LightingSettings(
+
+                target_id=target_id,
+
+                effect="static",
+
+                color="#ff0000",
+
+                brightness_percent=100,
+
+                speed_percent=50,
+
+                zone_size=self.argb_zone_size.value(),
+
+                save=False,
+
+            )
+
+        )
+
+        return f"OpenRGB 测试完成：{target_id} 静态红"
+
+
 
     def _connect_and_apply_from_worker(self, settings: LightingSettings, apply_all: bool = False) -> str:
 
@@ -1893,6 +2080,10 @@ class LightingPage(QWidget):
 
             self._set_targets(self.targets)
 
+        if self._openrgb_test_dialog is not None and self._openrgb_test_dialog.isVisible():
+
+            self._openrgb_test_dialog.refresh_targets()
+
         if message.startswith("ARGB 向导："):
 
             self._sync_argb_wizard_ui()
@@ -1922,6 +2113,8 @@ class LightingPage(QWidget):
             self.refresh_lighting_button,
 
             self.identify_lighting_button,
+
+            self.openrgb_test_button,
 
             self.apply_lighting_button,
 
