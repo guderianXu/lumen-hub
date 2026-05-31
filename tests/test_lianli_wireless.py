@@ -16,6 +16,7 @@ from usb9_lcd.lianli.wireless import (
     RF_PACKET_HEADER,
     RF_PAYLOAD_SIZE,
     RGB_FIRST_PAYLOAD_REPEAT_COUNT,
+    RGB_STATIC_SEQUENCE_REPEAT_COUNT,
     UDEV_RULES,
     WirelessDeviceInfo,
     build_bind_payload,
@@ -24,6 +25,7 @@ from usb9_lcd.lianli.wireless import (
     build_rainbow_rgb_payloads,
     build_rgb_frame_payloads,
     build_rf_chunks,
+    build_static_rgb_preamble_payload,
     build_static_rgb_payloads,
     build_tlv2_effect_payloads,
     build_unbind_payload,
@@ -37,6 +39,8 @@ from usb9_lcd.lianli.wireless import (
     parse_wireless_snapshot,
     scan_known_usb_devices,
     static_rgb_effect_index,
+    static_rgb_wire_color,
+    tinyuz_compress,
     tinyuz_compress_literal,
 )
 import usb9_lcd.lianli.wireless as wireless_module
@@ -547,11 +551,13 @@ def test_static_rgb_payload_builds_led_effect_packets():
     first = payloads[0]
     assert len(first) == RF_PAYLOAD_SIZE
     assert first[:20] == bytes.fromhex("1220aabbccddeeff1020304050600102030400") + bytes([len(payloads)])
-    assert int.from_bytes(first[20:24], "big") == len(tinyuz_compress_literal(bytes(132 * 3)))
+    compressed = tinyuz_compress(bytes(132 * 3))
+    assert int.from_bytes(first[20:24], "big") == len(compressed)
     assert first[25:27] == bytes([0, 1])
     assert first[27] == 132
     assert first[32:34] == bytes([0, 50])
-    assert first[34:38] == DEFAULT_TINYUZ_DICT_SIZE.to_bytes(4, "little")
+    assert first[FIRST_LED_PACKET_DATA_OFFSET:] == bytes(RF_PAYLOAD_SIZE - FIRST_LED_PACKET_DATA_OFFSET)
+    assert payloads[1][20 : 20 + len(compressed)] == compressed
 
 
 def test_infer_led_count_uses_snapshot_hint_when_heuristic_is_ambiguous():
@@ -574,7 +580,8 @@ def test_static_rgb_payload_accepts_led_count_override():
 
     assert payloads[0][27] == 12
     assert int.from_bytes(payloads[0][14:18], "big") == 0x042D9278
-    assert int.from_bytes(payloads[0][20:24], "big") == len(tinyuz_compress_literal(bytes([0, 0, 255]) * 12))
+    assert int.from_bytes(payloads[0][20:24], "big") == len(tinyuz_compress(bytes([0, 0, 254]) * 12))
+    assert payloads[1][20 : 20 + 12] == tinyuz_compress(bytes([0, 0, 254]) * 12)
 
 
 def test_static_rgb_default_effect_index_uses_official_color_slots():
@@ -582,6 +589,11 @@ def test_static_rgb_default_effect_index_uses_official_color_slots():
     assert static_rgb_effect_index((0, 255, 0)) == 0x042D795F
     assert static_rgb_effect_index((0, 0, 255)) == 0x042D9278
     assert static_rgb_effect_index((0, 0, 0)) == 0x040DA1DE
+
+
+def test_static_rgb_wire_color_uses_official_max_component_value():
+    assert static_rgb_wire_color((255, 0, 255)) == (254, 0, 254)
+    assert static_rgb_wire_color((128, 64, 32)) == (128, 64, 32)
 
 
 def test_rainbow_rgb_payload_builds_multi_frame_led_effect_packets():
@@ -623,6 +635,25 @@ def test_backend_builds_static_rgb_rf_chunks():
     assert packets[0][:4] == bytes([RF_PACKET_HEADER, 0, 8, 3])
     assert packets[3][:4] == bytes([RF_PACKET_HEADER, 3, 8, 3])
     assert packets[0:4] == packets[4:8]
+
+
+def test_backend_send_static_rgb_uses_official_preamble_and_repeated_sequences(monkeypatch):
+    monkeypatch.setattr(wireless_module.time, "sleep", lambda _seconds: None)
+    target = parse_wireless_snapshot(_snapshot_payload())[0]
+    sender = FakeSenderTransport()
+    backend = LianLiWirelessBackend(sender=sender)
+
+    packets_written = backend.send_static_rgb(target, (0, 0, 255), led_count=26)
+
+    assert packets_written == 4 + RGB_STATIC_SEQUENCE_REPEAT_COUNT * 20
+    assert sender.writes[0][:4] == bytes([RF_PACKET_HEADER, 0, 8, 0xFF])
+    assert sender.writes[0][4 : 4 + 16] == build_static_rgb_preamble_payload(target)[:16]
+    assert sender.writes[4][:4] == bytes([RF_PACKET_HEADER, 0, 8, 3])
+    assert sender.writes[4][4:24].hex() == "1220aabbccddeeff102030405060042d92780002"
+    assert sender.writes[20][:4] == bytes([RF_PACKET_HEADER, 0, 8, 3])
+    assert sender.writes[20][4:36].hex() == (
+        "1220aabbccddeeff102030405060042d9278010203000000a70000fe7b180300"
+    )
 
 
 def test_backend_builds_rainbow_rgb_rf_chunks_and_analyzer_decodes_frames():

@@ -36,6 +36,11 @@ FIRST_LED_PACKET_DATA_OFFSET = 34
 FIRST_LED_PACKET_DATA_MAX = RF_PAYLOAD_SIZE - FIRST_LED_PACKET_DATA_OFFSET
 DEFAULT_TINYUZ_DICT_SIZE = 4096
 RGB_FIRST_PAYLOAD_REPEAT_COUNT = 4
+RGB_STATIC_SEQUENCE_REPEAT_COUNT = 5
+RGB_STATIC_PREAMBLE_DELAY_S = 0.43
+RGB_STATIC_FRAME_DELAY_S = 0.020
+RGB_STATIC_SEQUENCE_DELAY_S = 0.160
+RGB_STATIC_CHUNK_DELAY_S = 0.001
 
 STATIC_RGB_EFFECT_INDEXES = {
     (255, 0, 0): 0x042D671D,
@@ -581,21 +586,46 @@ class LianLiWirelessBackend:
     ) -> int:
         if self.sender is None:
             raise LianLiWirelessError("sender transport is not configured")
-        packets = self.build_static_rgb_packets(
+        resolved_led_count = infer_led_count(target) if led_count is None else int(led_count)
+        payloads = build_static_rgb_payloads(
             target,
             color,
             interval_ms=interval_ms,
             effect_index=effect_index,
-            led_count=led_count,
-            repeat_first_payload=repeat_first_payload,
+            led_count=resolved_led_count,
         )
-        for packet in packets:
+
+        packets_written = 0
+
+        def write_packet(packet: bytes) -> None:
+            nonlocal packets_written
             written = self.sender.write(packet)
             if written != len(packet):
                 raise LianLiWirelessError(
                     f"incomplete sender packet write ({written}/{len(packet)})"
                 )
-        return len(packets)
+            packets_written += 1
+
+        preamble = build_static_rgb_preamble_payload(target)
+        for packet in build_rf_chunks(target.channel, 0xFF, preamble):
+            write_packet(packet)
+            time.sleep(RGB_STATIC_CHUNK_DELAY_S)
+        time.sleep(RGB_STATIC_PREAMBLE_DELAY_S)
+
+        first_repeat = max(1, int(repeat_first_payload))
+        for _ in range(RGB_STATIC_SEQUENCE_REPEAT_COUNT):
+            for payload_index, payload in enumerate(payloads):
+                repeat = first_repeat if payload_index == 0 else 1
+                for _repeat_index in range(repeat):
+                    for packet in build_rf_chunks(target.channel, target.rx_type, payload):
+                        write_packet(packet)
+                        time.sleep(RGB_STATIC_CHUNK_DELAY_S)
+                    time.sleep(
+                        RGB_STATIC_FRAME_DELAY_S
+                        if payload_index == 0
+                        else RGB_STATIC_SEQUENCE_DELAY_S
+                    )
+        return packets_written
 
     def send_rainbow_rgb(
         self,
@@ -657,13 +687,25 @@ class LianLiWirelessBackend:
             led_count=led_count,
             repeat_first_payload=repeat_first_payload,
         )
+        preamble = build_static_rgb_preamble_payload(target)
+        for packet in build_rf_chunks(target.channel, 0xFF, preamble):
+            written = self.sender.write(packet)
+            if written != len(packet):
+                raise LianLiWirelessError(
+                    f"incomplete sender packet write ({written}/{len(packet)})"
+                )
+            time.sleep(RGB_STATIC_CHUNK_DELAY_S)
+        time.sleep(RGB_STATIC_PREAMBLE_DELAY_S)
+        packets_written = 4
         for packet in packets:
             written = self.sender.write(packet)
             if written != len(packet):
                 raise LianLiWirelessError(
                     f"incomplete sender packet write ({written}/{len(packet)})"
                 )
-        return len(packets)
+            packets_written += 1
+            time.sleep(RGB_STATIC_CHUNK_DELAY_S)
+        return packets_written
 
 
 class PyUsbEndpointTransport:
@@ -1071,7 +1113,7 @@ def build_static_rgb_payloads(
     resolved_led_count = infer_led_count(target) if led_count is None else led_count
     if resolved_led_count <= 0:
         raise LianLiWirelessError("LED count must be positive")
-    rgb = _rgb_bytes(color) * resolved_led_count
+    rgb = _rgb_bytes(static_rgb_wire_color(color)) * resolved_led_count
     return build_rgb_frame_payloads(
         target,
         rgb,
@@ -1079,7 +1121,17 @@ def build_static_rgb_payloads(
         frame_count=1,
         interval_ms=interval_ms,
         effect_index=static_rgb_effect_index(color) if effect_index is None else effect_index,
+        first_packet_data=False,
+        compact_compression=True,
     )
+
+
+def build_static_rgb_preamble_payload(target: WirelessDeviceInfo) -> bytes:
+    payload = bytearray(RF_PAYLOAD_SIZE)
+    payload[0] = 0x12
+    payload[1] = 0x14
+    payload[10:16] = _mac_to_bytes(target.master_mac)
+    return bytes(payload)
 
 
 def build_rainbow_rgb_payloads(
@@ -1794,6 +1846,10 @@ def static_rgb_effect_index(color: tuple[int, int, int]) -> int:
     if mapped is not None:
         return mapped
     return 0x042D0000 | (zlib.crc32(bytes(rgb)) & 0xFFFF)
+
+
+def static_rgb_wire_color(color: tuple[int, int, int]) -> tuple[int, int, int]:
+    return tuple(254 if component == 255 else component for component in _rgb_bytes(color))  # type: ignore[return-value]
 
 
 def _hsv_to_rgb(hue: float, saturation: float, value: float) -> tuple[int, int, int]:
