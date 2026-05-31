@@ -47,6 +47,7 @@ from usb9_lcd.lianli.wireless import (
     create_pyusb_backend,
     infer_led_count,
     scan_known_usb_devices as _scan_known_usb_devices_impl,
+    static_rgb_effect_index,
 )
 
 
@@ -2997,7 +2998,7 @@ class LianLiWirelessPage(QWidget):
 
         probe_color = tuple(max(0, min(255, int(value))) for value in probe_color)
 
-        probe_color_text = "#fe0000"
+        probe_color_text = self._rgb_to_hex(probe_color)
 
 
 
@@ -3031,7 +3032,7 @@ class LianLiWirelessPage(QWidget):
 
                 interval_ms=0,
 
-                effect_index=1,
+                effect_index=static_rgb_effect_index(probe_color),
 
             )
 
@@ -3132,7 +3133,7 @@ class LianLiWirelessPage(QWidget):
 
                     interval_ms=0,
 
-                    effect_index=1,
+                    effect_index=static_rgb_effect_index((0, 0, 0)),
 
                 )
 
@@ -3375,8 +3376,6 @@ class LianLiWirelessPage(QWidget):
 
                         led_count=self.lianli_direct_led_count.value(),
 
-                        effect_index=77000000 + iterations,
-
                     )
 
                     iterations += 1
@@ -3498,8 +3497,6 @@ class LianLiWirelessPage(QWidget):
                 self._hex_to_rgb(first),
 
                 led_count=led_count,
-
-                effect_index=77100000,
 
             )
 
@@ -3994,6 +3991,12 @@ class LianLiWirelessPage(QWidget):
             raise ValueError(f"无效 RGB 颜色：{color}")
 
         return (int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
+
+    def _rgb_to_hex(self, color: tuple[int, int, int]) -> str:
+
+        red, green, blue = (max(0, min(255, int(value))) for value in color)
+
+        return f"#{red:02x}{green:02x}{blue:02x}"
 
 
 
@@ -4723,6 +4726,7 @@ class LianLiWirelessPage(QWidget):
             return
 
         color = (0, 0, 0)
+        effect_index = static_rgb_effect_index(color)
 
 
 
@@ -4752,9 +4756,9 @@ class LianLiWirelessPage(QWidget):
 
             analysis_filename="analyze-live-rgb.json",
 
-            write_fields={"color": list(color), "effect_index": 1},
+            write_fields={"color": list(color), "effect_index": effect_index},
 
-            result_fields={"color": list(color), "effect_index": 1},
+            result_fields={"color": list(color), "effect_index": effect_index},
 
             writer=lambda backend, target: backend.send_static_rgb(target, color),
 

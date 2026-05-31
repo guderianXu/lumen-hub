@@ -306,7 +306,7 @@ class MainWindow(QMainWindow):
                 window.stop_animation()
 
         self.lighting_page = LightingPage(
-            auto_connect=auto_refresh,
+            auto_connect=False,
             settings=self.settings,
             sync_color_provider=self.lighting_sync_color,
         )

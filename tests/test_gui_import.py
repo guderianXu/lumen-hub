@@ -1128,6 +1128,46 @@ def test_lianli_wireless_page_sends_dynamic_effects_as_tlv2_frames(tmp_path: Pat
     app.quit()
 
 
+def test_lianli_wireless_page_static_effect_uses_backend_default_color_slot():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.static_kwargs: list[dict[str, object]] = []
+
+        def send_static_rgb(self, target, color, **kwargs):
+            self.static_kwargs.append(kwargs)
+            return 8
+
+    target = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend)
+
+    page.lianli_direct_led_count.setValue(26)
+    packets = page._send_lianli_effect_with_backend(backend, target, "static")
+
+    assert packets == 8
+    assert backend.static_kwargs == [{"led_count": 26}]
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_runs_safe_sync_experiment(tmp_path: Path):
     from PySide6.QtWidgets import QApplication
 
@@ -1886,6 +1926,47 @@ def test_main_window_keeps_fan_page_lazy_when_auto_refresh_is_enabled():
 
     assert window.fan_page.monitor is None
     assert not window.fan_page._loaded
+
+    window.close()
+    app.quit()
+
+
+def test_main_window_does_not_autoconnect_openrgb_on_startup(monkeypatch):
+    from PySide6.QtCore import Signal
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    import usb9_lcd.gui.main_window as main_window
+    from usb9_lcd.gui.main_window import MainWindow
+
+    seen = {}
+
+    class FakeLightingPage(QWidget):
+        status_changed = Signal(str)
+
+        def __init__(self, *, auto_connect, **_kwargs):
+            super().__init__()
+            seen["auto_connect"] = auto_connect
+
+        def home_status_text(self):
+            return "lighting"
+
+        def connect_openrgb(self):
+            seen["connect_openrgb_called"] = True
+
+        def release_lighting_resources(self):
+            seen["release_lighting_resources"] = True
+
+    monkeypatch.setattr(main_window, "LightingPage", FakeLightingPage)
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=True,
+    )
+
+    assert seen["auto_connect"] is False
+    assert "connect_openrgb_called" not in seen
 
     window.close()
     app.quit()
