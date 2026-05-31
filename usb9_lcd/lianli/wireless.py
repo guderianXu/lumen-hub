@@ -224,9 +224,25 @@ TLV2_EFFECT_SPECS: dict[str, Tlv2EffectSpec] = {
     "runway": Tlv2EffectSpec("runway", 70, 60, 0x02096C54),
     "meteor": Tlv2EffectSpec("meteor", 36, 60, 0x020984D3),
     "color-cycle": Tlv2EffectSpec("color-cycle", 48, 60, 0x02099D4A),
+    "staggered": Tlv2EffectSpec("staggered", 48, 60, 0x020B0800),
+    "tide": Tlv2EffectSpec("tide", 60, 60, 0x020B0900),
+    "mixing": Tlv2EffectSpec("mixing", 72, 60, 0x020B0A00),
+    "voice": Tlv2EffectSpec("voice", 48, 55, 0x020B0B00),
+    "door": Tlv2EffectSpec("door", 52, 60, 0x020B0C00),
+    "render": Tlv2EffectSpec("render", 64, 60, 0x020B0D00),
     "ripple": Tlv2EffectSpec("ripple", 294, 90, 0x0209B5D3),
+    "reflect": Tlv2EffectSpec("reflect", 56, 60, 0x020B0F00),
+    "tail-chasing": Tlv2EffectSpec("tail-chasing", 72, 60, 0x020B1000),
+    "paint": Tlv2EffectSpec("paint", 64, 60, 0x020B1100),
+    "ping-pong": Tlv2EffectSpec("ping-pong", 60, 55, 0x020B1200),
+    "stack": Tlv2EffectSpec("stack", 64, 60, 0x020B1300),
+    "cover-cycle": Tlv2EffectSpec("cover-cycle", 72, 60, 0x020B1400),
     "wave": Tlv2EffectSpec("wave", 24, 60, 0x0209CE48),
+    "racing": Tlv2EffectSpec("racing", 48, 45, 0x020B1600),
+    "lottery": Tlv2EffectSpec("lottery", 80, 55, 0x020B1700),
+    "intertwine": Tlv2EffectSpec("intertwine", 72, 60, 0x020B1800),
     "meteor-shower": Tlv2EffectSpec("meteor-shower", 48, 60, 0x0209E6D1),
+    "collide": Tlv2EffectSpec("collide", 64, 60, 0x020B1A00),
     "electric-current": Tlv2EffectSpec("electric-current", 80, 60, 0x0209FF5B),
     "kaleidoscope": Tlv2EffectSpec("kaleidoscope", 24, 60, 0x020A182A),
     "twinkle": Tlv2EffectSpec("twinkle", 200, 55, 0x020A31DE),
@@ -240,9 +256,25 @@ TLV2_EFFECT_SEQUENCE_REPEAT_COUNTS: dict[str, int] = {
     "runway": 2,
     "meteor": 1,
     "color-cycle": 6,
+    "staggered": 6,
+    "tide": 6,
+    "mixing": 7,
+    "voice": 6,
+    "door": 6,
+    "render": 5,
     "ripple": 3,
+    "reflect": 5,
+    "tail-chasing": 6,
+    "paint": 6,
+    "ping-pong": 5,
+    "stack": 5,
+    "cover-cycle": 6,
     "wave": 2,
+    "racing": 6,
+    "lottery": 6,
+    "intertwine": 6,
     "meteor-shower": 5,
+    "collide": 6,
     "electric-current": 6,
     "kaleidoscope": 2,
     "twinkle": 5,
@@ -254,6 +286,9 @@ TLV2_EFFECT_ALIASES = {
     "colorcycle": "color-cycle",
     "meteor_shower": "meteor-shower",
     "electric_current": "electric-current",
+    "tail_chasing": "tail-chasing",
+    "ping_pong": "ping-pong",
+    "cover_cycle": "cover-cycle",
     "starry": "twinkle",
     "star": "twinkle",
     "twinkle": "twinkle",
@@ -1344,6 +1379,17 @@ def generate_tlv2_effect_rgb_frames(
         elif effect_key == "color-cycle":
             frame_color = colors[(frame_index * len(colors)) // spec.frame_count % len(colors)]
             frame = [frame_color] * resolved_led_count
+        elif effect_key in _GENERATED_EXTRA_TLV2_EFFECTS:
+            frame = _extra_tlv2_effect_frame(
+                effect_key,
+                resolved_led_count,
+                frame_index,
+                spec.frame_count,
+                colors,
+                primary,
+                accent,
+                direction_step,
+            )
         elif effect_key == "ripple":
             frame = _ripple_frame(resolved_led_count, frame_index, spec.frame_count, colors, direction_step)
         elif effect_key == "wave":
@@ -2028,6 +2074,175 @@ def _wave_frame(
         level = (math.sin(phase * math.tau) + 1.0) / 2.0
         frame.append(_scale_rgb(color, 0.08 + level * 0.92))
     return frame
+
+
+_GENERATED_EXTRA_TLV2_EFFECTS = {
+    "staggered",
+    "tide",
+    "mixing",
+    "voice",
+    "door",
+    "render",
+    "reflect",
+    "tail-chasing",
+    "paint",
+    "ping-pong",
+    "stack",
+    "cover-cycle",
+    "racing",
+    "lottery",
+    "intertwine",
+    "collide",
+}
+
+
+def _extra_tlv2_effect_frame(
+    effect_key: str,
+    led_count: int,
+    frame_index: int,
+    frame_count: int,
+    colors: tuple[tuple[int, int, int], ...],
+    primary: tuple[int, int, int],
+    accent: tuple[int, int, int],
+    direction_step: int,
+) -> list[tuple[int, int, int]]:
+    def palette(index: int) -> tuple[int, int, int]:
+        return colors[index % len(colors)]
+
+    progress = frame_index / max(1, frame_count)
+    phase = progress * math.tau
+    frame: list[tuple[int, int, int]] = []
+
+    if effect_key == "staggered":
+        group = max(2, led_count // 6)
+        active = (frame_index * 4 // max(1, frame_count)) % 4
+        for led_index in range(led_count):
+            lane = (led_index // group) % 4
+            level = 1.0 if lane == active else 0.18
+            frame.append(_scale_rgb(palette(lane), level))
+        return frame
+
+    if effect_key == "tide":
+        for led_index in range(led_count):
+            x = led_index / max(1, led_count - 1)
+            wave = (math.sin((x * 2.4 * direction_step + progress) * math.tau) + 1.0) / 2.0
+            frame.append(_mix_rgb(palette(0), palette(1), wave))
+        return frame
+
+    if effect_key == "mixing":
+        for led_index in range(led_count):
+            x = led_index / max(1, led_count)
+            a = (math.sin((x + progress * direction_step) * math.tau) + 1.0) / 2.0
+            b = (math.sin((x * 2.0 - progress * direction_step) * math.tau) + 1.0) / 2.0
+            frame.append(_mix_rgb(_mix_rgb(palette(0), palette(1), a), palette(2), b * 0.65))
+        return frame
+
+    if effect_key == "voice":
+        bars = max(4, min(10, led_count // 3))
+        for led_index in range(led_count):
+            bar = min(bars - 1, led_index * bars // led_count)
+            local = (led_index * bars) % led_count / max(1, led_count)
+            height = 0.2 + 0.8 * ((math.sin(phase * (1.0 + bar * 0.17) + bar) + 1.0) / 2.0)
+            frame.append(_scale_rgb(palette(bar), 1.0 if local < height else 0.08))
+        return frame
+
+    if effect_key == "door":
+        center = (led_count - 1) / 2.0
+        opening = (math.sin(phase - math.pi / 2) + 1.0) / 2.0
+        for led_index in range(led_count):
+            distance = abs(led_index - center) / max(1.0, center)
+            edge = 1.0 - abs(distance - opening) / 0.18
+            frame.append(_scale_rgb(primary, max(0.04, min(1.0, edge))))
+        return frame
+
+    if effect_key == "render":
+        for led_index in range(led_count):
+            hue = (led_index / max(1, led_count) + progress * direction_step) % 1.0
+            frame.append(_hsv_to_rgb(hue, 0.9, 1.0))
+        return frame
+
+    if effect_key == "reflect":
+        center = (led_count - 1) / 2.0
+        for led_index in range(led_count):
+            mirrored = abs(led_index - center) / max(1.0, center)
+            level = (math.sin((mirrored * 1.8 - progress * direction_step) * math.tau) + 1.0) / 2.0
+            frame.append(_mix_rgb(_scale_rgb(primary, 0.08), accent, level))
+        return frame
+
+    if effect_key == "tail-chasing":
+        return _meteor_frame(led_count, frame_index, frame_count, primary, direction_step)
+
+    if effect_key == "paint":
+        brush = int(progress * led_count) % led_count
+        width = max(3, led_count // 5)
+        for led_index in range(led_count):
+            distance = (direction_step * (brush - led_index)) % led_count
+            if distance < width:
+                frame.append(_mix_rgb(palette(distance), primary, 1.0 - distance / width))
+            else:
+                frame.append(_scale_rgb(palette(led_index), 0.12))
+        return frame
+
+    if effect_key == "ping-pong":
+        span = max(1, led_count - 1)
+        cycle = (frame_index * 2 * span // max(1, frame_count)) % (2 * span)
+        pos = cycle if cycle <= span else 2 * span - cycle
+        for led_index in range(led_count):
+            level = max(0.0, 1.0 - abs(led_index - pos) / 4.0)
+            frame.append(_scale_rgb(primary, level))
+        return frame
+
+    if effect_key == "stack":
+        fill = 1 + (frame_index * led_count // max(1, frame_count))
+        color = palette(frame_index * len(colors) // max(1, frame_count))
+        for led_index in range(led_count):
+            frame.append(color if led_index < fill else _scale_rgb(color, 0.08))
+        return frame
+
+    if effect_key == "cover-cycle":
+        segment = max(2, led_count // len(colors))
+        shift = direction_step * frame_index * led_count // max(1, frame_count)
+        for led_index in range(led_count):
+            frame.append(palette((led_index + shift) // segment))
+        return frame
+
+    if effect_key == "racing":
+        stripe = max(2, led_count // 8)
+        shift = direction_step * frame_index * 2
+        for led_index in range(led_count):
+            active = ((led_index + shift) // stripe) % 2 == 0
+            frame.append(primary if active else _scale_rgb(accent, 0.18))
+        return frame
+
+    if effect_key == "lottery":
+        for led_index in range(led_count):
+            hit = ((led_index * 17 + frame_index * 23) % 53) < 7
+            glow = ((led_index * 5 + frame_index) % 19) == 0
+            frame.append(palette(led_index + frame_index) if hit else (_scale_rgb(accent, 0.35) if glow else (0, 0, 0)))
+        return frame
+
+    if effect_key == "intertwine":
+        for led_index in range(led_count):
+            x = led_index / max(1, led_count)
+            a = (math.sin((x * 2.0 + progress * direction_step) * math.tau) + 1.0) / 2.0
+            b = (math.sin((x * 2.0 - progress * direction_step) * math.tau) + 1.0) / 2.0
+            frame.append(_mix_rgb(_scale_rgb(palette(0), a), _scale_rgb(palette(1), b), 0.5))
+        return frame
+
+    if effect_key == "collide":
+        span = max(1, led_count - 1)
+        pos = frame_index * span // max(1, frame_count)
+        left = pos
+        right = span - pos
+        for led_index in range(led_count):
+            level = max(0.0, 1.0 - min(abs(led_index - left), abs(led_index - right)) / 4.0)
+            burst = 0.0
+            if abs(left - right) <= 2:
+                burst = max(0.0, 1.0 - abs(led_index - span / 2.0) / max(2.0, led_count / 4.0))
+            frame.append(_mix_rgb(_scale_rgb(primary, level), accent, burst))
+        return frame
+
+    raise LianLiWirelessError(f"unsupported generated TLV2 effect: {effect_key}")
 
 
 def _meteor_shower_frame(

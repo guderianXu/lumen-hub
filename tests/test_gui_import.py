@@ -1128,6 +1128,64 @@ def test_lianli_wireless_page_sends_dynamic_effects_as_tlv2_frames(tmp_path: Pat
     app.quit()
 
 
+def test_lianli_wireless_page_sends_remaining_effects_as_tlv2_frames():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.effects: list[str] = []
+
+        def send_tlv2_effect(self, target, effect, *, led_count, brightness, **kwargs):
+            self.effects.append(effect)
+            return 12
+
+    target = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend)
+
+    remaining = [
+        "staggered",
+        "tide",
+        "mixing",
+        "voice",
+        "door",
+        "render",
+        "reflect",
+        "tail-chasing",
+        "paint",
+        "ping-pong",
+        "stack",
+        "cover-cycle",
+        "racing",
+        "lottery",
+        "intertwine",
+        "collide",
+    ]
+
+    for effect in remaining:
+        page._send_lianli_effect_with_backend(backend, target, effect)
+
+    assert backend.effects == remaining
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_apply_rainbow_uses_tlv2_once_path():
     from PySide6.QtWidgets import QApplication
 
@@ -1157,6 +1215,44 @@ def test_lianli_wireless_page_apply_rainbow_uses_tlv2_once_path():
     page.apply_lianli_lighting_once()
 
     assert applied == ["rainbow"]
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_exposes_remaining_tlv2_effects():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage()
+
+    expected = {
+        "staggered",
+        "tide",
+        "mixing",
+        "voice",
+        "door",
+        "render",
+        "reflect",
+        "tail-chasing",
+        "paint",
+        "ping-pong",
+        "stack",
+        "cover-cycle",
+        "racing",
+        "lottery",
+        "intertwine",
+        "collide",
+    }
+
+    available = {
+        str(page.lianli_effect_combo.itemData(index))
+        for index in range(page.lianli_effect_combo.count())
+    }
+
+    assert expected <= available
 
     page.close()
     app.quit()

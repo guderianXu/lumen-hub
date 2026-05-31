@@ -855,6 +855,18 @@ class LianLiWirelessPage(QWidget):
 
             ("跑道", "runway"),
 
+            ("交错", "staggered"),
+
+            ("潮汐", "tide"),
+
+            ("混色", "mixing"),
+
+            ("声控", "voice"),
+
+            ("开门", "door"),
+
+            ("渲染", "render"),
+
             ("星空", "starry"),
 
             ("色彩循环", "color-cycle"),
@@ -863,7 +875,27 @@ class LianLiWirelessPage(QWidget):
 
             ("涟漪", "ripple"),
 
+            ("反射", "reflect"),
+
+            ("追尾", "tail-chasing"),
+
+            ("涂抹", "paint"),
+
+            ("乒乓", "ping-pong"),
+
+            ("堆叠", "stack"),
+
+            ("覆盖循环", "cover-cycle"),
+
+            ("竞速", "racing"),
+
+            ("乐透", "lottery"),
+
+            ("交织", "intertwine"),
+
             ("流星雨", "meteor-shower"),
+
+            ("碰撞", "collide"),
 
             ("电流", "electric-current"),
 
@@ -1269,6 +1301,18 @@ class LianLiWirelessPage(QWidget):
 
             ("跑道", "runway", True),
 
+            ("交错", "staggered", True),
+
+            ("潮汐", "tide", True),
+
+            ("混色", "mixing", True),
+
+            ("声控", "voice", True),
+
+            ("开门", "door", True),
+
+            ("渲染", "render", True),
+
             ("星空", "starry", True),
 
             ("色彩循环", "color-cycle", True),
@@ -1277,7 +1321,27 @@ class LianLiWirelessPage(QWidget):
 
             ("涟漪", "ripple", True),
 
+            ("反射", "reflect", True),
+
+            ("追尾", "tail-chasing", True),
+
+            ("涂抹", "paint", True),
+
+            ("乒乓", "ping-pong", True),
+
+            ("堆叠", "stack", True),
+
+            ("覆盖循环", "cover-cycle", True),
+
+            ("竞速", "racing", True),
+
+            ("乐透", "lottery", True),
+
+            ("交织", "intertwine", True),
+
             ("流星雨", "meteor-shower", True),
+
+            ("碰撞", "collide", True),
 
             ("电流", "electric-current", True),
 
@@ -3430,11 +3494,27 @@ class LianLiWirelessPage(QWidget):
             "breathing",
             "meteor",
             "runway",
+            "staggered",
+            "tide",
+            "mixing",
+            "voice",
+            "door",
+            "render",
             "wave",
             "starry",
             "color-cycle",
             "ripple",
+            "reflect",
+            "tail-chasing",
+            "paint",
+            "ping-pong",
+            "stack",
+            "cover-cycle",
+            "racing",
+            "lottery",
+            "intertwine",
             "meteor-shower",
+            "collide",
             "electric-current",
             "kaleidoscope",
             "rainbow-morph",
