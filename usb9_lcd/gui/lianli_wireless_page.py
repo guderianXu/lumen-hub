@@ -989,6 +989,20 @@ class LianLiWirelessPage(QWidget):
 
         self._update_lianli_color_button(self.lianli_accent_color_button, self.lianli_accent_color, "点缀色")
 
+        self.lianli_color_controls = QWidget()
+
+        self.lianli_color_controls_layout = QHBoxLayout(self.lianli_color_controls)
+
+        self.lianli_color_controls_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.lianli_color_controls_layout.setSpacing(10)
+
+        self.lianli_color_controls_layout.addWidget(self.lianli_color_button)
+
+        self.lianli_color_controls_layout.addWidget(self.lianli_accent_color_button)
+
+        self.lianli_color_controls_layout.addStretch(1)
+
         self._lianli_rotation_color_values = self._parse_lianli_color_list(
             str(getattr(self.settings.lianli_wireless, "rotation_colors", ",".join(LIANLI_DEFAULT_ROTATION_COLORS)) or ",".join(LIANLI_DEFAULT_ROTATION_COLORS))
         )
@@ -1049,9 +1063,7 @@ class LianLiWirelessPage(QWidget):
 
         light_layout.addWidget(self.lianli_color_label, 2, 0)
 
-        light_layout.addWidget(self.lianli_color_button, 2, 1)
-
-        light_layout.addWidget(self.lianli_accent_color_button, 2, 2)
+        light_layout.addWidget(self.lianli_color_controls, 2, 1, 1, 2)
 
         light_layout.addWidget(self.lianli_rotation_label, 3, 0)
 
@@ -4616,9 +4628,13 @@ class LianLiWirelessPage(QWidget):
 
             widget.setVisible(has_brightness)
 
-        for widget in (self.lianli_color_label, self.lianli_color_button):
+        has_color_controls = has_color or has_accent
 
-            widget.setVisible(has_color)
+        for widget in (self.lianli_color_label, self.lianli_color_controls):
+
+            widget.setVisible(has_color_controls)
+
+        self.lianli_color_button.setVisible(has_color)
 
         self.lianli_accent_color_button.setVisible(has_accent)
 

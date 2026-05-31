@@ -1567,7 +1567,7 @@ def _remap_official_tlv2_rgb(
     accent: tuple[int, int, int],
     palette: tuple[tuple[int, int, int], ...],
 ) -> bytes:
-    basis = _official_tlv2_palette_basis(primary=primary, accent=accent, palette=palette)
+    basis = _official_tlv2_palette_basis(effect_key=effect_key, primary=primary, accent=accent, palette=palette)
     out = bytearray(len(raw))
     for offset in range(0, len(raw), 3):
         red, green, blue = raw[offset], raw[offset + 1], raw[offset + 2]
@@ -1589,11 +1589,14 @@ def _remap_official_tlv2_rgb(
 
 def _official_tlv2_palette_basis(
     *,
+    effect_key: str,
     primary: tuple[int, int, int],
     accent: tuple[int, int, int],
     palette: tuple[tuple[int, int, int], ...],
 ) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
     colors = [_official_rgb_tuple(primary)]
+    if effect_key == "runway":
+        colors.append(_official_rgb_tuple(accent))
     for color in palette:
         official = _official_rgb_tuple(color)
         if official not in colors:

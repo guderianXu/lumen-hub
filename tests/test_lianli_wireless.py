@@ -959,6 +959,27 @@ def test_tlv2_runway_uses_accent_color_for_second_color_slot():
     assert (0, 255, 0) in _unique_frame_colors(red_green)
 
 
+def test_tlv2_runway_official_template_uses_accent_color_for_second_color_slot():
+    red_blue, _spec = generate_tlv2_effect_rgb_frames(
+        "runway",
+        led_count=wireless_module.OFFICIAL_TLV2_LED_COUNT,
+        color=(255, 0, 0),
+        accent_color=(0, 0, 255),
+        brightness=100,
+    )
+    red_green, _spec = generate_tlv2_effect_rgb_frames(
+        "runway",
+        led_count=wireless_module.OFFICIAL_TLV2_LED_COUNT,
+        color=(255, 0, 0),
+        accent_color=(0, 255, 0),
+        brightness=100,
+    )
+
+    assert red_blue != red_green
+    assert any(blue > red and blue > green for red, green, blue in _unique_frame_colors(red_blue))
+    assert any(green > red and green > blue for red, green, blue in _unique_frame_colors(red_green))
+
+
 def test_tlv2_effect_capability_sets_include_expected_key_controls():
     direction_effects = {
         effect
@@ -1415,7 +1436,7 @@ def test_tlv2_effect_generators_match_official_lconnect_decoded_hashes():
         "rainbow-morph": "3cda4ea477d30fe809ef96eada58fc3e01cd97d327ff950e0b0cec522e2c1493",
         "static": "8e8afa65e420bcae17bd6160d726be2ae3fc30910c67310b8f97e7b4818cc50a",
         "breathing": "2af9e7357c998f2ed1b350a5f5e9779bd8c9f6f72e75a02d0ae293e75b2a2189",
-        "runway": "6bc2b030d36770baf253b39129836ac7eb093063194e16f0fc4cbcdd85197ab0",
+        "runway": "f2bf7f368e7098c611657a6d8a047d21a486992cb188089ee830b696969508e5",
         "meteor": "9d5af8e24cc92980dc1e7a6447238acc426ba5b20e4211e7e9cc92ce6c83292e",
         "color-cycle": "96e64e672fd10f2143886e66877ee2bce79c1cb3d8bb4a2e9ce35a9973923b1d",
         "ripple": "a5eb837757c4384ac6814124a43261af3b9b833a35c62bdec1bbd1d91a5b009f",

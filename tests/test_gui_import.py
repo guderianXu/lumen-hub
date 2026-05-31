@@ -1236,6 +1236,19 @@ def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
         (17, 34, 51),
         accent_color=(170, 187, 204),
         palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9), (255, 214, 10)],
+        direction="right",
+    )
+
+    page._send_lianli_effect_with_backend(backend, target, "runway")
+    assert backend.calls[-1][0] == "runway"
+    assert backend.calls[-1][1]["color"] == (17, 34, 51)
+    assert backend.calls[-1][1]["accent_color"] == (170, 187, 204)
+    assert backend.calls[-1][1]["effect_index"] == tlv2_color_effect_index(
+        "runway",
+        (17, 34, 51),
+        accent_color=(170, 187, 204),
+        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9), (255, 214, 10)],
+        direction="right",
     )
     page._remember_lianli_effect_settings("ripple")
     assert page.settings.lianli_wireless.accent_color == "#aabbcc"
