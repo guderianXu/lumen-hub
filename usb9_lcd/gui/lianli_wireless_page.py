@@ -864,6 +864,14 @@ class LianLiWirelessPage(QWidget):
 
             ("波浪", "wave"),
 
+            ("涟漪", "ripple"),
+
+            ("流星雨", "meteor-shower"),
+
+            ("电流", "electric-current"),
+
+            ("万花筒", "kaleidoscope"),
+
         ):
 
             self.lianli_effect_combo.addItem(label, key)
@@ -1258,21 +1266,29 @@ class LianLiWirelessPage(QWidget):
 
             ("关灯", "off", True),
 
-            ("渐变彩虹（待抓包）", "gradient-rainbow", False),
+            ("渐变彩虹", "gradient-rainbow", True),
 
-            ("呼吸（待抓包）", "breathing", False),
+            ("呼吸", "breathing", True),
 
-            ("流星（待抓包）", "meteor", False),
+            ("流星", "meteor", True),
 
-            ("跑道（待抓包）", "runway", False),
+            ("跑道", "runway", True),
 
-            ("星空（待抓包）", "starry", False),
+            ("星空", "starry", True),
 
-            ("色彩循环（待抓包）", "color-cycle", False),
+            ("色彩循环", "color-cycle", True),
 
-            ("覆盖周期（待抓包）", "overlap-cycle", False),
+            ("覆盖周期", "overlap-cycle", True),
 
-            ("波浪（待抓包）", "wave", False),
+            ("波浪", "wave", True),
+
+            ("涟漪", "ripple", True),
+
+            ("流星雨", "meteor-shower", True),
+
+            ("电流", "electric-current", True),
+
+            ("万花筒", "kaleidoscope", True),
 
         ):
 
@@ -3421,21 +3437,7 @@ class LianLiWirelessPage(QWidget):
 
         led_count = self.lianli_direct_led_count.value()
 
-        if effect == "rainbow":
-
-            return self._send_single_rainbow_frame(
-
-                backend,
-
-                target,
-
-                phase=0.0,
-
-                effect_index=76000001,
-
-            )
-
-        if effect in {"static", "breathing", "meteor", "runway", "wave", "starry"}:
+        if effect == "static":
 
             return backend.send_static_rgb(
 
@@ -3453,7 +3455,51 @@ class LianLiWirelessPage(QWidget):
 
             return backend.send_static_rgb(target, (0, 0, 0), led_count=led_count, effect_index=70000000)
 
-        if effect in {"rotate", "gradient-rainbow", "color-cycle", "overlap-cycle"}:
+        native_effects = {
+            "rainbow",
+            "gradient-rainbow",
+            "breathing",
+            "meteor",
+            "runway",
+            "wave",
+            "starry",
+            "color-cycle",
+            "ripple",
+            "meteor-shower",
+            "electric-current",
+            "kaleidoscope",
+            "rainbow-morph",
+        }
+
+        if effect in native_effects:
+
+            palette = [self._hex_to_rgb(color) for color in self._rotation_colors()]
+
+            effect_name = "twinkle" if effect == "starry" else effect
+
+            return backend.send_tlv2_effect(
+
+                target,
+
+                effect_name,
+
+                color=self._hex_to_rgb(self.lianli_static_color),
+
+                accent_color=(255, 255, 255),
+
+                palette=palette,
+
+                brightness=self.lianli_brightness_slider.value(),
+
+                direction=str(self.lianli_direction_combo.currentData() or "left"),
+
+                led_count=led_count,
+
+                effect_index=70000000 + int(time.time()) % 100000,
+
+            )
+
+        if effect in {"rotate", "overlap-cycle"}:
 
             first = self._rotation_colors()[0]
 
@@ -4181,11 +4227,30 @@ class LianLiWirelessPage(QWidget):
 
         effect = str(self.lianli_effect_combo.currentData() or "off")
 
-        color_effects = {"static", "breathing", "meteor", "runway", "wave", "starry"}
+        color_effects = {
+            "static",
+            "breathing",
+            "meteor",
+            "runway",
+            "wave",
+            "starry",
+            "ripple",
+            "meteor-shower",
+            "electric-current",
+        }
 
-        direction_effects = {"rainbow", "gradient-rainbow", "meteor", "runway", "wave"}
+        direction_effects = {
+            "rainbow",
+            "gradient-rainbow",
+            "meteor",
+            "runway",
+            "wave",
+            "ripple",
+            "meteor-shower",
+            "kaleidoscope",
+        }
 
-        rotation_effects = {"rotate", "color-cycle", "overlap-cycle"}
+        rotation_effects = {"rotate", "color-cycle", "overlap-cycle", "ripple", "meteor-shower"}
 
         has_speed = effect not in {"off", "static"}
 

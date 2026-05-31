@@ -24,11 +24,13 @@ from usb9_lcd.lianli.wireless import (
     build_rgb_frame_payloads,
     build_rf_chunks,
     build_static_rgb_payloads,
+    build_tlv2_effect_payloads,
     build_unbind_payload,
     build_wireless_list_request,
     extract_led_count_hint,
     extract_motherboard_pwm,
     generate_rainbow_rgb_frames,
+    generate_tlv2_effect_rgb_frames,
     infer_led_count,
     parse_master_query_response,
     parse_wireless_snapshot,
@@ -633,6 +635,114 @@ def test_backend_builds_rainbow_rgb_rf_chunks_and_analyzer_decodes_frames():
     assert first["rgb_payload"]["decoded_led_count"] == 132
     assert first["rgb_payload"]["unique_color_count"] >= 132
     assert first["rgb_payload"]["sequence_rf_frame_count"] == len(packets) // 4
+    assert "static_color" not in first["rgb_payload"]
+
+
+def _rgb_triplets(raw: bytes) -> list[tuple[int, int, int]]:
+    return [
+        (raw[index], raw[index + 1], raw[index + 2])
+        for index in range(0, len(raw), 3)
+    ]
+
+
+def test_tlv2_effect_payloads_use_captured_frame_metadata():
+    target = parse_wireless_snapshot(_snapshot_payload())[0]
+
+    expected = {
+        "rainbow": (24, 60),
+        "rainbow-morph": (127, 55),
+        "static": (1, 60),
+        "breathing": (170, 60),
+        "runway": (70, 60),
+        "meteor": (36, 60),
+        "color-cycle": (48, 60),
+        "ripple": (294, 90),
+        "wave": (24, 60),
+        "meteor-shower": (48, 60),
+        "electric-current": (80, 60),
+        "kaleidoscope": (24, 60),
+        "twinkle": (200, 55),
+    }
+
+    for effect, (frame_count, interval_ms) in expected.items():
+        payloads = build_tlv2_effect_payloads(
+            target,
+            effect,
+            color=(255, 45, 85),
+            accent_color=(255, 255, 255),
+            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+            brightness=80,
+            led_count=26,
+            effect_index=0x02000000,
+        )
+
+        first = payloads[0]
+        assert first[:2] == bytes([0x12, 0x20])
+        assert int.from_bytes(first[25:27], "big") == frame_count
+        assert first[27] == 26
+        assert int.from_bytes(first[32:34], "big") == interval_ms
+
+
+def test_tlv2_dynamic_effect_generators_do_not_collapse_to_static_rgb():
+    dynamic_effects = {
+        "rainbow",
+        "rainbow-morph",
+        "breathing",
+        "runway",
+        "meteor",
+        "color-cycle",
+        "ripple",
+        "wave",
+        "meteor-shower",
+        "electric-current",
+        "kaleidoscope",
+        "twinkle",
+    }
+
+    for effect in dynamic_effects:
+        raw, spec = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(255, 45, 85),
+            accent_color=(255, 255, 255),
+            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+            brightness=80,
+            direction="left",
+        )
+        frame_size = 26 * 3
+        frames = {
+            raw[index : index + frame_size]
+            for index in range(0, len(raw), frame_size)
+        }
+        colors = set(_rgb_triplets(raw))
+
+        assert spec.frame_count > 1
+        assert len(raw) == 26 * spec.frame_count * 3
+        assert len(frames) > 1
+        assert len(colors) > 1
+
+
+def test_backend_builds_tlv2_dynamic_effect_rf_chunks():
+    target = parse_wireless_snapshot(_snapshot_payload())[0]
+    backend = LianLiWirelessBackend()
+
+    packets = backend.build_tlv2_effect_packets(
+        target,
+        "breathing",
+        color=(255, 45, 85),
+        brightness=80,
+        led_count=26,
+        effect_index=0x020953C4,
+    )
+    analysis = analyze_capture_packets(packets, source="breathing.txt")
+
+    assert analysis["summary"]["rf_operations"] == {"live-rgb": 1}
+    first = analysis["rf_frames"][0]
+    assert first["frame_count"] == 170
+    assert first["interval_ms"] == 60
+    assert first["rgb_payload"]["decoded_frame_count"] == 170
+    assert first["rgb_payload"]["decoded_led_count"] == 26
+    assert first["rgb_payload"]["unique_color_count"] > 8
     assert "static_color" not in first["rgb_payload"]
 
 

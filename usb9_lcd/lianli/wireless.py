@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import site
 from pathlib import Path
 from typing import Any, Iterable, Protocol
@@ -183,6 +184,42 @@ class WirelessSnapshot:
     @property
     def motherboard_pwm(self) -> int | None:
         return extract_motherboard_pwm(self.raw)
+
+
+@dataclass(frozen=True)
+class Tlv2EffectSpec:
+    key: str
+    frame_count: int
+    interval_ms: int
+    default_effect_index: int
+
+
+TLV2_EFFECT_SPECS: dict[str, Tlv2EffectSpec] = {
+    "rainbow": Tlv2EffectSpec("rainbow", 24, 60, 0x02090A05),
+    "rainbow-morph": Tlv2EffectSpec("rainbow-morph", 127, 55, 0x020922EA),
+    "static": Tlv2EffectSpec("static", 1, 60, 0x02093B20),
+    "breathing": Tlv2EffectSpec("breathing", 170, 60, 0x020953C4),
+    "runway": Tlv2EffectSpec("runway", 70, 60, 0x02096C54),
+    "meteor": Tlv2EffectSpec("meteor", 36, 60, 0x020984D3),
+    "color-cycle": Tlv2EffectSpec("color-cycle", 48, 60, 0x02099D4A),
+    "ripple": Tlv2EffectSpec("ripple", 294, 90, 0x0209B5D3),
+    "wave": Tlv2EffectSpec("wave", 24, 60, 0x0209CE48),
+    "meteor-shower": Tlv2EffectSpec("meteor-shower", 48, 60, 0x0209E6D1),
+    "electric-current": Tlv2EffectSpec("electric-current", 80, 60, 0x0209FF5B),
+    "kaleidoscope": Tlv2EffectSpec("kaleidoscope", 24, 60, 0x020A182A),
+    "twinkle": Tlv2EffectSpec("twinkle", 200, 55, 0x020A31DE),
+}
+
+TLV2_EFFECT_ALIASES = {
+    "gradient-rainbow": "rainbow-morph",
+    "rainbow_morph": "rainbow-morph",
+    "colorcycle": "color-cycle",
+    "meteor_shower": "meteor-shower",
+    "electric_current": "electric-current",
+    "starry": "twinkle",
+    "star": "twinkle",
+    "twinkle": "twinkle",
+}
 
 
 class LianLiWirelessBackend:
@@ -480,6 +517,39 @@ class LianLiWirelessBackend:
                 packets.extend(build_rf_chunks(target.channel, target.rx_type, payload))
         return packets
 
+    def build_tlv2_effect_packets(
+        self,
+        target: WirelessDeviceInfo,
+        effect: str,
+        *,
+        color: tuple[int, int, int] = (255, 255, 255),
+        accent_color: tuple[int, int, int] = (255, 255, 255),
+        palette: Iterable[tuple[int, int, int]] | None = None,
+        brightness: int = 100,
+        direction: str = "left",
+        effect_index: int | None = None,
+        led_count: int | None = None,
+        repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
+    ) -> list[bytes]:
+        payloads = build_tlv2_effect_payloads(
+            target,
+            effect,
+            color=color,
+            accent_color=accent_color,
+            palette=palette,
+            brightness=brightness,
+            direction=direction,
+            effect_index=effect_index,
+            led_count=led_count,
+        )
+        packets: list[bytes] = []
+        first_repeat = max(1, int(repeat_first_payload))
+        for index, payload in enumerate(payloads):
+            repeat = first_repeat if index == 0 else 1
+            for _ in range(repeat):
+                packets.extend(build_rf_chunks(target.channel, target.rx_type, payload))
+        return packets
+
     def send_static_rgb(
         self,
         target: WirelessDeviceInfo,
@@ -530,6 +600,42 @@ class LianLiWirelessBackend:
             led_count=led_count,
             brightness=brightness,
             direction=direction,
+            repeat_first_payload=repeat_first_payload,
+        )
+        for packet in packets:
+            written = self.sender.write(packet)
+            if written != len(packet):
+                raise LianLiWirelessError(
+                    f"incomplete sender packet write ({written}/{len(packet)})"
+                )
+        return len(packets)
+
+    def send_tlv2_effect(
+        self,
+        target: WirelessDeviceInfo,
+        effect: str,
+        *,
+        color: tuple[int, int, int] = (255, 255, 255),
+        accent_color: tuple[int, int, int] = (255, 255, 255),
+        palette: Iterable[tuple[int, int, int]] | None = None,
+        brightness: int = 100,
+        direction: str = "left",
+        effect_index: int | None = None,
+        led_count: int | None = None,
+        repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
+    ) -> int:
+        if self.sender is None:
+            raise LianLiWirelessError("sender transport is not configured")
+        packets = self.build_tlv2_effect_packets(
+            target,
+            effect,
+            color=color,
+            accent_color=accent_color,
+            palette=palette,
+            brightness=brightness,
+            direction=direction,
+            effect_index=effect_index,
+            led_count=led_count,
             repeat_first_payload=repeat_first_payload,
         )
         for packet in packets:
@@ -986,6 +1092,40 @@ def build_rainbow_rgb_payloads(
     )
 
 
+def build_tlv2_effect_payloads(
+    target: WirelessDeviceInfo,
+    effect: str,
+    *,
+    color: tuple[int, int, int] = (255, 255, 255),
+    accent_color: tuple[int, int, int] = (255, 255, 255),
+    palette: Iterable[tuple[int, int, int]] | None = None,
+    brightness: int = 100,
+    direction: str = "left",
+    effect_index: int | None = None,
+    led_count: int | None = None,
+) -> list[bytes]:
+    if not target.is_bound:
+        raise LianLiWirelessError("receiver is not bound to a master controller")
+    resolved_led_count = infer_led_count(target) if led_count is None else int(led_count)
+    raw, spec = generate_tlv2_effect_rgb_frames(
+        effect,
+        led_count=resolved_led_count,
+        color=color,
+        accent_color=accent_color,
+        palette=palette,
+        brightness=brightness,
+        direction=direction,
+    )
+    return build_rgb_frame_payloads(
+        target,
+        raw,
+        led_count=resolved_led_count,
+        frame_count=spec.frame_count,
+        interval_ms=spec.interval_ms,
+        effect_index=spec.default_effect_index if effect_index is None else effect_index,
+    )
+
+
 def build_rgb_frame_payloads(
     target: WirelessDeviceInfo,
     raw_rgb: bytes,
@@ -1011,7 +1151,7 @@ def build_rgb_frame_payloads(
     send_interval = int(interval_ms)
     if not 0 <= send_interval <= 65535:
         raise LianLiWirelessError("interval_ms must be in range 0-65535")
-    compressed = tinyuz_compress(raw_rgb)
+    compressed = tinyuz_compress_literal(raw_rgb)
     data_packets = _ceil_div(len(compressed), LED_DATA_CHUNK)
     total_packets = 1 + data_packets
     if total_packets > 255:
@@ -1036,6 +1176,9 @@ def build_rgb_frame_payloads(
             payload[25:27] = resolved_frame_count.to_bytes(2, "big", signed=False)
             payload[27] = resolved_led_count & 0xFF
             payload[32:34] = send_interval.to_bytes(2, "big", signed=False)
+            first_len = min(FIRST_LED_PACKET_DATA_MAX, len(compressed))
+            payload[FIRST_LED_PACKET_DATA_OFFSET : FIRST_LED_PACKET_DATA_OFFSET + first_len] = compressed[:first_len]
+            data_offset += first_len
         else:
             chunk_len = min(LED_DATA_CHUNK, len(compressed) - data_offset)
             if chunk_len:
@@ -1045,6 +1188,74 @@ def build_rgb_frame_payloads(
                 data_offset += chunk_len
         payloads.append(bytes(payload))
     return payloads
+
+
+def generate_tlv2_effect_rgb_frames(
+    effect: str,
+    *,
+    led_count: int,
+    color: tuple[int, int, int] = (255, 255, 255),
+    accent_color: tuple[int, int, int] = (255, 255, 255),
+    palette: Iterable[tuple[int, int, int]] | None = None,
+    brightness: int = 100,
+    direction: str = "left",
+) -> tuple[bytes, Tlv2EffectSpec]:
+    effect_key = _normalize_tlv2_effect_key(effect)
+    spec = TLV2_EFFECT_SPECS[effect_key]
+    resolved_led_count = int(led_count)
+    if not 0 < resolved_led_count <= 255:
+        raise LianLiWirelessError("LED count must be in range 1-255")
+    brightness_scale = _brightness_scale(brightness)
+    primary = _scale_rgb(_rgb_tuple(color), brightness_scale)
+    accent = _scale_rgb(_rgb_tuple(accent_color), brightness_scale)
+    colors = _resolve_tlv2_palette(palette, primary=primary, accent=accent, brightness_scale=brightness_scale)
+    direction_step = _direction_step(direction)
+
+    if effect_key in {"rainbow", "kaleidoscope"}:
+        raw = generate_rainbow_rgb_frames(
+            resolved_led_count,
+            frame_count=spec.frame_count,
+            brightness=int(brightness),
+            direction=direction,
+        )
+        return raw, spec
+
+    frames: list[list[tuple[int, int, int]]] = []
+    for frame_index in range(spec.frame_count):
+        if effect_key == "static":
+            frame = [primary] * resolved_led_count
+        elif effect_key == "rainbow-morph":
+            frame_color = _hsv_to_rgb(frame_index / spec.frame_count, 1.0, brightness_scale)
+            frame = [frame_color] * resolved_led_count
+        elif effect_key == "breathing":
+            phase = (math.sin((frame_index / spec.frame_count) * math.tau - math.pi / 2) + 1.0) / 2.0
+            frame = [_scale_rgb(primary, phase) for _ in range(resolved_led_count)]
+        elif effect_key == "runway":
+            frame = _runway_frame(resolved_led_count, frame_index, spec.frame_count, primary, direction_step)
+        elif effect_key == "meteor":
+            frame = _meteor_frame(resolved_led_count, frame_index, spec.frame_count, primary, direction_step)
+        elif effect_key == "color-cycle":
+            frame_color = colors[(frame_index * len(colors)) // spec.frame_count % len(colors)]
+            frame = [frame_color] * resolved_led_count
+        elif effect_key == "ripple":
+            frame = _ripple_frame(resolved_led_count, frame_index, spec.frame_count, colors, direction_step)
+        elif effect_key == "wave":
+            frame = _wave_frame(resolved_led_count, frame_index, spec.frame_count, primary, direction_step)
+        elif effect_key == "meteor-shower":
+            frame = _meteor_shower_frame(resolved_led_count, frame_index, colors, direction_step)
+        elif effect_key == "electric-current":
+            frame = _electric_current_frame(resolved_led_count, frame_index, primary, accent)
+        elif effect_key == "twinkle":
+            frame = _twinkle_frame(resolved_led_count, frame_index, spec.frame_count, primary, accent)
+        else:
+            raise LianLiWirelessError(f"unsupported TLV2 effect: {effect}")
+        frames.append(frame)
+
+    raw = bytearray()
+    for frame in frames:
+        for rgb in frame:
+            raw.extend(rgb)
+    return bytes(raw), spec
 
 
 def generate_rainbow_rgb_frames(
@@ -1471,6 +1682,187 @@ def _hsv_to_rgb(hue: float, saturation: float, value: float) -> tuple[int, int, 
     else:
         red, green, blue = v, p, q
     return int(red * 255) & 0xFF, int(green * 255) & 0xFF, int(blue * 255) & 0xFF
+
+
+def _normalize_tlv2_effect_key(effect: str) -> str:
+    key = str(effect).strip().lower().replace("_", "-")
+    key = TLV2_EFFECT_ALIASES.get(key, key)
+    if key not in TLV2_EFFECT_SPECS:
+        raise LianLiWirelessError(f"unsupported TLV2 effect: {effect}")
+    return key
+
+
+def _brightness_scale(brightness: int) -> float:
+    value = int(brightness)
+    if not 0 <= value <= 100:
+        raise LianLiWirelessError("brightness must be in range 0-100")
+    return value / 100.0
+
+
+def _rgb_tuple(color: tuple[int, int, int]) -> tuple[int, int, int]:
+    return tuple(_rgb_bytes(color))  # type: ignore[return-value]
+
+
+def _scale_rgb(color: tuple[int, int, int], scale: float) -> tuple[int, int, int]:
+    bounded = max(0.0, min(1.0, float(scale)))
+    return tuple(max(0, min(255, int(round(component * bounded)))) for component in color)  # type: ignore[return-value]
+
+
+def _mix_rgb(
+    a: tuple[int, int, int],
+    b: tuple[int, int, int],
+    amount: float,
+) -> tuple[int, int, int]:
+    t = max(0.0, min(1.0, float(amount)))
+    return tuple(int(round(a[index] * (1.0 - t) + b[index] * t)) for index in range(3))  # type: ignore[return-value]
+
+
+def _resolve_tlv2_palette(
+    palette: Iterable[tuple[int, int, int]] | None,
+    *,
+    primary: tuple[int, int, int],
+    accent: tuple[int, int, int],
+    brightness_scale: float,
+) -> tuple[tuple[int, int, int], ...]:
+    if palette is None:
+        colors = (
+            primary,
+            (0, int(round(214 * brightness_scale)), int(round(255 * brightness_scale))),
+            (int(round(107 * brightness_scale)), int(round(255 * brightness_scale)), int(round(92 * brightness_scale))),
+            (int(round(255 * brightness_scale)), int(round(214 * brightness_scale)), int(round(10 * brightness_scale))),
+            accent,
+        )
+    else:
+        colors = tuple(_scale_rgb(_rgb_tuple(color), brightness_scale) for color in palette)
+    return colors or (primary,)
+
+
+def _direction_step(direction: str) -> int:
+    normalized = str(direction).strip().lower().replace("_", "-")
+    if normalized in {"right", "reverse", "rtl"}:
+        return -1
+    if normalized in {"left", "forward", "ltr"}:
+        return 1
+    raise LianLiWirelessError("direction must be left or right")
+
+
+def _runway_frame(
+    led_count: int,
+    frame_index: int,
+    frame_count: int,
+    color: tuple[int, int, int],
+    direction_step: int,
+) -> list[tuple[int, int, int]]:
+    block = max(2, led_count // 5)
+    position = (direction_step * frame_index * led_count // max(1, frame_count // 2)) % led_count
+    frame: list[tuple[int, int, int]] = []
+    for led_index in range(led_count):
+        distance = (led_index - position) % led_count
+        frame.append(color if distance < block else (0, 0, 0))
+    return frame
+
+
+def _meteor_frame(
+    led_count: int,
+    frame_index: int,
+    frame_count: int,
+    color: tuple[int, int, int],
+    direction_step: int,
+) -> list[tuple[int, int, int]]:
+    tail = max(4, led_count // 2)
+    position = (direction_step * frame_index * (led_count + tail) // frame_count) % (led_count + tail)
+    frame: list[tuple[int, int, int]] = []
+    for led_index in range(led_count):
+        distance = (position - led_index) % (led_count + tail)
+        level = 0.0 if distance >= tail else 1.0 - (distance / tail)
+        frame.append(_scale_rgb(color, level))
+    return frame
+
+
+def _ripple_frame(
+    led_count: int,
+    frame_index: int,
+    frame_count: int,
+    colors: tuple[tuple[int, int, int], ...],
+    direction_step: int,
+) -> list[tuple[int, int, int]]:
+    center = (led_count - 1) / 2.0
+    max_radius = max(1.0, center + 1.0)
+    cycle = (frame_index * 6) / frame_count
+    radius = (cycle % 1.0) * max_radius
+    color = colors[int(cycle) % len(colors)]
+    frame: list[tuple[int, int, int]] = []
+    for led_index in range(led_count):
+        mirrored = led_count - 1 - led_index if direction_step < 0 else led_index
+        distance = abs(mirrored - center)
+        level = max(0.0, 1.0 - abs(distance - radius) / 2.0)
+        frame.append(_scale_rgb(color, level))
+    return frame
+
+
+def _wave_frame(
+    led_count: int,
+    frame_index: int,
+    frame_count: int,
+    color: tuple[int, int, int],
+    direction_step: int,
+) -> list[tuple[int, int, int]]:
+    frame: list[tuple[int, int, int]] = []
+    for led_index in range(led_count):
+        phase = ((led_index * direction_step) / led_count) + (frame_index / frame_count)
+        level = (math.sin(phase * math.tau) + 1.0) / 2.0
+        frame.append(_scale_rgb(color, 0.08 + level * 0.92))
+    return frame
+
+
+def _meteor_shower_frame(
+    led_count: int,
+    frame_index: int,
+    colors: tuple[tuple[int, int, int], ...],
+    direction_step: int,
+) -> list[tuple[int, int, int]]:
+    frame = [(0, 0, 0)] * led_count
+    for comet in range(max(3, led_count // 6)):
+        head = (direction_step * (frame_index * (comet + 1) + comet * 7)) % led_count
+        color = colors[comet % len(colors)]
+        for tail_index in range(4):
+            led = (head - direction_step * tail_index) % led_count
+            frame[led] = _mix_rgb(frame[led], color, 1.0 - tail_index * 0.22)
+    return frame
+
+
+def _electric_current_frame(
+    led_count: int,
+    frame_index: int,
+    color: tuple[int, int, int],
+    accent: tuple[int, int, int],
+) -> list[tuple[int, int, int]]:
+    base = _scale_rgb(color, 0.12)
+    frame: list[tuple[int, int, int]] = []
+    for led_index in range(led_count):
+        spark = ((led_index * 17 + frame_index * 11) % 29) in {0, 1, 5}
+        surge = ((led_index * 5 - frame_index * 3) % 23) == 0
+        frame.append(accent if spark else (_mix_rgb(base, accent, 0.45) if surge else base))
+    return frame
+
+
+def _twinkle_frame(
+    led_count: int,
+    frame_index: int,
+    frame_count: int,
+    color: tuple[int, int, int],
+    accent: tuple[int, int, int],
+) -> list[tuple[int, int, int]]:
+    frame: list[tuple[int, int, int]] = []
+    for led_index in range(led_count):
+        seed = (led_index * 37 + frame_index * 13) % frame_count
+        if seed < 7:
+            frame.append(_mix_rgb(color, accent, seed / 6.0))
+        elif seed < 20:
+            frame.append(_scale_rgb(color, (20 - seed) / 20.0))
+        else:
+            frame.append((0, 0, 0))
+    return frame
 
 
 def _ceil_div(value: int, divisor: int) -> int:

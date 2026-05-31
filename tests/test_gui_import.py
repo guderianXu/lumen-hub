@@ -1078,6 +1078,53 @@ def test_lianli_wireless_page_runs_safe_rainbow_experiment(tmp_path: Path):
     app.quit()
 
 
+def test_lianli_wireless_page_sends_dynamic_effects_as_tlv2_frames(tmp_path: Path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.static_calls: list[tuple[str, tuple[int, int, int]]] = []
+            self.tlv2_calls: list[tuple[str, str, int, int]] = []
+
+        def send_static_rgb(self, target, color, **_kwargs):
+            self.static_calls.append((target.mac, color))
+            return 8
+
+        def send_tlv2_effect(self, target, effect, *, led_count, brightness, **_kwargs):
+            self.tlv2_calls.append((target.mac, effect, led_count, brightness))
+            return 20
+
+    target = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend)
+
+    page.lianli_direct_led_count.setValue(26)
+    page.lianli_brightness_slider.setValue(80)
+    packets = page._send_lianli_effect_with_backend(backend, target, "breathing")
+
+    assert packets == 20
+    assert backend.static_calls == []
+    assert backend.tlv2_calls == [("aa:bb:cc:dd:ee:ff", "breathing", 26, 80)]
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_runs_safe_sync_experiment(tmp_path: Path):
     from PySide6.QtWidgets import QApplication
 
