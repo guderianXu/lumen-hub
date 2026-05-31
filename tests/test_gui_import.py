@@ -1212,13 +1212,13 @@ def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
 
     page._send_lianli_effect_with_backend(backend, target, "ripple")
     assert backend.calls[-1][0] == "ripple"
-    assert backend.calls[-1][1]["palette"] == [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
+    assert backend.calls[-1][1]["palette"] == [(1, 2, 3), (4, 5, 6), (7, 8, 9), (255, 214, 10)]
     assert backend.calls[-1][1]["direction"] == "right"
     assert backend.calls[-1][1]["effect_index"] == tlv2_color_effect_index(
         "ripple",
         (17, 34, 51),
         accent_color=(170, 187, 204),
-        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9)],
+        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9), (255, 214, 10)],
         direction="right",
     )
 
@@ -1230,18 +1230,18 @@ def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
         "twinkle",
         (17, 34, 51),
         accent_color=(170, 187, 204),
-        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9)],
+        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9), (255, 214, 10)],
     )
     page._remember_lianli_effect_settings("ripple")
     assert page.settings.lianli_wireless.accent_color == "#aabbcc"
-    assert page.settings.lianli_wireless.rotation_colors == "#010203,#040506,#070809"
+    assert page.settings.lianli_wireless.rotation_colors == "#010203,#040506,#070809,#ffd60a"
 
     page.close()
     app.quit()
 
 
 def test_lianli_wireless_page_edits_palette_as_color_swatches():
-    from PySide6.QtWidgets import QApplication, QLineEdit
+    from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton
 
     from usb9_lcd.gui.pages import LianLiWirelessPage
 
@@ -1254,14 +1254,14 @@ def test_lianli_wireless_page_edits_palette_as_color_swatches():
     page.set_lianli_rotation_color(1, "#123456")
     assert page._rotation_colors()[:4] == ["#fe0000", "#123456", "#0000fe", "#ffd60a"]
 
-    page.add_lianli_rotation_color("#abcdef")
-    assert page._rotation_colors()[-1] == "#abcdef"
-
-    page.remove_lianli_rotation_color(0)
-    assert page._rotation_colors()[0] == "#123456"
+    page._set_lianli_rotation_colors(["#010203", "#040506", "#070809", "#0a0b0c", "#abcdef"])
+    assert page._rotation_colors() == ["#010203", "#040506", "#070809", "#0a0b0c"]
+    buttons = page.lianli_rotation_colors.findChildren(QPushButton)
+    assert len(buttons) == 4
+    assert {button.text() for button in buttons} == {""}
 
     page._remember_lianli_effect_settings("ripple")
-    assert page.settings.lianli_wireless.rotation_colors == "#123456,#0000fe,#ffd60a,#abcdef"
+    assert page.settings.lianli_wireless.rotation_colors == "#010203,#040506,#070809,#0a0b0c"
 
     page.close()
     app.quit()

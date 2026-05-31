@@ -54,6 +54,7 @@ from usb9_lcd.lianli.wireless import (
 
 
 LIANLI_WRITE_CONFIRM_TOKEN = "WRITE-LIANLI"
+LIANLI_DEFAULT_ROTATION_COLORS = ("#fe0000", "#00fe00", "#0000fe", "#ffd60a")
 
 
 def _pages_override(name: str, fallback: Callable):
@@ -960,7 +961,7 @@ class LianLiWirelessPage(QWidget):
         self._update_lianli_color_button(self.lianli_accent_color_button, self.lianli_accent_color, "点缀色")
 
         self._lianli_rotation_color_values = self._parse_lianli_color_list(
-            str(getattr(self.settings.lianli_wireless, "rotation_colors", "#fe0000,#00fe00,#0000fe,#ffd60a") or "#fe0000,#00fe00,#0000fe,#ffd60a")
+            str(getattr(self.settings.lianli_wireless, "rotation_colors", ",".join(LIANLI_DEFAULT_ROTATION_COLORS)) or ",".join(LIANLI_DEFAULT_ROTATION_COLORS))
         )
 
         self.lianli_rotation_colors = QWidget()
@@ -970,12 +971,6 @@ class LianLiWirelessPage(QWidget):
         self.lianli_rotation_colors_layout.setContentsMargins(0, 0, 0, 0)
 
         self.lianli_rotation_colors_layout.setSpacing(8)
-
-        self.lianli_rotation_add_button = QPushButton("+")
-
-        self.lianli_rotation_add_button.setFixedWidth(34)
-
-        self.lianli_rotation_add_button.clicked.connect(lambda: self.add_lianli_rotation_color())
 
         self._refresh_lianli_rotation_color_buttons()
 
@@ -2994,31 +2989,9 @@ class LianLiWirelessPage(QWidget):
         self._set_lianli_rotation_colors(colors)
 
 
-    def add_lianli_rotation_color(self, color: str = "#ffffff") -> None:
-
-        self._set_lianli_rotation_colors([*self._rotation_colors(), self._normalize_lianli_hex_color(color)])
-
-
-    def remove_lianli_rotation_color(self, index: int) -> None:
-
-        colors = self._rotation_colors()
-
-        if len(colors) <= 1:
-
-            return
-
-        if not 0 <= index < len(colors):
-
-            raise IndexError("rotation color index out of range")
-
-        del colors[index]
-
-        self._set_lianli_rotation_colors(colors)
-
-
     def _set_lianli_rotation_colors(self, colors: list[str]) -> None:
 
-        self._lianli_rotation_color_values = [self._normalize_lianli_hex_color(color) for color in colors] or ["#00fe00"]
+        self._lianli_rotation_color_values = self._fixed_lianli_rotation_colors(colors)
 
         self._refresh_lianli_rotation_color_buttons()
 
@@ -3032,6 +3005,8 @@ class LianLiWirelessPage(QWidget):
             widget = item.widget()
 
             if widget is not None:
+
+                widget.setParent(None)
 
                 widget.deleteLater()
 
@@ -3050,20 +3025,6 @@ class LianLiWirelessPage(QWidget):
             button.clicked.connect(lambda _checked=False, color_index=index: self.choose_lianli_rotation_color(color_index))
 
             self.lianli_rotation_colors_layout.addWidget(button)
-
-            if len(self._rotation_colors()) > 1:
-
-                remove_button = QPushButton("-")
-
-                remove_button.setFixedWidth(26)
-
-                remove_button.setToolTip(f"移除 {color}")
-
-                remove_button.clicked.connect(lambda _checked=False, color_index=index: self.remove_lianli_rotation_color(color_index))
-
-                self.lianli_rotation_colors_layout.addWidget(remove_button)
-
-        self.lianli_rotation_colors_layout.addWidget(self.lianli_rotation_add_button)
 
         self.lianli_rotation_colors_layout.addStretch(1)
 
@@ -4219,7 +4180,18 @@ class LianLiWirelessPage(QWidget):
 
         colors = [item.strip() for item in str(text).split(",") if item.strip()]
 
-        return [self._normalize_lianli_hex_color(color) for color in colors] or ["#00fe00"]
+        return self._fixed_lianli_rotation_colors(colors)
+
+
+    def _fixed_lianli_rotation_colors(self, colors: list[str]) -> list[str]:
+
+        normalized = [self._normalize_lianli_hex_color(color) for color in colors[: len(LIANLI_DEFAULT_ROTATION_COLORS)]]
+
+        while len(normalized) < len(LIANLI_DEFAULT_ROTATION_COLORS):
+
+            normalized.append(LIANLI_DEFAULT_ROTATION_COLORS[len(normalized)])
+
+        return normalized
 
 
     def _normalize_lianli_hex_color(self, color: str) -> str:
