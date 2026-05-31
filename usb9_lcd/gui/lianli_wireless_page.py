@@ -48,6 +48,7 @@ from usb9_lcd.lianli.wireless import (
     infer_led_count,
     scan_known_usb_devices as _scan_known_usb_devices_impl,
     static_rgb_effect_index,
+    tlv2_color_effect_index,
 )
 
 
@@ -3522,6 +3523,8 @@ class LianLiWirelessPage(QWidget):
 
         if effect in native_effects:
 
+            primary_color = self._hex_to_rgb(self.lianli_static_color)
+
             palette = [self._hex_to_rgb(color) for color in self._rotation_colors()]
 
             effect_name = "twinkle" if effect == "starry" else effect
@@ -3532,7 +3535,7 @@ class LianLiWirelessPage(QWidget):
 
                 effect_name,
 
-                color=self._hex_to_rgb(self.lianli_static_color),
+                color=primary_color,
 
                 accent_color=(255, 255, 255),
 
@@ -3543,6 +3546,8 @@ class LianLiWirelessPage(QWidget):
                 direction=str(self.lianli_direction_combo.currentData() or "left"),
 
                 led_count=led_count,
+
+                effect_index=tlv2_color_effect_index(effect_name, primary_color),
 
             )
 

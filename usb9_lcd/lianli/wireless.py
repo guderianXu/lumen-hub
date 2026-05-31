@@ -1922,6 +1922,13 @@ def static_rgb_effect_index(color: tuple[int, int, int]) -> int:
     return 0x042D0000 | (zlib.crc32(bytes(rgb)) & 0xFFFF)
 
 
+def tlv2_color_effect_index(effect: str, color: tuple[int, int, int]) -> int:
+    effect_key = _normalize_tlv2_effect_key(effect)
+    base = TLV2_EFFECT_SPECS[effect_key].default_effect_index
+    rgb = bytes(_rgb_bytes(color))
+    return (base & 0xFFFFFF00) | (zlib.crc32(rgb) & 0xFF)
+
+
 def static_rgb_wire_color(color: tuple[int, int, int]) -> tuple[int, int, int]:
     return tuple(254 if component == 255 else component for component in _rgb_bytes(color))  # type: ignore[return-value]
 

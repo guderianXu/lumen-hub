@@ -40,6 +40,7 @@ from usb9_lcd.lianli.wireless import (
     scan_known_usb_devices,
     static_rgb_effect_index,
     static_rgb_wire_color,
+    tlv2_color_effect_index,
     tinyuz_compress,
     tinyuz_compress_literal,
 )
@@ -594,6 +595,12 @@ def test_static_rgb_default_effect_index_uses_official_color_slots():
 def test_static_rgb_wire_color_uses_official_max_component_value():
     assert static_rgb_wire_color((255, 0, 255)) == (254, 0, 254)
     assert static_rgb_wire_color((128, 64, 32)) == (128, 64, 32)
+
+
+def test_tlv2_color_effect_index_changes_when_primary_color_changes():
+    assert tlv2_color_effect_index("breathing", (0, 0, 255)) == 0x0209539F
+    assert tlv2_color_effect_index("breathing", (0, 255, 0)) == 0x02095360
+    assert tlv2_color_effect_index("breathing", (255, 0, 0)) == 0x020953FF
 
 
 def test_rainbow_rgb_payload_builds_multi_frame_led_effect_packets():

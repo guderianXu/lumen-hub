@@ -1123,8 +1123,8 @@ def test_lianli_wireless_page_sends_dynamic_effects_as_tlv2_frames(tmp_path: Pat
     assert packets == 20
     assert backend.static_calls == []
     assert backend.tlv2_calls == [("aa:bb:cc:dd:ee:ff", "breathing", 26, 80)]
-    assert "effect_index" not in backend.tlv2_kwargs[0]
     assert backend.tlv2_kwargs[0]["color"] == (0, 0, 255)
+    assert backend.tlv2_kwargs[0]["effect_index"] == 0x0209539F
 
     page.close()
     app.quit()
