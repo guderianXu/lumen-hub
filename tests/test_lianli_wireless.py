@@ -36,6 +36,7 @@ from usb9_lcd.lianli.wireless import (
     parse_master_query_response,
     parse_wireless_snapshot,
     scan_known_usb_devices,
+    static_rgb_effect_index,
     tinyuz_compress_literal,
 )
 import usb9_lcd.lianli.wireless as wireless_module
@@ -572,7 +573,15 @@ def test_static_rgb_payload_accepts_led_count_override():
     payloads = build_static_rgb_payloads(target, (0, 0, 255), led_count=12)
 
     assert payloads[0][27] == 12
+    assert int.from_bytes(payloads[0][14:18], "big") == 0x042D9278
     assert int.from_bytes(payloads[0][20:24], "big") == len(tinyuz_compress_literal(bytes([0, 0, 255]) * 12))
+
+
+def test_static_rgb_default_effect_index_uses_official_color_slots():
+    assert static_rgb_effect_index((255, 0, 0)) == 0x042D671D
+    assert static_rgb_effect_index((0, 255, 0)) == 0x042D795F
+    assert static_rgb_effect_index((0, 0, 255)) == 0x042D9278
+    assert static_rgb_effect_index((0, 0, 0)) == 0x040DA1DE
 
 
 def test_rainbow_rgb_payload_builds_multi_frame_led_effect_packets():
@@ -682,6 +691,40 @@ def test_tlv2_effect_payloads_use_captured_frame_metadata():
         assert int.from_bytes(first[25:27], "big") == frame_count
         assert first[27] == 26
         assert int.from_bytes(first[32:34], "big") == interval_ms
+
+
+def test_tlv2_effect_payloads_keep_first_packet_metadata_only_like_lconnect():
+    target = parse_wireless_snapshot(_snapshot_payload())[0]
+    raw, spec = generate_tlv2_effect_rgb_frames(
+        "breathing",
+        led_count=26,
+        color=(255, 0, 0),
+        accent_color=(255, 255, 255),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+        brightness=100,
+        direction="left",
+    )
+    compressed = tinyuz_compress_literal(raw)
+
+    payloads = build_tlv2_effect_payloads(
+        target,
+        "breathing",
+        color=(255, 0, 0),
+        accent_color=(255, 255, 255),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+        brightness=100,
+        direction="left",
+        led_count=26,
+    )
+
+    first = payloads[0]
+    assert int.from_bytes(first[20:24], "big") == len(compressed)
+    assert int.from_bytes(first[25:27], "big") == spec.frame_count
+    assert first[27] == 26
+    assert first[FIRST_LED_PACKET_DATA_OFFSET:] == bytes(RF_PAYLOAD_SIZE - FIRST_LED_PACKET_DATA_OFFSET)
+    for packet_index, offset in enumerate(range(0, len(compressed), LED_DATA_CHUNK), start=1):
+        chunk = compressed[offset : offset + LED_DATA_CHUNK]
+        assert payloads[packet_index][20 : 20 + len(chunk)] == chunk
 
 
 def test_tlv2_dynamic_effect_generators_do_not_collapse_to_static_rgb():

@@ -3587,12 +3587,7 @@ def _decode_rgb_sequence(first_index: int, frames: list[dict[str, Any]]) -> tupl
         return summary, group_indexes
 
     raw, decode_info = _decode_tinyuz_literal(compressed, summary["expected_decoded_length"])
-    if (
-        raw is None
-        and decode_info.get("decode_status") == "invalid-dict-size"
-        and decode_info.get("dict_size") == 0
-        and packet_count > 1
-    ):
+    if raw is None and packet_count > 1:
         alternate_compressed = _collect_rgb_compressed_bytes_data_packets_only(candidates, compressed_length)
         alternate_raw, alternate_info = _decode_tinyuz_literal(
             alternate_compressed,
@@ -3604,8 +3599,8 @@ def _decode_rgb_sequence(first_index: int, frames: list[dict[str, Any]]) -> tupl
             decode_info = {
                 **alternate_info,
                 "collection_strategy": "data-packets-only",
-                "primary_decode_status": "invalid-dict-size",
-                "primary_dict_size": 0,
+                "primary_decode_status": decode_info.get("decode_status"),
+                "primary_dict_size": decode_info.get("dict_size"),
             }
     summary.update(decode_info)
     summary["collected_length"] = len(compressed)

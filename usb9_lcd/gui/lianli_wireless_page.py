@@ -3439,13 +3439,11 @@ class LianLiWirelessPage(QWidget):
 
                 led_count=led_count,
 
-                effect_index=70000000 + int(time.time()) % 100000,
-
             )
 
         if effect == "off":
 
-            return backend.send_static_rgb(target, (0, 0, 0), led_count=led_count, effect_index=70000000)
+            return backend.send_static_rgb(target, (0, 0, 0), led_count=led_count)
 
         native_effects = {
             "rainbow",

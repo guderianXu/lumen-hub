@@ -37,6 +37,16 @@ FIRST_LED_PACKET_DATA_MAX = RF_PAYLOAD_SIZE - FIRST_LED_PACKET_DATA_OFFSET
 DEFAULT_TINYUZ_DICT_SIZE = 4096
 RGB_FIRST_PAYLOAD_REPEAT_COUNT = 4
 
+STATIC_RGB_EFFECT_INDEXES = {
+    (255, 0, 0): 0x042D671D,
+    (254, 0, 0): 0x042D671D,
+    (0, 255, 0): 0x042D795F,
+    (0, 254, 0): 0x042D795F,
+    (0, 0, 255): 0x042D9278,
+    (0, 0, 254): 0x042D9278,
+    (0, 0, 0): 0x040DA1DE,
+}
+
 KNOWN_USB_DEVICES = {
     (RF_SENDER_VID, RF_SENDER_PID): "L-Wireless RF sender / transmitter",
     (RF_RECEIVER_VID, RF_RECEIVER_PID): "L-Wireless RF receiver",
@@ -478,7 +488,7 @@ class LianLiWirelessBackend:
         color: tuple[int, int, int],
         *,
         interval_ms: int = 60,
-        effect_index: int = 1,
+        effect_index: int | None = None,
         led_count: int | None = None,
         repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
     ) -> list[bytes]:
@@ -565,7 +575,7 @@ class LianLiWirelessBackend:
         color: tuple[int, int, int],
         *,
         interval_ms: int = 60,
-        effect_index: int = 1,
+        effect_index: int | None = None,
         led_count: int | None = None,
         repeat_first_payload: int = RGB_FIRST_PAYLOAD_REPEAT_COUNT,
     ) -> int:
@@ -1053,7 +1063,7 @@ def build_static_rgb_payloads(
     color: tuple[int, int, int],
     *,
     interval_ms: int = 60,
-    effect_index: int = 1,
+    effect_index: int | None = None,
     led_count: int | None = None,
 ) -> list[bytes]:
     if not target.is_bound:
@@ -1068,7 +1078,7 @@ def build_static_rgb_payloads(
         led_count=resolved_led_count,
         frame_count=1,
         interval_ms=interval_ms,
-        effect_index=effect_index,
+        effect_index=static_rgb_effect_index(color) if effect_index is None else effect_index,
     )
 
 
@@ -1132,6 +1142,7 @@ def build_tlv2_effect_payloads(
         frame_count=spec.frame_count,
         interval_ms=spec.interval_ms,
         effect_index=spec.default_effect_index if effect_index is None else effect_index,
+        first_packet_data=False,
     )
 
 
@@ -1143,6 +1154,8 @@ def build_rgb_frame_payloads(
     frame_count: int,
     interval_ms: int = 50,
     effect_index: int = 1,
+    first_packet_data: bool = True,
+    compact_compression: bool = False,
 ) -> list[bytes]:
     if not target.is_bound:
         raise LianLiWirelessError("receiver is not bound to a master controller")
@@ -1160,7 +1173,7 @@ def build_rgb_frame_payloads(
     send_interval = int(interval_ms)
     if not 0 <= send_interval <= 65535:
         raise LianLiWirelessError("interval_ms must be in range 0-65535")
-    compressed = tinyuz_compress_literal(raw_rgb)
+    compressed = tinyuz_compress(raw_rgb) if compact_compression else tinyuz_compress_literal(raw_rgb)
     data_packets = _ceil_div(len(compressed), LED_DATA_CHUNK)
     total_packets = 1 + data_packets
     if total_packets > 255:
@@ -1185,9 +1198,10 @@ def build_rgb_frame_payloads(
             payload[25:27] = resolved_frame_count.to_bytes(2, "big", signed=False)
             payload[27] = resolved_led_count & 0xFF
             payload[32:34] = send_interval.to_bytes(2, "big", signed=False)
-            first_len = min(FIRST_LED_PACKET_DATA_MAX, len(compressed))
-            payload[FIRST_LED_PACKET_DATA_OFFSET : FIRST_LED_PACKET_DATA_OFFSET + first_len] = compressed[:first_len]
-            data_offset += first_len
+            if first_packet_data:
+                first_len = min(FIRST_LED_PACKET_DATA_MAX, len(compressed))
+                payload[FIRST_LED_PACKET_DATA_OFFSET : FIRST_LED_PACKET_DATA_OFFSET + first_len] = compressed[:first_len]
+                data_offset += first_len
         else:
             chunk_len = min(LED_DATA_CHUNK, len(compressed) - data_offset)
             if chunk_len:
@@ -1772,6 +1786,14 @@ def _rgb_bytes(color: tuple[int, int, int]) -> bytes:
         if not 0 <= int(component) <= 255:
             raise LianLiWirelessError("RGB color values must be between 0 and 255")
     return bytes(int(component) for component in color)
+
+
+def static_rgb_effect_index(color: tuple[int, int, int]) -> int:
+    rgb = tuple(_rgb_bytes(color))
+    mapped = STATIC_RGB_EFFECT_INDEXES.get(rgb)
+    if mapped is not None:
+        return mapped
+    return 0x042D0000 | (zlib.crc32(bytes(rgb)) & 0xFFFF)
 
 
 def _hsv_to_rgb(hue: float, saturation: float, value: float) -> tuple[int, int, int]:
