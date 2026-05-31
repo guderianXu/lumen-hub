@@ -945,15 +945,19 @@ class LianLiWirelessPage(QWidget):
 
         self.lianli_static_color = self.settings.lianli_wireless.color
 
-        self.lianli_color_button = QPushButton(f"颜色 {self.lianli_static_color}")
+        self.lianli_color_button = QPushButton("主色")
 
         self.lianli_color_button.clicked.connect(self.choose_lianli_static_color)
 
         self.lianli_accent_color = str(getattr(self.settings.lianli_wireless, "accent_color", "#ffffff") or "#ffffff").lower()
 
-        self.lianli_accent_color_button = QPushButton(f"点缀色 {self.lianli_accent_color}")
+        self.lianli_accent_color_button = QPushButton("点缀色")
 
         self.lianli_accent_color_button.clicked.connect(self.choose_lianli_accent_color)
+
+        self._update_lianli_color_button(self.lianli_color_button, self.lianli_static_color, "主色")
+
+        self._update_lianli_color_button(self.lianli_accent_color_button, self.lianli_accent_color, "点缀色")
 
         self._lianli_rotation_color_values = self._parse_lianli_color_list(
             str(getattr(self.settings.lianli_wireless, "rotation_colors", "#fe0000,#00fe00,#0000fe,#ffd60a") or "#fe0000,#00fe00,#0000fe,#ffd60a")
@@ -2930,7 +2934,7 @@ class LianLiWirelessPage(QWidget):
 
         self.lianli_static_color = color.lower()
 
-        self.lianli_color_button.setText(f"静态颜色 {self.lianli_static_color}")
+        self._update_lianli_color_button(self.lianli_color_button, self.lianli_static_color, "主色")
 
 
     def choose_lianli_accent_color(self) -> None:
@@ -2946,7 +2950,24 @@ class LianLiWirelessPage(QWidget):
 
         self.lianli_accent_color = color.lower()
 
-        self.lianli_accent_color_button.setText(f"点缀色 {self.lianli_accent_color}")
+        self._update_lianli_color_button(self.lianli_accent_color_button, self.lianli_accent_color, "点缀色")
+
+
+    def _update_lianli_color_button(self, button: QPushButton, color: str, label: str) -> None:
+
+        normalized = self._normalize_lianli_hex_color(color)
+
+        red, green, blue = self._hex_to_rgb(normalized)
+
+        text_color = "#111111" if (red * 299 + green * 587 + blue * 114) / 1000 > 145 else "#f4f7f5"
+
+        button.setText(label)
+
+        button.setToolTip(normalized)
+
+        button.setStyleSheet(
+            f"background: {normalized}; color: {text_color}; border: 1px solid #6b7376; font-weight: 700;"
+        )
 
 
     def choose_lianli_rotation_color(self, index: int) -> None:

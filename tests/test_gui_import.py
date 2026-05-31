@@ -1267,6 +1267,26 @@ def test_lianli_wireless_page_edits_palette_as_color_swatches():
     app.quit()
 
 
+def test_lianli_wireless_page_renders_primary_and_accent_as_swatches():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage()
+
+    page.set_lianli_static_color("#112233")
+    page.set_lianli_accent_color("#aabbcc")
+
+    assert "#112233" not in page.lianli_color_button.text()
+    assert "#aabbcc" not in page.lianli_accent_color_button.text()
+    assert page.lianli_color_button.toolTip() == "#112233"
+    assert page.lianli_accent_color_button.toolTip() == "#aabbcc"
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_sends_remaining_effects_as_tlv2_frames():
     from PySide6.QtWidgets import QApplication
 
