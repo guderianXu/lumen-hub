@@ -936,6 +936,18 @@ def test_tlv2_effect_capabilities_describe_user_controls():
 
     assert tlv2_effect_capability("color-cycle").color_slots == 3
     assert tlv2_effect_capability("meteor-shower").color_slots == 4
+    assert tlv2_effect_capability("disco").uses_palette is True
+    assert tlv2_effect_capability("disco").color_slots == 4
+    assert tlv2_effect_capability("blow-up").uses_primary_color is True
+    assert tlv2_effect_capability("blow-up").uses_accent_color is True
+    assert tlv2_effect_capability("blow-up").color_slots == 2
+    assert tlv2_effect_capability("heartbeat").uses_palette is False
+    assert tlv2_effect_capability("heartbeat").color_slots == 2
+    assert tlv2_effect_capability("warning").color_slots == 2
+    assert tlv2_effect_capability("ocean").uses_palette is True
+    assert tlv2_effect_capability("ocean").color_slots == 2
+    assert tlv2_effect_capability("echo").color_slots == 2
+    assert tlv2_effect_capability("collide").key == "blow-up"
 
 
 def test_tlv2_runway_uses_accent_color_for_second_color_slot():
@@ -1016,7 +1028,10 @@ def test_tlv2_effect_capability_sets_include_expected_key_controls():
         "ping-pong",
         "racing",
         "lottery",
+        "disco",
+        "ocean",
         "collide",
+        "blow-up",
     } <= palette_effects
     assert {
         "twinkle",
@@ -1025,6 +1040,10 @@ def test_tlv2_effect_capability_sets_include_expected_key_controls():
         "racing",
         "lottery",
         "collide",
+        "blow-up",
+        "heartbeat",
+        "warning",
+        "echo",
     } <= accent_effects
 
     assert {"breathing", "color-cycle", "twinkle"}.isdisjoint(direction_effects)

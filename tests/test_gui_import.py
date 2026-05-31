@@ -1464,7 +1464,7 @@ def test_lianli_wireless_page_only_exposes_official_lconnect_effects():
         ("波浪 (W*)", "wave"),
         ("流星雨 (W*)", "meteor-shower"),
         ("迪斯科 (W*)", "disco"),
-        ("爆破 (W*)", "collide"),
+        ("爆破 (W*)", "blow-up"),
         ("心跳 (W*)", "heartbeat"),
         ("警示 (W*)", "warning"),
         ("海洋 (W*)", "ocean"),

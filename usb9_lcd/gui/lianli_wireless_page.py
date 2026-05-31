@@ -69,22 +69,13 @@ LIANLI_OFFICIAL_EFFECT_OPTIONS = (
     ("波浪 (W*)", "wave"),
     ("流星雨 (W*)", "meteor-shower"),
     ("迪斯科 (W*)", "disco"),
-    ("爆破 (W*)", "collide"),
+    ("爆破 (W*)", "blow-up"),
     ("心跳 (W*)", "heartbeat"),
     ("警示 (W*)", "warning"),
     ("海洋 (W*)", "ocean"),
     ("涟漪 (W*)", "ripple"),
     ("回声 (W*)", "echo"),
 )
-LIANLI_EFFECT_ALIASES = {
-    "disco": "racing",
-    "echo": "voice",
-    "heartbeat": "twinkle",
-    "ocean": "tide",
-    "warning": "electric-current",
-}
-
-
 def _pages_override(name: str, fallback: Callable):
     pages_module = sys.modules.get("usb9_lcd.gui.pages")
     override = getattr(pages_module, name, None) if pages_module is not None else None
@@ -3578,7 +3569,7 @@ class LianLiWirelessPage(QWidget):
 
             return "twinkle"
 
-        return LIANLI_EFFECT_ALIASES.get(effect, effect)
+        return effect
 
 
 
@@ -3622,10 +3613,25 @@ class LianLiWirelessPage(QWidget):
             "starry",
             "color-cycle",
             "ripple",
+            "staggered",
+            "tide",
+            "mixing",
+            "voice",
+            "door",
+            "render",
+            "reflect",
+            "tail-chasing",
+            "paint",
+            "ping-pong",
+            "stack",
             "cover-cycle",
             "meteor-shower",
+            "blow-up",
             "collide",
             "disco",
+            "racing",
+            "lottery",
+            "intertwine",
             "heartbeat",
             "warning",
             "ocean",

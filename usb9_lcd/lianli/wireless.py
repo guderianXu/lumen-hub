@@ -250,11 +250,17 @@ TLV2_EFFECT_SPECS: dict[str, Tlv2EffectSpec] = {
     "stack": Tlv2EffectSpec("stack", 64, 60, 0x020B1300),
     "cover-cycle": Tlv2EffectSpec("cover-cycle", 72, 60, 0x020B1400),
     "wave": Tlv2EffectSpec("wave", 24, 60, 0x0209CE48),
+    "disco": Tlv2EffectSpec("disco", 48, 60, 0x020B1600),
     "racing": Tlv2EffectSpec("racing", 48, 45, 0x020B1600),
     "lottery": Tlv2EffectSpec("lottery", 80, 55, 0x020B1700),
     "intertwine": Tlv2EffectSpec("intertwine", 72, 60, 0x020B1800),
     "meteor-shower": Tlv2EffectSpec("meteor-shower", 48, 60, 0x0209E6D1),
+    "blow-up": Tlv2EffectSpec("blow-up", 64, 60, 0x020B1A00),
     "collide": Tlv2EffectSpec("collide", 64, 60, 0x020B1A00),
+    "heartbeat": Tlv2EffectSpec("heartbeat", 72, 60, 0x020B1B00),
+    "warning": Tlv2EffectSpec("warning", 48, 60, 0x020B1C00),
+    "ocean": Tlv2EffectSpec("ocean", 80, 60, 0x020B1D00),
+    "echo": Tlv2EffectSpec("echo", 96, 60, 0x020B1E00),
     "electric-current": Tlv2EffectSpec("electric-current", 80, 60, 0x0209FF5B),
     "kaleidoscope": Tlv2EffectSpec("kaleidoscope", 24, 60, 0x020A182A),
     "twinkle": Tlv2EffectSpec("twinkle", 200, 55, 0x020A31DE),
@@ -282,11 +288,17 @@ TLV2_EFFECT_SEQUENCE_REPEAT_COUNTS: dict[str, int] = {
     "stack": 5,
     "cover-cycle": 6,
     "wave": 2,
+    "disco": 6,
     "racing": 6,
     "lottery": 6,
     "intertwine": 6,
     "meteor-shower": 5,
+    "blow-up": 6,
     "collide": 6,
+    "heartbeat": 6,
+    "warning": 6,
+    "ocean": 6,
+    "echo": 6,
     "electric-current": 6,
     "kaleidoscope": 2,
     "twinkle": 5,
@@ -301,6 +313,9 @@ TLV2_EFFECT_ALIASES = {
     "tail_chasing": "tail-chasing",
     "ping_pong": "ping-pong",
     "cover_cycle": "cover-cycle",
+    "blowup": "blow-up",
+    "blow_up": "blow-up",
+    "collide": "blow-up",
     "starry": "twinkle",
     "star": "twinkle",
     "twinkle": "twinkle",
@@ -353,6 +368,7 @@ TLV2_EFFECT_CAPABILITIES: dict[str, Tlv2EffectCapability] = {
     "stack": Tlv2EffectCapability("stack", uses_palette=True, uses_direction=True, color_slots=2),
     "cover-cycle": Tlv2EffectCapability("cover-cycle", uses_palette=True, uses_direction=True, color_slots=2),
     "wave": Tlv2EffectCapability("wave", uses_primary_color=True, uses_direction=True, color_slots=1),
+    "disco": Tlv2EffectCapability("disco", uses_palette=True, uses_direction=True, color_slots=4),
     "racing": Tlv2EffectCapability(
         "racing",
         uses_primary_color=True,
@@ -364,6 +380,14 @@ TLV2_EFFECT_CAPABILITIES: dict[str, Tlv2EffectCapability] = {
     "lottery": Tlv2EffectCapability("lottery", uses_accent_color=True, uses_palette=True, uses_direction=True, color_slots=4),
     "intertwine": Tlv2EffectCapability("intertwine", uses_palette=True, uses_direction=True, color_slots=2),
     "meteor-shower": Tlv2EffectCapability("meteor-shower", uses_palette=True, uses_direction=True, color_slots=4),
+    "blow-up": Tlv2EffectCapability(
+        "blow-up",
+        uses_primary_color=True,
+        uses_accent_color=True,
+        uses_palette=True,
+        uses_direction=True,
+        color_slots=2,
+    ),
     "collide": Tlv2EffectCapability(
         "collide",
         uses_primary_color=True,
@@ -372,6 +396,22 @@ TLV2_EFFECT_CAPABILITIES: dict[str, Tlv2EffectCapability] = {
         uses_direction=True,
         color_slots=2,
     ),
+    "heartbeat": Tlv2EffectCapability(
+        "heartbeat",
+        uses_primary_color=True,
+        uses_accent_color=True,
+        uses_direction=True,
+        color_slots=2,
+    ),
+    "warning": Tlv2EffectCapability(
+        "warning",
+        uses_primary_color=True,
+        uses_accent_color=True,
+        uses_direction=True,
+        color_slots=2,
+    ),
+    "ocean": Tlv2EffectCapability("ocean", uses_palette=True, uses_direction=True, color_slots=2),
+    "echo": Tlv2EffectCapability("echo", uses_primary_color=True, uses_accent_color=True, uses_direction=True, color_slots=2),
     "electric-current": Tlv2EffectCapability(
         "electric-current",
         uses_primary_color=True,
@@ -2326,10 +2366,16 @@ _GENERATED_EXTRA_TLV2_EFFECTS = {
     "ping-pong",
     "stack",
     "cover-cycle",
+    "disco",
     "racing",
     "lottery",
     "intertwine",
+    "blow-up",
     "collide",
+    "heartbeat",
+    "warning",
+    "ocean",
+    "echo",
 }
 
 
@@ -2449,6 +2495,16 @@ def _extra_tlv2_effect_frame(
             frame.append(palette((led_index + shift) // segment))
         return frame
 
+    if effect_key == "disco":
+        block = max(2, led_count // 6)
+        beat = frame_index // 3
+        for led_index in range(led_count):
+            block_index = (led_index // block + beat * direction_step) % len(colors)
+            strobe = ((led_index * 7 + frame_index * 11) % 23) < 4
+            level = 1.0 if strobe or (beat + led_index // block) % 2 == 0 else 0.28
+            frame.append(_scale_rgb(palette(block_index), level))
+        return frame
+
     if effect_key == "racing":
         stripe = max(2, led_count // 8)
         shift = direction_step * frame_index * 2
@@ -2477,6 +2533,17 @@ def _extra_tlv2_effect_frame(
             frame.append(_mix_rgb(_scale_rgb(palette(0), a), _scale_rgb(palette(1), b), 0.5))
         return frame
 
+    if effect_key == "blow-up":
+        center = (led_count - 1) / 2.0
+        radius = (progress * max(1, led_count)) % max(1, led_count)
+        for led_index in range(led_count):
+            distance = abs(led_index - center)
+            ring = max(0.0, 1.0 - abs(distance - radius) / 3.0)
+            flash = max(0.0, 1.0 - radius / max(2.0, led_count / 2.0))
+            source = primary if led_index <= center else accent
+            frame.append(_mix_rgb(_scale_rgb(source, ring), palette(led_index + frame_index // 4), flash * 0.35))
+        return _maybe_reverse_generated_frame(frame, direction_step)
+
     if effect_key == "collide":
         span = max(1, led_count - 1)
         pos = frame_index * span // max(1, frame_count)
@@ -2490,6 +2557,49 @@ def _extra_tlv2_effect_frame(
             trail = _mix_rgb(_scale_rgb(primary, level), palette(led_index + frame_index // 4), 0.35)
             frame.append(_mix_rgb(trail, accent, burst))
         return _maybe_reverse_generated_frame(frame, direction_step)
+
+    if effect_key == "heartbeat":
+        beat_phase = progress * 2.0
+        pulse = 0.12
+        for center_point in (0.18, 0.34, 1.18, 1.34):
+            pulse += max(0.0, 1.0 - abs(beat_phase - center_point) / 0.08) * 0.88
+        chase = int(progress * led_count * direction_step) % max(1, led_count)
+        for led_index in range(led_count):
+            distance = min((led_index - chase) % led_count, (chase - led_index) % led_count)
+            local = max(0.45, 1.0 - distance / max(3.0, led_count / 5.0))
+            frame.append(_scale_rgb(_mix_rgb(primary, accent, 0.38), min(1.0, pulse * local)))
+        return frame
+
+    if effect_key == "warning":
+        block = max(2, led_count // 4)
+        flash = (frame_index // 6) % 2
+        for led_index in range(led_count):
+            lane = ((led_index * direction_step) // block) & 1
+            color = primary if lane == flash else accent
+            frame.append(color if (frame_index // 3) % 2 == 0 else _scale_rgb(color, 0.22))
+        return frame
+
+    if effect_key == "ocean":
+        for led_index in range(led_count):
+            x = led_index / max(1, led_count - 1)
+            swell = (math.sin((x * 3.0 * direction_step + progress) * math.tau) + 1.0) / 2.0
+            foam = max(0.0, math.sin((x * 8.0 - progress * 2.0 * direction_step) * math.tau))
+            frame.append(_mix_rgb(_mix_rgb(palette(0), palette(1), swell * 0.7), (255, 255, 255), foam * 0.22))
+        return frame
+
+    if effect_key == "echo":
+        origin = 0 if direction_step > 0 else led_count - 1
+        span = max(1, led_count - 1)
+        for led_index in range(led_count):
+            distance = abs(led_index - origin)
+            first = (progress * span * 2.0) % span
+            second = (first - span * 0.32) % span
+            level = max(
+                max(0.0, 1.0 - abs(distance - first) / 2.2),
+                max(0.0, 0.58 - abs(distance - second) / 3.0),
+            )
+            frame.append(_mix_rgb(_scale_rgb(primary, level), accent, level * 0.35))
+        return frame
 
     raise LianLiWirelessError(f"unsupported generated TLV2 effect: {effect_key}")
 
