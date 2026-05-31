@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import lzma
 
 from usb9_lcd.lianli.wireless import (
@@ -720,6 +721,37 @@ def test_tlv2_dynamic_effect_generators_do_not_collapse_to_static_rgb():
         assert len(raw) == 26 * spec.frame_count * 3
         assert len(frames) > 1
         assert len(colors) > 1
+
+
+def test_tlv2_effect_generators_match_official_lconnect_decoded_hashes():
+    expected_hashes = {
+        "rainbow": "57063be37a8377989e802aee22afd3decdb18bec206fc135da77ae50ad8065e5",
+        "rainbow-morph": "3cda4ea477d30fe809ef96eada58fc3e01cd97d327ff950e0b0cec522e2c1493",
+        "static": "8e8afa65e420bcae17bd6160d726be2ae3fc30910c67310b8f97e7b4818cc50a",
+        "breathing": "2af9e7357c998f2ed1b350a5f5e9779bd8c9f6f72e75a02d0ae293e75b2a2189",
+        "runway": "6bc2b030d36770baf253b39129836ac7eb093063194e16f0fc4cbcdd85197ab0",
+        "meteor": "9d5af8e24cc92980dc1e7a6447238acc426ba5b20e4211e7e9cc92ce6c83292e",
+        "color-cycle": "96e64e672fd10f2143886e66877ee2bce79c1cb3d8bb4a2e9ce35a9973923b1d",
+        "ripple": "a5eb837757c4384ac6814124a43261af3b9b833a35c62bdec1bbd1d91a5b009f",
+        "wave": "61dba4b1ebcd62cf28fd12aa89145819f876bcd871a3a5e5c445e91f66f0399f",
+        "meteor-shower": "b4c76c32a992422deb6ff83530a503c93dc5f2a25c79e5a1bf2f5fcc4b28d47d",
+        "electric-current": "87f3abcb91924372d2b605b1b3808ed08ab6162d1872a781c4cf148198944c1d",
+        "kaleidoscope": "57063be37a8377989e802aee22afd3decdb18bec206fc135da77ae50ad8065e5",
+        "twinkle": "da4c7175f5dbe80f09af56583dc1bec9912790de8cf47f5fb5c77f6a183d6690",
+    }
+
+    for effect, expected_hash in expected_hashes.items():
+        raw, _spec = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(255, 0, 0),
+            accent_color=(255, 255, 255),
+            palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+            brightness=100,
+            direction="left",
+        )
+
+        assert hashlib.sha256(raw).hexdigest() == expected_hash
 
 
 def test_backend_builds_tlv2_dynamic_effect_rf_chunks():

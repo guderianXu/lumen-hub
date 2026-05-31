@@ -848,8 +848,6 @@ class LianLiWirelessPage(QWidget):
 
             ("呼吸", "breathing"),
 
-            ("颜色旋转", "rotate"),
-
             ("渐变彩虹", "gradient-rainbow"),
 
             ("流星", "meteor"),
@@ -859,8 +857,6 @@ class LianLiWirelessPage(QWidget):
             ("星空", "starry"),
 
             ("色彩循环", "color-cycle"),
-
-            ("覆盖周期", "overlap-cycle"),
 
             ("波浪", "wave"),
 
@@ -1262,8 +1258,6 @@ class LianLiWirelessPage(QWidget):
 
             ("静态颜色", "static", True),
 
-            ("颜色旋转", "rotate", True),
-
             ("关灯", "off", True),
 
             ("渐变彩虹", "gradient-rainbow", True),
@@ -1277,8 +1271,6 @@ class LianLiWirelessPage(QWidget):
             ("星空", "starry", True),
 
             ("色彩循环", "color-cycle", True),
-
-            ("覆盖周期", "overlap-cycle", True),
 
             ("波浪", "wave", True),
 
@@ -3494,8 +3486,6 @@ class LianLiWirelessPage(QWidget):
                 direction=str(self.lianli_direction_combo.currentData() or "left"),
 
                 led_count=led_count,
-
-                effect_index=70000000 + int(time.time()) % 100000,
 
             )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 import math
 import site
@@ -7,6 +8,12 @@ from pathlib import Path
 from typing import Any, Iterable, Protocol
 import sys
 import time
+import zlib
+
+from usb9_lcd.lianli.tlv2_official_effects import (
+    OFFICIAL_TLV2_LED_COUNT,
+    OFFICIAL_TLV2_RGB_ZLIB_B64,
+)
 
 
 RF_SENDER_VID = 0x0416
@@ -220,6 +227,8 @@ TLV2_EFFECT_ALIASES = {
     "star": "twinkle",
     "twinkle": "twinkle",
 }
+
+_OFFICIAL_TLV2_RGB_CACHE: dict[str, bytes] = {}
 
 
 class LianLiWirelessBackend:
@@ -1210,6 +1219,16 @@ def generate_tlv2_effect_rgb_frames(
     accent = _scale_rgb(_rgb_tuple(accent_color), brightness_scale)
     colors = _resolve_tlv2_palette(palette, primary=primary, accent=accent, brightness_scale=brightness_scale)
     direction_step = _direction_step(direction)
+    official_raw = _official_tlv2_rgb_frames(
+        effect_key,
+        led_count=resolved_led_count,
+        primary=primary,
+        accent=accent,
+        palette=colors,
+        direction_step=direction_step,
+    )
+    if official_raw is not None:
+        return official_raw, spec
 
     if effect_key in {"rainbow", "kaleidoscope"}:
         raw = generate_rainbow_rgb_frames(
@@ -1256,6 +1275,102 @@ def generate_tlv2_effect_rgb_frames(
         for rgb in frame:
             raw.extend(rgb)
     return bytes(raw), spec
+
+
+def _official_tlv2_rgb_frames(
+    effect_key: str,
+    *,
+    led_count: int,
+    primary: tuple[int, int, int],
+    accent: tuple[int, int, int],
+    palette: tuple[tuple[int, int, int], ...],
+    direction_step: int,
+) -> bytes | None:
+    entry = OFFICIAL_TLV2_RGB_ZLIB_B64.get(effect_key)
+    if entry is None or led_count != OFFICIAL_TLV2_LED_COUNT:
+        return None
+    raw = _official_tlv2_template(effect_key)
+    frame_count = int(entry["frame_count"])
+    if direction_step < 0:
+        raw = _reverse_rgb_frame_led_order(raw, led_count=led_count, frame_count=frame_count)
+    return _remap_official_tlv2_rgb(raw, primary=primary, accent=accent, palette=palette)
+
+
+def _official_tlv2_template(effect_key: str) -> bytes:
+    cached = _OFFICIAL_TLV2_RGB_CACHE.get(effect_key)
+    if cached is not None:
+        return cached
+    entry = OFFICIAL_TLV2_RGB_ZLIB_B64[effect_key]
+    encoded = str(entry["zlib_b64"])
+    raw = zlib.decompress(base64.b64decode(encoded))
+    _OFFICIAL_TLV2_RGB_CACHE[effect_key] = raw
+    return raw
+
+
+def _remap_official_tlv2_rgb(
+    raw: bytes,
+    *,
+    primary: tuple[int, int, int],
+    accent: tuple[int, int, int],
+    palette: tuple[tuple[int, int, int], ...],
+) -> bytes:
+    basis = _official_tlv2_palette_basis(primary=primary, accent=accent, palette=palette)
+    out = bytearray(len(raw))
+    for offset in range(0, len(raw), 3):
+        red, green, blue = raw[offset], raw[offset + 1], raw[offset + 2]
+        if red == green == blue:
+            mapped = _scale_rgb(basis[3], red / 254.0 if red else 0.0)
+        else:
+            mapped = _mix_official_palette_color(red, green, blue, basis)
+        out[offset : offset + 3] = bytes(mapped)
+    return bytes(out)
+
+
+def _official_tlv2_palette_basis(
+    *,
+    primary: tuple[int, int, int],
+    accent: tuple[int, int, int],
+    palette: tuple[tuple[int, int, int], ...],
+) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
+    colors = [_official_rgb_tuple(color) for color in palette[:4]]
+    while len(colors) < 3:
+        colors.append(_official_rgb_tuple(primary if not colors else accent))
+    if len(colors) < 4:
+        colors.append(_official_rgb_tuple(accent))
+    return colors[0], colors[1], colors[2], colors[3]
+
+
+def _official_rgb_tuple(color: tuple[int, int, int]) -> tuple[int, int, int]:
+    return tuple(min(component, 254) for component in color)  # type: ignore[return-value]
+
+
+def _mix_official_palette_color(
+    red: int,
+    green: int,
+    blue: int,
+    basis: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]],
+) -> tuple[int, int, int]:
+    weights = (red / 254.0, green / 254.0, blue / 254.0)
+    channels = []
+    for channel_index in range(3):
+        value = sum(weights[index] * basis[index][channel_index] for index in range(3))
+        channels.append(max(0, min(254, int(round(value)))))
+    return tuple(channels)  # type: ignore[return-value]
+
+
+def _reverse_rgb_frame_led_order(raw: bytes, *, led_count: int, frame_count: int) -> bytes:
+    frame_size = led_count * 3
+    out = bytearray(len(raw))
+    for frame_index in range(frame_count):
+        frame_start = frame_index * frame_size
+        frame = raw[frame_start : frame_start + frame_size]
+        reversed_frame = bytearray(frame_size)
+        for led_index in range(led_count):
+            src = led_index * 3
+            dst = (led_count - led_index - 1) * 3
+            reversed_frame[dst : dst + 3] = frame[src : src + 3]
+        out[frame_start : frame_start + frame_size] = reversed_frame
+    return bytes(out)
 
 
 def generate_rainbow_rgb_frames(

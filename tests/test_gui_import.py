@@ -1088,13 +1088,15 @@ def test_lianli_wireless_page_sends_dynamic_effects_as_tlv2_frames(tmp_path: Pat
         def __init__(self):
             self.static_calls: list[tuple[str, tuple[int, int, int]]] = []
             self.tlv2_calls: list[tuple[str, str, int, int]] = []
+            self.tlv2_kwargs: list[dict[str, object]] = []
 
         def send_static_rgb(self, target, color, **_kwargs):
             self.static_calls.append((target.mac, color))
             return 8
 
-        def send_tlv2_effect(self, target, effect, *, led_count, brightness, **_kwargs):
+        def send_tlv2_effect(self, target, effect, *, led_count, brightness, **kwargs):
             self.tlv2_calls.append((target.mac, effect, led_count, brightness))
+            self.tlv2_kwargs.append(kwargs)
             return 20
 
     target = WirelessDeviceInfo(
@@ -1120,6 +1122,7 @@ def test_lianli_wireless_page_sends_dynamic_effects_as_tlv2_frames(tmp_path: Pat
     assert packets == 20
     assert backend.static_calls == []
     assert backend.tlv2_calls == [("aa:bb:cc:dd:ee:ff", "breathing", 26, 80)]
+    assert "effect_index" not in backend.tlv2_kwargs[0]
 
     page.close()
     app.quit()
