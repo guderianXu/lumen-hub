@@ -955,9 +955,25 @@ class LianLiWirelessPage(QWidget):
 
         self.lianli_accent_color_button.clicked.connect(self.choose_lianli_accent_color)
 
-        self.lianli_rotation_colors = QLineEdit(
+        self._lianli_rotation_color_values = self._parse_lianli_color_list(
             str(getattr(self.settings.lianli_wireless, "rotation_colors", "#fe0000,#00fe00,#0000fe,#ffd60a") or "#fe0000,#00fe00,#0000fe,#ffd60a")
         )
+
+        self.lianli_rotation_colors = QWidget()
+
+        self.lianli_rotation_colors_layout = QHBoxLayout(self.lianli_rotation_colors)
+
+        self.lianli_rotation_colors_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.lianli_rotation_colors_layout.setSpacing(8)
+
+        self.lianli_rotation_add_button = QPushButton("+")
+
+        self.lianli_rotation_add_button.setFixedWidth(34)
+
+        self.lianli_rotation_add_button.clicked.connect(lambda: self.add_lianli_rotation_color())
+
+        self._refresh_lianli_rotation_color_buttons()
 
         self.lianli_rotation_hold = QSpinBox()
 
@@ -2933,6 +2949,104 @@ class LianLiWirelessPage(QWidget):
         self.lianli_accent_color_button.setText(f"点缀色 {self.lianli_accent_color}")
 
 
+    def choose_lianli_rotation_color(self, index: int) -> None:
+
+        current = self._rotation_colors()[index] if 0 <= index < len(self._rotation_colors()) else "#ffffff"
+
+        color = QColorDialog.getColor(QColor(current), self, "选择联力队列颜色")
+
+        if color.isValid():
+
+            self.set_lianli_rotation_color(index, color.name())
+
+
+    def set_lianli_rotation_color(self, index: int, color: str) -> None:
+
+        colors = self._rotation_colors()
+
+        if not 0 <= index < len(colors):
+
+            raise IndexError("rotation color index out of range")
+
+        colors[index] = self._normalize_lianli_hex_color(color)
+
+        self._set_lianli_rotation_colors(colors)
+
+
+    def add_lianli_rotation_color(self, color: str = "#ffffff") -> None:
+
+        self._set_lianli_rotation_colors([*self._rotation_colors(), self._normalize_lianli_hex_color(color)])
+
+
+    def remove_lianli_rotation_color(self, index: int) -> None:
+
+        colors = self._rotation_colors()
+
+        if len(colors) <= 1:
+
+            return
+
+        if not 0 <= index < len(colors):
+
+            raise IndexError("rotation color index out of range")
+
+        del colors[index]
+
+        self._set_lianli_rotation_colors(colors)
+
+
+    def _set_lianli_rotation_colors(self, colors: list[str]) -> None:
+
+        self._lianli_rotation_color_values = [self._normalize_lianli_hex_color(color) for color in colors] or ["#00fe00"]
+
+        self._refresh_lianli_rotation_color_buttons()
+
+
+    def _refresh_lianli_rotation_color_buttons(self) -> None:
+
+        while self.lianli_rotation_colors_layout.count():
+
+            item = self.lianli_rotation_colors_layout.takeAt(0)
+
+            widget = item.widget()
+
+            if widget is not None:
+
+                widget.deleteLater()
+
+        for index, color in enumerate(self._rotation_colors()):
+
+            button = QPushButton()
+
+            button.setObjectName("ColorSwatch")
+
+            button.setFixedSize(34, 28)
+
+            button.setToolTip(color)
+
+            button.setStyleSheet(f"background: {color}; border: 1px solid #6b7376;")
+
+            button.clicked.connect(lambda _checked=False, color_index=index: self.choose_lianli_rotation_color(color_index))
+
+            self.lianli_rotation_colors_layout.addWidget(button)
+
+            if len(self._rotation_colors()) > 1:
+
+                remove_button = QPushButton("-")
+
+                remove_button.setFixedWidth(26)
+
+                remove_button.setToolTip(f"移除 {color}")
+
+                remove_button.clicked.connect(lambda _checked=False, color_index=index: self.remove_lianli_rotation_color(color_index))
+
+                self.lianli_rotation_colors_layout.addWidget(remove_button)
+
+        self.lianli_rotation_colors_layout.addWidget(self.lianli_rotation_add_button)
+
+        self.lianli_rotation_colors_layout.addStretch(1)
+
+
 
     def preview_lianli_lighting_payload(self) -> None:
 
@@ -3969,7 +4083,7 @@ class LianLiWirelessPage(QWidget):
 
         self.settings.lianli_wireless.accent_color = self.lianli_accent_color
 
-        self.settings.lianli_wireless.rotation_colors = self.lianli_rotation_colors.text()
+        self.settings.lianli_wireless.rotation_colors = ",".join(self._rotation_colors())
 
         self.settings.lianli_wireless.brightness = self.lianli_brightness_slider.value()
 
@@ -4077,19 +4191,31 @@ class LianLiWirelessPage(QWidget):
 
     def _rotation_colors(self) -> list[str]:
 
-        colors = [
+        return list(getattr(self, "_lianli_rotation_color_values", ["#00fe00"])) or ["#00fe00"]
 
-            item.strip().lower()
 
-            for item in self.lianli_rotation_colors.text().split(",")
+    def _parse_lianli_color_list(self, text: str) -> list[str]:
 
-            if item.strip()
+        colors = [item.strip() for item in str(text).split(",") if item.strip()]
 
-        ]
+        return [self._normalize_lianli_hex_color(color) for color in colors] or ["#00fe00"]
 
-        valid = [color if color.startswith("#") else f"#{color}" for color in colors]
 
-        return valid or ["#00fe00"]
+    def _normalize_lianli_hex_color(self, color: str) -> str:
+
+        value = str(color).strip().lower()
+
+        if not value.startswith("#"):
+
+            value = f"#{value}"
+
+        if len(value) != 7:
+
+            raise ValueError(f"无效 RGB 颜色：{color}")
+
+        int(value[1:], 16)
+
+        return value
 
 
 

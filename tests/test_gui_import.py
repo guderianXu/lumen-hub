@@ -1207,7 +1207,7 @@ def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
     page.lianli_direct_led_count.setValue(26)
     page.set_lianli_static_color("#112233")
     page.set_lianli_accent_color("#aabbcc")
-    page.lianli_rotation_colors.setText("#010203,#040506,#070809")
+    page._set_lianli_rotation_colors(["#010203", "#040506", "#070809"])
     page.lianli_direction_combo.setCurrentIndex(page.lianli_direction_combo.findData("right"))
 
     page._send_lianli_effect_with_backend(backend, target, "ripple")
@@ -1235,6 +1235,33 @@ def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
     page._remember_lianli_effect_settings("ripple")
     assert page.settings.lianli_wireless.accent_color == "#aabbcc"
     assert page.settings.lianli_wireless.rotation_colors == "#010203,#040506,#070809"
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_edits_palette_as_color_swatches():
+    from PySide6.QtWidgets import QApplication, QLineEdit
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage()
+
+    assert not isinstance(page.lianli_rotation_colors, QLineEdit)
+    assert page._rotation_colors()[:4] == ["#fe0000", "#00fe00", "#0000fe", "#ffd60a"]
+
+    page.set_lianli_rotation_color(1, "#123456")
+    assert page._rotation_colors()[:4] == ["#fe0000", "#123456", "#0000fe", "#ffd60a"]
+
+    page.add_lianli_rotation_color("#abcdef")
+    assert page._rotation_colors()[-1] == "#abcdef"
+
+    page.remove_lianli_rotation_color(0)
+    assert page._rotation_colors()[0] == "#123456"
+
+    page._remember_lianli_effect_settings("ripple")
+    assert page.settings.lianli_wireless.rotation_colors == "#123456,#0000fe,#ffd60a,#abcdef"
 
     page.close()
     app.quit()
