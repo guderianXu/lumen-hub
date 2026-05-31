@@ -17,6 +17,8 @@ from usb9_lcd.lianli.wireless import (
     RF_PAYLOAD_SIZE,
     RGB_FIRST_PAYLOAD_REPEAT_COUNT,
     RGB_STATIC_SEQUENCE_REPEAT_COUNT,
+    TLV2_EFFECT_CAPABILITIES,
+    TLV2_EFFECT_SPECS,
     UDEV_RULES,
     WirelessDeviceInfo,
     build_bind_payload,
@@ -40,6 +42,7 @@ from usb9_lcd.lianli.wireless import (
     scan_known_usb_devices,
     static_rgb_effect_index,
     static_rgb_wire_color,
+    tlv2_effect_capability,
     tlv2_color_effect_index,
     tinyuz_compress,
     tinyuz_compress_literal,
@@ -597,10 +600,380 @@ def test_static_rgb_wire_color_uses_official_max_component_value():
     assert static_rgb_wire_color((128, 64, 32)) == (128, 64, 32)
 
 
-def test_tlv2_color_effect_index_changes_when_primary_color_changes():
+def test_tlv2_color_effect_index_changes_when_used_colors_change():
     assert tlv2_color_effect_index("breathing", (0, 0, 255)) == 0x0209539F
     assert tlv2_color_effect_index("breathing", (0, 255, 0)) == 0x02095360
     assert tlv2_color_effect_index("breathing", (255, 0, 0)) == 0x020953FF
+
+    red_blue = tlv2_color_effect_index(
+        "twinkle",
+        (255, 0, 0),
+        accent_color=(0, 0, 255),
+    )
+    red_green = tlv2_color_effect_index(
+        "twinkle",
+        (255, 0, 0),
+        accent_color=(0, 255, 0),
+    )
+    assert red_blue != red_green
+
+    palette_a = tlv2_color_effect_index(
+        "ripple",
+        (255, 0, 0),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255)),
+        direction="left",
+    )
+    palette_b = tlv2_color_effect_index(
+        "ripple",
+        (255, 0, 0),
+        palette=((0, 0, 255), (0, 255, 0), (255, 0, 0)),
+        direction="left",
+    )
+    assert palette_a != palette_b
+
+    direction_left = tlv2_color_effect_index(
+        "ripple",
+        (255, 0, 0),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255)),
+        direction="left",
+    )
+    direction_right = tlv2_color_effect_index(
+        "ripple",
+        (255, 0, 0),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255)),
+        direction="right",
+    )
+    assert direction_left != direction_right
+
+
+def test_tlv2_color_effect_index_keeps_default_for_colorless_effects():
+    default_index = TLV2_EFFECT_SPECS["rainbow"].default_effect_index
+
+    assert (
+        tlv2_color_effect_index(
+            "rainbow",
+            (255, 0, 0),
+            palette=((255, 0, 0), (0, 255, 0), (0, 0, 255)),
+        )
+        == default_index
+    )
+    assert (
+        tlv2_color_effect_index(
+            "rainbow",
+            (31, 209, 255),
+            palette=((12, 34, 56), (78, 90, 123), (210, 45, 67)),
+        )
+        == default_index
+    )
+
+
+def test_tlv2_color_effect_index_tracks_generated_extra_effect_color_dependencies():
+    palette = ((12, 34, 56), (78, 90, 123), (210, 45, 67), (89, 201, 34))
+    primary_a = (255, 45, 85)
+    primary_b = (31, 209, 255)
+    accent_a = (255, 255, 255)
+    accent_b = (255, 214, 10)
+    effect_fields = {
+        "door": ("primary",),
+        "reflect": ("primary", "accent"),
+        "tail-chasing": ("primary",),
+        "paint": ("primary",),
+        "ping-pong": ("primary",),
+        "racing": ("primary", "accent"),
+        "lottery": ("accent",),
+        "collide": ("primary", "accent"),
+    }
+
+    for effect, fields in effect_fields.items():
+        for field in fields:
+            color_a = primary_a
+            color_b = primary_b if field == "primary" else primary_a
+            accent_color_a = accent_a
+            accent_color_b = accent_b if field == "accent" else accent_a
+
+            raw_a, _ = generate_tlv2_effect_rgb_frames(
+                effect,
+                led_count=26,
+                color=color_a,
+                accent_color=accent_color_a,
+                palette=palette,
+                brightness=100,
+                direction="left",
+            )
+            raw_b, _ = generate_tlv2_effect_rgb_frames(
+                effect,
+                led_count=26,
+                color=color_b,
+                accent_color=accent_color_b,
+                palette=palette,
+                brightness=100,
+                direction="left",
+            )
+            assert raw_a != raw_b, (effect, field)
+
+            index_a = tlv2_color_effect_index(
+                effect,
+                color_a,
+                accent_color=accent_color_a,
+                palette=palette,
+            )
+            index_b = tlv2_color_effect_index(
+                effect,
+                color_b,
+                accent_color=accent_color_b,
+                palette=palette,
+            )
+            assert index_a != index_b, (effect, field)
+
+
+def test_tlv2_effect_payload_explicit_index_tracks_used_colors():
+    target = parse_wireless_snapshot(_snapshot_payload())[0]
+    palette = ((12, 34, 56), (78, 90, 123), (210, 45, 67), (89, 201, 34))
+    red_expected = tlv2_color_effect_index(
+        "door",
+        (255, 45, 85),
+        accent_color=(255, 255, 255),
+        palette=palette,
+    )
+    blue_expected = tlv2_color_effect_index(
+        "door",
+        (31, 209, 255),
+        accent_color=(255, 255, 255),
+        palette=palette,
+    )
+
+    red_payloads = build_tlv2_effect_payloads(
+        target,
+        "door",
+        color=(255, 45, 85),
+        accent_color=(255, 255, 255),
+        palette=palette,
+        brightness=100,
+        direction="left",
+        led_count=26,
+        effect_index=red_expected,
+    )
+    blue_payloads = build_tlv2_effect_payloads(
+        target,
+        "door",
+        color=(31, 209, 255),
+        accent_color=(255, 255, 255),
+        palette=palette,
+        brightness=100,
+        direction="left",
+        led_count=26,
+        effect_index=blue_expected,
+    )
+
+    red_index = int.from_bytes(red_payloads[0][14:18], "big")
+    blue_index = int.from_bytes(blue_payloads[0][14:18], "big")
+    assert red_index == red_expected
+    assert blue_index == blue_expected
+    assert red_index != blue_index
+
+
+def test_tlv2_effect_raw_and_index_ignore_hidden_color_parameters():
+    for effect in ("rainbow", "rainbow-morph", "kaleidoscope"):
+        raw_a, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(255, 0, 0),
+            accent_color=(255, 255, 255),
+            palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+            brightness=100,
+            direction="left",
+        )
+        raw_b, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(31, 209, 255),
+            accent_color=(255, 214, 10),
+            palette=((12, 34, 56), (78, 90, 123), (210, 45, 67), (89, 201, 34)),
+            brightness=100,
+            direction="left",
+        )
+        index_a = tlv2_color_effect_index(
+            effect,
+            (255, 0, 0),
+            accent_color=(255, 255, 255),
+            palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+        )
+        index_b = tlv2_color_effect_index(
+            effect,
+            (31, 209, 255),
+            accent_color=(255, 214, 10),
+            palette=((12, 34, 56), (78, 90, 123), (210, 45, 67), (89, 201, 34)),
+        )
+
+        assert raw_a == raw_b, effect
+        assert index_a == index_b, effect
+
+    raw_palette_a, _ = generate_tlv2_effect_rgb_frames(
+        "twinkle",
+        led_count=26,
+        color=(255, 45, 85),
+        accent_color=(255, 255, 255),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+        brightness=100,
+        direction="left",
+    )
+    raw_palette_b, _ = generate_tlv2_effect_rgb_frames(
+        "twinkle",
+        led_count=26,
+        color=(255, 45, 85),
+        accent_color=(255, 255, 255),
+        palette=((12, 34, 56), (78, 90, 123), (210, 45, 67), (89, 201, 34)),
+        brightness=100,
+        direction="left",
+    )
+    index_palette_a = tlv2_color_effect_index(
+        "twinkle",
+        (255, 45, 85),
+        accent_color=(255, 255, 255),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+    )
+    index_palette_b = tlv2_color_effect_index(
+        "twinkle",
+        (255, 45, 85),
+        accent_color=(255, 255, 255),
+        palette=((12, 34, 56), (78, 90, 123), (210, 45, 67), (89, 201, 34)),
+    )
+    assert raw_palette_a == raw_palette_b
+    assert index_palette_a == index_palette_b
+
+    raw_accent_a, _ = generate_tlv2_effect_rgb_frames(
+        "twinkle",
+        led_count=26,
+        color=(255, 45, 85),
+        accent_color=(255, 255, 255),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+        brightness=100,
+        direction="left",
+    )
+    raw_accent_b, _ = generate_tlv2_effect_rgb_frames(
+        "twinkle",
+        led_count=26,
+        color=(255, 45, 85),
+        accent_color=(255, 214, 10),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+        brightness=100,
+        direction="left",
+    )
+    index_accent_a = tlv2_color_effect_index("twinkle", (255, 45, 85), accent_color=(255, 255, 255))
+    index_accent_b = tlv2_color_effect_index("twinkle", (255, 45, 85), accent_color=(255, 214, 10))
+    assert raw_accent_a != raw_accent_b
+    assert index_accent_a != index_accent_b
+
+
+def test_tlv2_electric_current_accent_changes_raw_and_index():
+    raw_white, _ = generate_tlv2_effect_rgb_frames(
+        "electric-current",
+        led_count=27,
+        color=(255, 45, 85),
+        accent_color=(255, 255, 255),
+        brightness=100,
+        direction="left",
+    )
+    raw_yellow, _ = generate_tlv2_effect_rgb_frames(
+        "electric-current",
+        led_count=27,
+        color=(255, 45, 85),
+        accent_color=(255, 214, 10),
+        brightness=100,
+        direction="left",
+    )
+    index_white = tlv2_color_effect_index(
+        "electric-current",
+        (255, 45, 85),
+        accent_color=(255, 255, 255),
+    )
+    index_yellow = tlv2_color_effect_index(
+        "electric-current",
+        (255, 45, 85),
+        accent_color=(255, 214, 10),
+    )
+
+    assert raw_white != raw_yellow
+    assert index_white != index_yellow
+
+
+def test_tlv2_effect_capabilities_cover_all_specs_and_aliases():
+    missing = set(TLV2_EFFECT_SPECS) - set(TLV2_EFFECT_CAPABILITIES)
+    assert missing == set()
+
+    assert tlv2_effect_capability("starry").key == "twinkle"
+    assert tlv2_effect_capability("gradient-rainbow").key == "rainbow-morph"
+
+
+def test_tlv2_effect_capabilities_describe_user_controls():
+    assert tlv2_effect_capability("static").uses_primary_color is True
+    assert tlv2_effect_capability("static").uses_palette is False
+    assert tlv2_effect_capability("static").uses_speed is False
+
+    assert tlv2_effect_capability("breathing").uses_primary_color is True
+    assert tlv2_effect_capability("breathing").uses_palette is False
+    assert tlv2_effect_capability("breathing").uses_direction is False
+
+    assert tlv2_effect_capability("twinkle").uses_primary_color is True
+    assert tlv2_effect_capability("twinkle").uses_accent_color is True
+    assert tlv2_effect_capability("twinkle").uses_palette is False
+
+    assert tlv2_effect_capability("rainbow").uses_primary_color is False
+    assert tlv2_effect_capability("rainbow").uses_palette is False
+    assert tlv2_effect_capability("rainbow").uses_direction is True
+
+    assert tlv2_effect_capability("ripple").uses_palette is True
+    assert tlv2_effect_capability("ripple").uses_direction is True
+
+
+def test_tlv2_effect_capability_sets_include_expected_key_controls():
+    direction_effects = {
+        effect
+        for effect, capability in TLV2_EFFECT_CAPABILITIES.items()
+        if capability.uses_direction
+    }
+    palette_effects = {
+        effect
+        for effect, capability in TLV2_EFFECT_CAPABILITIES.items()
+        if capability.uses_palette
+    }
+    accent_effects = {
+        effect
+        for effect, capability in TLV2_EFFECT_CAPABILITIES.items()
+        if capability.uses_accent_color
+    }
+
+    assert {
+        "rainbow",
+        "rainbow-morph",
+        "ripple",
+        "wave",
+        "electric-current",
+        "kaleidoscope",
+    } <= direction_effects
+    assert {
+        "color-cycle",
+        "door",
+        "render",
+        "ripple",
+        "reflect",
+        "tail-chasing",
+        "paint",
+        "ping-pong",
+        "racing",
+        "lottery",
+        "collide",
+    } <= palette_effects
+    assert {
+        "twinkle",
+        "electric-current",
+        "reflect",
+        "racing",
+        "lottery",
+        "collide",
+    } <= accent_effects
+
+    assert {"breathing", "color-cycle", "twinkle"}.isdisjoint(direction_effects)
 
 
 def test_rainbow_rgb_payload_builds_multi_frame_led_effect_packets():
@@ -691,6 +1064,10 @@ def _rgb_triplets(raw: bytes) -> list[tuple[int, int, int]]:
         (raw[index], raw[index + 1], raw[index + 2])
         for index in range(0, len(raw), 3)
     ]
+
+
+def _unique_frame_colors(raw: bytes) -> set[tuple[int, int, int]]:
+    return set(_rgb_triplets(raw))
 
 
 def test_tlv2_effect_payloads_use_captured_frame_metadata():
@@ -834,6 +1211,142 @@ def test_tlv2_dynamic_effect_generators_do_not_collapse_to_static_rgb():
         assert len(raw) == 26 * spec.frame_count * 3
         assert len(frames) > 1
         assert len(colors) > 1
+
+
+def test_tlv2_direction_capable_effects_change_when_direction_changes():
+    effects = [
+        effect
+        for effect, capability in TLV2_EFFECT_CAPABILITIES.items()
+        if capability.uses_direction
+    ]
+    assert effects
+
+    for effect in effects:
+        left_raw, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(255, 45, 85),
+            accent_color=(255, 255, 255),
+            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+            brightness=80,
+            direction="left",
+        )
+        right_raw, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(255, 45, 85),
+            accent_color=(255, 255, 255),
+            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+            brightness=80,
+            direction="right",
+        )
+        assert left_raw != right_raw, effect
+
+
+def test_tlv2_palette_capable_effects_change_when_palette_changes():
+    effects = [
+        effect
+        for effect, capability in TLV2_EFFECT_CAPABILITIES.items()
+        if capability.uses_palette
+    ]
+    assert effects
+
+    for effect in effects:
+        first_raw, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(255, 45, 85),
+            accent_color=(255, 255, 255),
+            palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+            brightness=100,
+            direction="left",
+        )
+        second_raw, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(255, 45, 85),
+            accent_color=(255, 255, 255),
+            palette=((0, 0, 255), (255, 255, 0), (0, 255, 255), (255, 0, 0)),
+            brightness=100,
+            direction="left",
+        )
+        assert first_raw != second_raw, effect
+        assert len(_unique_frame_colors(first_raw)) > 1
+        assert len(_unique_frame_colors(second_raw)) > 1
+
+
+def test_tlv2_direction_hidden_effects_do_not_change_when_direction_changes():
+    effects = [
+        effect
+        for effect, capability in TLV2_EFFECT_CAPABILITIES.items()
+        if not capability.uses_direction
+    ]
+    assert effects
+
+    for effect in effects:
+        left_raw, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(255, 45, 85),
+            accent_color=(255, 214, 10),
+            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+            brightness=80,
+            direction="left",
+        )
+        right_raw, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=26,
+            color=(255, 45, 85),
+            accent_color=(255, 214, 10),
+            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+            brightness=80,
+            direction="right",
+        )
+        assert left_raw == right_raw, effect
+
+
+def test_tlv2_generated_fallback_direction_capable_effects_change_when_direction_changes():
+    for effect in ("ripple", "electric-current"):
+        left_raw, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=27,
+            color=(255, 45, 85),
+            accent_color=(255, 255, 255),
+            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+            brightness=80,
+            direction="left",
+        )
+        right_raw, _ = generate_tlv2_effect_rgb_frames(
+            effect,
+            led_count=27,
+            color=(255, 45, 85),
+            accent_color=(255, 255, 255),
+            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+            brightness=80,
+            direction="right",
+        )
+        assert left_raw != right_raw, effect
+
+
+def test_tlv2_electric_current_official_path_honors_accent_color():
+    raw_white, _ = generate_tlv2_effect_rgb_frames(
+        "electric-current",
+        led_count=26,
+        color=(255, 45, 85),
+        accent_color=(255, 255, 255),
+        brightness=100,
+        direction="left",
+    )
+    raw_yellow, _ = generate_tlv2_effect_rgb_frames(
+        "electric-current",
+        led_count=26,
+        color=(255, 45, 85),
+        accent_color=(255, 214, 10),
+        brightness=100,
+        direction="left",
+    )
+
+    assert raw_white != raw_yellow
 
 
 def test_tlv2_breathing_honors_primary_color_when_palette_is_unchanged():

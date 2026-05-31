@@ -1130,6 +1130,116 @@ def test_lianli_wireless_page_sends_dynamic_effects_as_tlv2_frames(tmp_path: Pat
     app.quit()
 
 
+def _set_lianli_effect(page, effect: str) -> None:
+    index = page.lianli_effect_combo.findData(effect)
+    if index < 0 and effect == "twinkle":
+        index = page.lianli_effect_combo.findData("starry")
+    assert index >= 0
+    page.lianli_effect_combo.setCurrentIndex(index)
+    page._update_lianli_effect_fields()
+
+
+def test_lianli_wireless_page_uses_effect_capabilities_for_parameter_visibility():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage()
+    page.show()
+    app.processEvents()
+
+    _set_lianli_effect(page, "breathing")
+    assert page.lianli_color_button.isVisible() is True
+    assert page.lianli_accent_color_button.isVisible() is False
+    assert page.lianli_rotation_colors.isVisible() is False
+    assert page.lianli_direction_combo.isVisible() is False
+
+    _set_lianli_effect(page, "twinkle")
+    assert page.lianli_color_button.isVisible() is True
+    assert page.lianli_accent_color_button.isVisible() is True
+    assert page.lianli_rotation_colors.isVisible() is False
+
+    _set_lianli_effect(page, "ripple")
+    assert page.lianli_color_button.isVisible() is False
+    assert page.lianli_accent_color_button.isVisible() is False
+    assert page.lianli_rotation_colors.isVisible() is True
+    assert page.lianli_direction_combo.isVisible() is True
+
+    _set_lianli_effect(page, "rainbow")
+    assert page.lianli_color_button.isVisible() is False
+    assert page.lianli_rotation_colors.isVisible() is False
+    assert page.lianli_direction_combo.isVisible() is True
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, tlv2_color_effect_index
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def send_tlv2_effect(self, target, effect, *, led_count, brightness, **kwargs):
+            self.calls.append((effect, kwargs))
+            return 20
+
+    target = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend)
+    page.lianli_direct_led_count.setValue(26)
+    page.set_lianli_static_color("#112233")
+    page.set_lianli_accent_color("#aabbcc")
+    page.lianli_rotation_colors.setText("#010203,#040506,#070809")
+    page.lianli_direction_combo.setCurrentIndex(page.lianli_direction_combo.findData("right"))
+
+    page._send_lianli_effect_with_backend(backend, target, "ripple")
+    assert backend.calls[-1][0] == "ripple"
+    assert backend.calls[-1][1]["palette"] == [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
+    assert backend.calls[-1][1]["direction"] == "right"
+    assert backend.calls[-1][1]["effect_index"] == tlv2_color_effect_index(
+        "ripple",
+        (17, 34, 51),
+        accent_color=(170, 187, 204),
+        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9)],
+        direction="right",
+    )
+
+    page._send_lianli_effect_with_backend(backend, target, "starry")
+    assert backend.calls[-1][0] == "twinkle"
+    assert backend.calls[-1][1]["color"] == (17, 34, 51)
+    assert backend.calls[-1][1]["accent_color"] == (170, 187, 204)
+    assert backend.calls[-1][1]["effect_index"] == tlv2_color_effect_index(
+        "twinkle",
+        (17, 34, 51),
+        accent_color=(170, 187, 204),
+        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9)],
+    )
+    page._remember_lianli_effect_settings("ripple")
+    assert page.settings.lianli_wireless.accent_color == "#aabbcc"
+    assert page.settings.lianli_wireless.rotation_colors == "#010203,#040506,#070809"
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_sends_remaining_effects_as_tlv2_frames():
     from PySide6.QtWidgets import QApplication
 

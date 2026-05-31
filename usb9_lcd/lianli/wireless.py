@@ -216,6 +216,17 @@ class Tlv2EffectSpec:
     default_effect_index: int
 
 
+@dataclass(frozen=True)
+class Tlv2EffectCapability:
+    key: str
+    uses_primary_color: bool = False
+    uses_accent_color: bool = False
+    uses_palette: bool = False
+    uses_direction: bool = False
+    uses_speed: bool = True
+    uses_brightness: bool = True
+
+
 TLV2_EFFECT_SPECS: dict[str, Tlv2EffectSpec] = {
     "rainbow": Tlv2EffectSpec("rainbow", 24, 60, 0x02090A05),
     "rainbow-morph": Tlv2EffectSpec("rainbow-morph", 127, 55, 0x020922EA),
@@ -293,6 +304,84 @@ TLV2_EFFECT_ALIASES = {
     "star": "twinkle",
     "twinkle": "twinkle",
 }
+
+TLV2_EFFECT_CAPABILITIES: dict[str, Tlv2EffectCapability] = {
+    "rainbow": Tlv2EffectCapability("rainbow", uses_direction=True),
+    "rainbow-morph": Tlv2EffectCapability("rainbow-morph", uses_direction=True),
+    "static": Tlv2EffectCapability("static", uses_primary_color=True, uses_speed=False),
+    "breathing": Tlv2EffectCapability("breathing", uses_primary_color=True, uses_direction=False),
+    "runway": Tlv2EffectCapability("runway", uses_primary_color=True, uses_direction=True),
+    "meteor": Tlv2EffectCapability("meteor", uses_primary_color=True, uses_direction=True),
+    "color-cycle": Tlv2EffectCapability("color-cycle", uses_palette=True, uses_direction=False),
+    "staggered": Tlv2EffectCapability("staggered", uses_palette=True, uses_direction=True),
+    "tide": Tlv2EffectCapability("tide", uses_palette=True, uses_direction=True),
+    "mixing": Tlv2EffectCapability("mixing", uses_palette=True, uses_direction=True),
+    "voice": Tlv2EffectCapability("voice", uses_palette=True, uses_direction=True),
+    "door": Tlv2EffectCapability("door", uses_primary_color=True, uses_palette=True, uses_direction=True),
+    "render": Tlv2EffectCapability("render", uses_palette=True, uses_direction=True),
+    "ripple": Tlv2EffectCapability("ripple", uses_palette=True, uses_direction=True),
+    "reflect": Tlv2EffectCapability(
+        "reflect",
+        uses_primary_color=True,
+        uses_accent_color=True,
+        uses_palette=True,
+        uses_direction=True,
+    ),
+    "tail-chasing": Tlv2EffectCapability(
+        "tail-chasing",
+        uses_primary_color=True,
+        uses_palette=True,
+        uses_direction=True,
+    ),
+    "paint": Tlv2EffectCapability("paint", uses_primary_color=True, uses_palette=True, uses_direction=True),
+    "ping-pong": Tlv2EffectCapability(
+        "ping-pong",
+        uses_primary_color=True,
+        uses_palette=True,
+        uses_direction=True,
+    ),
+    "stack": Tlv2EffectCapability("stack", uses_palette=True, uses_direction=True),
+    "cover-cycle": Tlv2EffectCapability("cover-cycle", uses_palette=True, uses_direction=True),
+    "wave": Tlv2EffectCapability("wave", uses_primary_color=True, uses_direction=True),
+    "racing": Tlv2EffectCapability(
+        "racing",
+        uses_primary_color=True,
+        uses_accent_color=True,
+        uses_palette=True,
+        uses_direction=True,
+    ),
+    "lottery": Tlv2EffectCapability("lottery", uses_accent_color=True, uses_palette=True, uses_direction=True),
+    "intertwine": Tlv2EffectCapability("intertwine", uses_palette=True, uses_direction=True),
+    "meteor-shower": Tlv2EffectCapability("meteor-shower", uses_palette=True, uses_direction=True),
+    "collide": Tlv2EffectCapability(
+        "collide",
+        uses_primary_color=True,
+        uses_accent_color=True,
+        uses_palette=True,
+        uses_direction=True,
+    ),
+    "electric-current": Tlv2EffectCapability(
+        "electric-current",
+        uses_primary_color=True,
+        uses_accent_color=True,
+        uses_direction=True,
+    ),
+    "kaleidoscope": Tlv2EffectCapability("kaleidoscope", uses_direction=True),
+    "twinkle": Tlv2EffectCapability("twinkle", uses_primary_color=True, uses_accent_color=True),
+}
+
+_TLV2_DEFAULT_PRIMARY_COLOR = (255, 0, 0)
+_TLV2_DEFAULT_ACCENT_COLOR = (255, 255, 255)
+_TLV2_DEFAULT_PALETTE = (
+    (255, 0, 0),
+    (0, 255, 0),
+    (0, 0, 255),
+    (255, 255, 255),
+)
+_TLV2_ACCENT_BASIS_PALETTE = (
+    (0, 255, 0),
+    (0, 0, 255),
+)
 
 _OFFICIAL_TLV2_RGB_CACHE: dict[str, bytes] = {}
 
@@ -1334,14 +1423,20 @@ def generate_tlv2_effect_rgb_frames(
 ) -> tuple[bytes, Tlv2EffectSpec]:
     effect_key = _normalize_tlv2_effect_key(effect)
     spec = TLV2_EFFECT_SPECS[effect_key]
+    capability = tlv2_effect_capability(effect_key)
     resolved_led_count = int(led_count)
     if not 0 < resolved_led_count <= 255:
         raise LianLiWirelessError("LED count must be in range 1-255")
     brightness_scale = _brightness_scale(brightness)
-    primary = _scale_rgb(_rgb_tuple(color), brightness_scale)
-    accent = _scale_rgb(_rgb_tuple(accent_color), brightness_scale)
-    colors = _resolve_tlv2_palette(palette, primary=primary, accent=accent, brightness_scale=brightness_scale)
-    direction_step = _direction_step(direction)
+    primary, accent, colors = _effective_tlv2_color_inputs(
+        effect_key,
+        color,
+        accent_color=accent_color,
+        palette=palette,
+        brightness_scale=brightness_scale,
+    )
+    direction_step = _direction_step(direction) if capability.uses_direction else 1
+    resolved_direction = direction if capability.uses_direction else "left"
     official_raw = _official_tlv2_rgb_frames(
         effect_key,
         led_count=resolved_led_count,
@@ -1358,7 +1453,7 @@ def generate_tlv2_effect_rgb_frames(
             resolved_led_count,
             frame_count=spec.frame_count,
             brightness=int(brightness),
-            direction=direction,
+            direction=resolved_direction,
         )
         return raw, spec
 
@@ -1367,7 +1462,8 @@ def generate_tlv2_effect_rgb_frames(
         if effect_key == "static":
             frame = [primary] * resolved_led_count
         elif effect_key == "rainbow-morph":
-            frame_color = _hsv_to_rgb(frame_index / spec.frame_count, 1.0, brightness_scale)
+            color_index = frame_index if direction_step > 0 else spec.frame_count - frame_index - 1
+            frame_color = _hsv_to_rgb(color_index / spec.frame_count, 1.0, brightness_scale)
             frame = [frame_color] * resolved_led_count
         elif effect_key == "breathing":
             phase = (math.sin((frame_index / spec.frame_count) * math.tau - math.pi / 2) + 1.0) / 2.0
@@ -1397,7 +1493,7 @@ def generate_tlv2_effect_rgb_frames(
         elif effect_key == "meteor-shower":
             frame = _meteor_shower_frame(resolved_led_count, frame_index, colors, direction_step)
         elif effect_key == "electric-current":
-            frame = _electric_current_frame(resolved_led_count, frame_index, primary, accent)
+            frame = _electric_current_frame(resolved_led_count, frame_index, primary, accent, direction_step)
         elif effect_key == "twinkle":
             frame = _twinkle_frame(resolved_led_count, frame_index, spec.frame_count, primary, accent)
         else:
@@ -1426,8 +1522,17 @@ def _official_tlv2_rgb_frames(
     raw = _official_tlv2_template(effect_key)
     frame_count = int(entry["frame_count"])
     if direction_step < 0:
-        raw = _reverse_rgb_frame_led_order(raw, led_count=led_count, frame_count=frame_count)
-    return _remap_official_tlv2_rgb(raw, primary=primary, accent=accent, palette=palette)
+        reversed_raw = _reverse_rgb_frame_led_order(raw, led_count=led_count, frame_count=frame_count)
+        if reversed_raw == raw:
+            reversed_raw = _reverse_rgb_frame_order(raw, led_count=led_count, frame_count=frame_count)
+        raw = reversed_raw
+    return _remap_official_tlv2_rgb(
+        raw,
+        effect_key=effect_key,
+        primary=primary,
+        accent=accent,
+        palette=palette,
+    )
 
 
 def _official_tlv2_template(effect_key: str) -> bytes:
@@ -1444,6 +1549,7 @@ def _official_tlv2_template(effect_key: str) -> bytes:
 def _remap_official_tlv2_rgb(
     raw: bytes,
     *,
+    effect_key: str,
     primary: tuple[int, int, int],
     accent: tuple[int, int, int],
     palette: tuple[tuple[int, int, int], ...],
@@ -1454,6 +1560,14 @@ def _remap_official_tlv2_rgb(
         red, green, blue = raw[offset], raw[offset + 1], raw[offset + 2]
         if red == green == blue:
             mapped = _scale_rgb(basis[3], red / 254.0 if red else 0.0)
+        elif (
+            effect_key == "electric-current"
+            and accent != _TLV2_DEFAULT_ACCENT_COLOR
+            and green > 0
+            and red == 0
+            and blue == 0
+        ):
+            mapped = _scale_rgb(accent, green / 254.0)
         else:
             mapped = _mix_official_palette_color(red, green, blue, basis)
         out[offset : offset + 3] = bytes(mapped)
@@ -1511,6 +1625,25 @@ def _reverse_rgb_frame_led_order(raw: bytes, *, led_count: int, frame_count: int
             reversed_frame[dst : dst + 3] = frame[src : src + 3]
         out[frame_start : frame_start + frame_size] = reversed_frame
     return bytes(out)
+
+
+def _reverse_rgb_frame_order(raw: bytes, *, led_count: int, frame_count: int) -> bytes:
+    frame_size = led_count * 3
+    out = bytearray(len(raw))
+    for frame_index in range(frame_count):
+        src_start = frame_index * frame_size
+        dst_start = (frame_count - frame_index - 1) * frame_size
+        out[dst_start : dst_start + frame_size] = raw[src_start : src_start + frame_size]
+    return bytes(out)
+
+
+def _maybe_reverse_generated_frame(
+    frame: list[tuple[int, int, int]],
+    direction_step: int,
+) -> list[tuple[int, int, int]]:
+    if direction_step < 0:
+        return list(reversed(frame))
+    return frame
 
 
 def generate_rainbow_rgb_frames(
@@ -1922,11 +2055,43 @@ def static_rgb_effect_index(color: tuple[int, int, int]) -> int:
     return 0x042D0000 | (zlib.crc32(bytes(rgb)) & 0xFFFF)
 
 
-def tlv2_color_effect_index(effect: str, color: tuple[int, int, int]) -> int:
+def tlv2_color_effect_index(
+    effect: str,
+    color: tuple[int, int, int],
+    *,
+    accent_color: tuple[int, int, int] = (255, 255, 255),
+    palette: Iterable[tuple[int, int, int]] | None = None,
+    direction: str = "left",
+) -> int:
     effect_key = _normalize_tlv2_effect_key(effect)
     base = TLV2_EFFECT_SPECS[effect_key].default_effect_index
-    rgb = bytes(_rgb_bytes(color))
-    return (base & 0xFFFFFF00) | (zlib.crc32(rgb) & 0xFF)
+    capability = tlv2_effect_capability(effect_key)
+    primary, accent, colors = _effective_tlv2_color_inputs(
+        effect_key,
+        color,
+        accent_color=accent_color,
+        palette=palette,
+        brightness_scale=1.0,
+    )
+
+    signature = bytearray()
+    if capability.uses_primary_color:
+        signature.extend(_rgb_bytes(primary))
+    if capability.uses_accent_color:
+        signature.extend(_rgb_bytes(accent))
+    if capability.uses_palette:
+        for palette_color in colors:
+            signature.extend(_rgb_bytes(palette_color))
+    direction_is_right = capability.uses_direction and _direction_step(direction) < 0
+    if direction_is_right:
+        signature.extend(b"direction:right")
+    if not signature:
+        return base
+
+    low_byte = zlib.crc32(bytes(signature)) & 0xFF
+    if direction_is_right:
+        low_byte ^= 0x80
+    return (base & 0xFFFFFF00) | low_byte
 
 
 def static_rgb_wire_color(color: tuple[int, int, int]) -> tuple[int, int, int]:
@@ -1964,6 +2129,44 @@ def _normalize_tlv2_effect_key(effect: str) -> str:
     if key not in TLV2_EFFECT_SPECS:
         raise LianLiWirelessError(f"unsupported TLV2 effect: {effect}")
     return key
+
+
+def tlv2_effect_capability(effect: str) -> Tlv2EffectCapability:
+    effect_key = _normalize_tlv2_effect_key(effect)
+    try:
+        return TLV2_EFFECT_CAPABILITIES[effect_key]
+    except KeyError as error:
+        raise LianLiWirelessError(f"unsupported TLV2 effect capability: {effect}") from error
+
+
+def _effective_tlv2_color_inputs(
+    effect_key: str,
+    color: tuple[int, int, int],
+    *,
+    accent_color: tuple[int, int, int],
+    palette: Iterable[tuple[int, int, int]] | None,
+    brightness_scale: float,
+) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[tuple[int, int, int], ...]]:
+    capability = tlv2_effect_capability(effect_key)
+    primary_source = color if capability.uses_primary_color else _TLV2_DEFAULT_PRIMARY_COLOR
+    accent_source = accent_color if capability.uses_accent_color else _TLV2_DEFAULT_ACCENT_COLOR
+    primary = _scale_rgb(_rgb_tuple(primary_source), brightness_scale)
+    accent = _scale_rgb(_rgb_tuple(accent_source), brightness_scale)
+
+    if capability.uses_palette:
+        palette_source = palette
+    elif capability.uses_accent_color:
+        palette_source = _TLV2_ACCENT_BASIS_PALETTE
+    else:
+        palette_source = _TLV2_DEFAULT_PALETTE
+
+    colors = _resolve_tlv2_palette(
+        palette_source,
+        primary=primary,
+        accent=accent,
+        brightness_scale=brightness_scale,
+    )
+    return primary, accent, colors
 
 
 def _brightness_scale(brightness: int) -> float:
@@ -2060,15 +2263,14 @@ def _ripple_frame(
     colors: tuple[tuple[int, int, int], ...],
     direction_step: int,
 ) -> list[tuple[int, int, int]]:
-    center = (led_count - 1) / 2.0
-    max_radius = max(1.0, center + 1.0)
+    center = 0.0 if direction_step > 0 else float(led_count - 1)
+    max_radius = max(1.0, float(led_count - 1))
     cycle = (frame_index * 6) / frame_count
     radius = (cycle % 1.0) * max_radius
     color = colors[int(cycle) % len(colors)]
     frame: list[tuple[int, int, int]] = []
     for led_index in range(led_count):
-        mirrored = led_count - 1 - led_index if direction_step < 0 else led_index
-        distance = abs(mirrored - center)
+        distance = abs(led_index - center)
         level = max(0.0, 1.0 - abs(distance - radius) / 2.0)
         frame.append(_scale_rgb(color, level))
     return frame
@@ -2133,7 +2335,7 @@ def _extra_tlv2_effect_frame(
             lane = (led_index // group) % 4
             level = 1.0 if lane == active else 0.18
             frame.append(_scale_rgb(palette(lane), level))
-        return frame
+        return _maybe_reverse_generated_frame(frame, direction_step)
 
     if effect_key == "tide":
         for led_index in range(led_count):
@@ -2157,7 +2359,7 @@ def _extra_tlv2_effect_frame(
             local = (led_index * bars) % led_count / max(1, led_count)
             height = 0.2 + 0.8 * ((math.sin(phase * (1.0 + bar * 0.17) + bar) + 1.0) / 2.0)
             frame.append(_scale_rgb(palette(bar), 1.0 if local < height else 0.08))
-        return frame
+        return _maybe_reverse_generated_frame(frame, direction_step)
 
     if effect_key == "door":
         center = (led_count - 1) / 2.0
@@ -2165,13 +2367,14 @@ def _extra_tlv2_effect_frame(
         for led_index in range(led_count):
             distance = abs(led_index - center) / max(1.0, center)
             edge = 1.0 - abs(distance - opening) / 0.18
-            frame.append(_scale_rgb(primary, max(0.04, min(1.0, edge))))
-        return frame
+            source = _mix_rgb(primary, palette(led_index + frame_index // 4), 0.45)
+            frame.append(_scale_rgb(source, max(0.04, min(1.0, edge))))
+        return _maybe_reverse_generated_frame(frame, direction_step)
 
     if effect_key == "render":
         for led_index in range(led_count):
             hue = (led_index / max(1, led_count) + progress * direction_step) % 1.0
-            frame.append(_hsv_to_rgb(hue, 0.9, 1.0))
+            frame.append(_mix_rgb(_hsv_to_rgb(hue, 0.9, 1.0), palette(led_index + frame_index // 4), 0.55))
         return frame
 
     if effect_key == "reflect":
@@ -2179,11 +2382,13 @@ def _extra_tlv2_effect_frame(
         for led_index in range(led_count):
             mirrored = abs(led_index - center) / max(1.0, center)
             level = (math.sin((mirrored * 1.8 - progress * direction_step) * math.tau) + 1.0) / 2.0
-            frame.append(_mix_rgb(_scale_rgb(primary, 0.08), accent, level))
+            base = _mix_rgb(_scale_rgb(primary, 0.08), palette(led_index + frame_index // 4), 0.5)
+            frame.append(_mix_rgb(base, accent, level * 0.65))
         return frame
 
     if effect_key == "tail-chasing":
-        return _meteor_frame(led_count, frame_index, frame_count, primary, direction_step)
+        comet_color = _mix_rgb(primary, palette(frame_index // 4), 0.55)
+        return _meteor_frame(led_count, frame_index, frame_count, comet_color, direction_step)
 
     if effect_key == "paint":
         brush = int(progress * led_count) % led_count
@@ -2200,9 +2405,12 @@ def _extra_tlv2_effect_frame(
         span = max(1, led_count - 1)
         cycle = (frame_index * 2 * span // max(1, frame_count)) % (2 * span)
         pos = cycle if cycle <= span else 2 * span - cycle
+        if direction_step < 0:
+            pos = span - pos
         for led_index in range(led_count):
             level = max(0.0, 1.0 - abs(led_index - pos) / 4.0)
-            frame.append(_scale_rgb(primary, level))
+            source = _mix_rgb(primary, palette(led_index + frame_index // 4), 0.5)
+            frame.append(_scale_rgb(source, level))
         return frame
 
     if effect_key == "stack":
@@ -2210,7 +2418,7 @@ def _extra_tlv2_effect_frame(
         color = palette(frame_index * len(colors) // max(1, frame_count))
         for led_index in range(led_count):
             frame.append(color if led_index < fill else _scale_rgb(color, 0.08))
-        return frame
+        return _maybe_reverse_generated_frame(frame, direction_step)
 
     if effect_key == "cover-cycle":
         segment = max(2, led_count // len(colors))
@@ -2224,7 +2432,12 @@ def _extra_tlv2_effect_frame(
         shift = direction_step * frame_index * 2
         for led_index in range(led_count):
             active = ((led_index + shift) // stripe) % 2 == 0
-            frame.append(primary if active else _scale_rgb(accent, 0.18))
+            stripe_color = palette((led_index + shift) // stripe)
+            frame.append(
+                _mix_rgb(primary, stripe_color, 0.5)
+                if active
+                else _mix_rgb(_scale_rgb(accent, 0.18), stripe_color, 0.25)
+            )
         return frame
 
     if effect_key == "lottery":
@@ -2232,7 +2445,7 @@ def _extra_tlv2_effect_frame(
             hit = ((led_index * 17 + frame_index * 23) % 53) < 7
             glow = ((led_index * 5 + frame_index) % 19) == 0
             frame.append(palette(led_index + frame_index) if hit else (_scale_rgb(accent, 0.35) if glow else (0, 0, 0)))
-        return frame
+        return _maybe_reverse_generated_frame(frame, direction_step)
 
     if effect_key == "intertwine":
         for led_index in range(led_count):
@@ -2252,8 +2465,9 @@ def _extra_tlv2_effect_frame(
             burst = 0.0
             if abs(left - right) <= 2:
                 burst = max(0.0, 1.0 - abs(led_index - span / 2.0) / max(2.0, led_count / 4.0))
-            frame.append(_mix_rgb(_scale_rgb(primary, level), accent, burst))
-        return frame
+            trail = _mix_rgb(_scale_rgb(primary, level), palette(led_index + frame_index // 4), 0.35)
+            frame.append(_mix_rgb(trail, accent, burst))
+        return _maybe_reverse_generated_frame(frame, direction_step)
 
     raise LianLiWirelessError(f"unsupported generated TLV2 effect: {effect_key}")
 
@@ -2279,12 +2493,14 @@ def _electric_current_frame(
     frame_index: int,
     color: tuple[int, int, int],
     accent: tuple[int, int, int],
+    direction_step: int,
 ) -> list[tuple[int, int, int]]:
     base = _scale_rgb(color, 0.12)
     frame: list[tuple[int, int, int]] = []
     for led_index in range(led_count):
-        spark = ((led_index * 17 + frame_index * 11) % 29) in {0, 1, 5}
-        surge = ((led_index * 5 - frame_index * 3) % 23) == 0
+        directed_led = led_index if direction_step > 0 else led_count - led_index - 1
+        spark = ((directed_led * 17 + frame_index * 11) % 29) in {0, 1, 5}
+        surge = ((directed_led * 5 - frame_index * 3) % 23) == 0
         frame.append(accent if spark else (_mix_rgb(base, accent, 0.45) if surge else base))
     return frame
 

@@ -67,6 +67,8 @@ class LianLiWirelessUiSettings:
     targets: dict[str, LianLiWirelessTargetSettings] = field(default_factory=dict)
     effect: str = "off"
     color: str = "#00fe00"
+    accent_color: str = "#ffffff"
+    rotation_colors: str = "#fe0000,#00fe00,#0000fe,#ffd60a"
     brightness: int = 100
     speed: int = 75
     direction: str = "left"
@@ -204,6 +206,8 @@ def _lianli_wireless_from_dict(value: Any) -> LianLiWirelessUiSettings:
         targets=targets,
         effect=str(value.get("effect", defaults.effect)),
         color=str(value.get("color", defaults.color)),
+        accent_color=str(value.get("accent_color", defaults.accent_color)),
+        rotation_colors=str(value.get("rotation_colors", defaults.rotation_colors)),
         brightness=_clamp_int(value.get("brightness"), 0, 100, defaults.brightness),
         speed=_clamp_int(value.get("speed"), 0, 100, defaults.speed),
         direction=str(value.get("direction", defaults.direction)),
