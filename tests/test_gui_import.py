@@ -1160,6 +1160,11 @@ def test_lianli_wireless_page_uses_effect_capabilities_for_parameter_visibility(
     assert page.lianli_accent_color_button.isVisible() is True
     assert page.lianli_rotation_colors.isVisible() is False
 
+    _set_lianli_effect(page, "runway")
+    assert page.lianli_color_button.isVisible() is True
+    assert page.lianli_accent_color_button.isVisible() is True
+    assert page.lianli_rotation_colors.isVisible() is False
+
     _set_lianli_effect(page, "ripple")
     assert page.lianli_color_button.isVisible() is False
     assert page.lianli_accent_color_button.isVisible() is False

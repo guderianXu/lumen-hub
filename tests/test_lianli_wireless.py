@@ -916,6 +916,10 @@ def test_tlv2_effect_capabilities_describe_user_controls():
     assert tlv2_effect_capability("breathing").color_slots == 1
     assert tlv2_effect_capability("breathing").uses_direction is False
 
+    assert tlv2_effect_capability("runway").uses_primary_color is True
+    assert tlv2_effect_capability("runway").uses_accent_color is True
+    assert tlv2_effect_capability("runway").color_slots == 2
+
     assert tlv2_effect_capability("twinkle").uses_primary_color is True
     assert tlv2_effect_capability("twinkle").uses_accent_color is True
     assert tlv2_effect_capability("twinkle").uses_palette is False
@@ -932,6 +936,27 @@ def test_tlv2_effect_capabilities_describe_user_controls():
 
     assert tlv2_effect_capability("color-cycle").color_slots == 3
     assert tlv2_effect_capability("meteor-shower").color_slots == 4
+
+
+def test_tlv2_runway_uses_accent_color_for_second_color_slot():
+    red_blue, _spec = generate_tlv2_effect_rgb_frames(
+        "runway",
+        led_count=12,
+        color=(255, 0, 0),
+        accent_color=(0, 0, 255),
+        brightness=100,
+    )
+    red_green, _spec = generate_tlv2_effect_rgb_frames(
+        "runway",
+        led_count=12,
+        color=(255, 0, 0),
+        accent_color=(0, 255, 0),
+        brightness=100,
+    )
+
+    assert red_blue != red_green
+    assert (0, 0, 255) in _unique_frame_colors(red_blue)
+    assert (0, 255, 0) in _unique_frame_colors(red_green)
 
 
 def test_tlv2_effect_capability_sets_include_expected_key_controls():

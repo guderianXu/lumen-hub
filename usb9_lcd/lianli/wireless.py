@@ -311,7 +311,13 @@ TLV2_EFFECT_CAPABILITIES: dict[str, Tlv2EffectCapability] = {
     "rainbow-morph": Tlv2EffectCapability("rainbow-morph", uses_direction=True),
     "static": Tlv2EffectCapability("static", uses_primary_color=True, uses_speed=False, color_slots=1),
     "breathing": Tlv2EffectCapability("breathing", uses_primary_color=True, uses_direction=False, color_slots=1),
-    "runway": Tlv2EffectCapability("runway", uses_primary_color=True, uses_direction=True, color_slots=2),
+    "runway": Tlv2EffectCapability(
+        "runway",
+        uses_primary_color=True,
+        uses_accent_color=True,
+        uses_direction=True,
+        color_slots=2,
+    ),
     "meteor": Tlv2EffectCapability("meteor", uses_primary_color=True, uses_direction=True, color_slots=1),
     "color-cycle": Tlv2EffectCapability("color-cycle", uses_palette=True, uses_direction=False, color_slots=3),
     "staggered": Tlv2EffectCapability("staggered", uses_palette=True, uses_direction=True, color_slots=2),
@@ -1476,7 +1482,7 @@ def generate_tlv2_effect_rgb_frames(
             phase = (math.sin((frame_index / spec.frame_count) * math.tau - math.pi / 2) + 1.0) / 2.0
             frame = [_scale_rgb(primary, phase) for _ in range(resolved_led_count)]
         elif effect_key == "runway":
-            frame = _runway_frame(resolved_led_count, frame_index, spec.frame_count, primary, direction_step)
+            frame = _runway_frame(resolved_led_count, frame_index, spec.frame_count, primary, accent, direction_step)
         elif effect_key == "meteor":
             frame = _meteor_frame(resolved_led_count, frame_index, spec.frame_count, primary, direction_step)
         elif effect_key == "color-cycle":
@@ -2235,6 +2241,7 @@ def _runway_frame(
     frame_index: int,
     frame_count: int,
     color: tuple[int, int, int],
+    accent: tuple[int, int, int],
     direction_step: int,
 ) -> list[tuple[int, int, int]]:
     block = max(2, led_count // 5)
@@ -2242,7 +2249,12 @@ def _runway_frame(
     frame: list[tuple[int, int, int]] = []
     for led_index in range(led_count):
         distance = (led_index - position) % led_count
-        frame.append(color if distance < block else (0, 0, 0))
+        if distance < block:
+            frame.append(color)
+        elif distance < block * 2:
+            frame.append(accent)
+        else:
+            frame.append((0, 0, 0))
     return frame
 
 
