@@ -1437,7 +1437,7 @@ def test_lianli_wireless_page_apply_rainbow_uses_tlv2_once_path():
     app.quit()
 
 
-def test_lianli_wireless_page_exposes_remaining_tlv2_effects():
+def test_lianli_wireless_page_only_exposes_official_lconnect_effects():
     from PySide6.QtWidgets import QApplication
 
     from usb9_lcd.gui.pages import LianLiWirelessPage
@@ -1445,31 +1445,32 @@ def test_lianli_wireless_page_exposes_remaining_tlv2_effects():
     app = QApplication.instance() or QApplication([])
     page = LianLiWirelessPage()
 
-    expected = {
-        "staggered",
-        "tide",
-        "mixing",
-        "voice",
-        "door",
-        "render",
-        "reflect",
-        "tail-chasing",
-        "paint",
-        "ping-pong",
-        "stack",
-        "cover-cycle",
-        "racing",
-        "lottery",
-        "intertwine",
-        "collide",
-    }
-
-    available = {
-        str(page.lianli_effect_combo.itemData(index))
+    available = [
+        (page.lianli_effect_combo.itemText(index), str(page.lianli_effect_combo.itemData(index)))
         for index in range(page.lianli_effect_combo.count())
-    }
+    ]
 
-    assert expected <= available
+    assert available == [
+        ("关灯", "off"),
+        ("彩虹 (W*)", "rainbow"),
+        ("渐变彩虹 (W*)", "gradient-rainbow"),
+        ("单色 (W*)", "static"),
+        ("呼吸 (W*)", "breathing"),
+        ("流星 (W*)", "meteor"),
+        ("跑道 (W*)", "runway"),
+        ("星空 (W*)", "starry"),
+        ("色彩循环 (W*)", "color-cycle"),
+        ("覆盖周期 (W*)", "cover-cycle"),
+        ("波浪 (W*)", "wave"),
+        ("流星雨 (W*)", "meteor-shower"),
+        ("迪斯科 (W*)", "disco"),
+        ("爆破 (W*)", "collide"),
+        ("心跳 (W*)", "heartbeat"),
+        ("警示 (W*)", "warning"),
+        ("海洋 (W*)", "ocean"),
+        ("涟漪 (W*)", "ripple"),
+        ("回声 (W*)", "echo"),
+    ]
 
     page.close()
     app.quit()

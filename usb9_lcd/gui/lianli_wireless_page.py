@@ -55,6 +55,34 @@ from usb9_lcd.lianli.wireless import (
 
 LIANLI_WRITE_CONFIRM_TOKEN = "WRITE-LIANLI"
 LIANLI_DEFAULT_ROTATION_COLORS = ("#fe0000", "#00fe00", "#0000fe", "#ffd60a")
+LIANLI_OFFICIAL_EFFECT_OPTIONS = (
+    ("关灯", "off"),
+    ("彩虹 (W*)", "rainbow"),
+    ("渐变彩虹 (W*)", "gradient-rainbow"),
+    ("单色 (W*)", "static"),
+    ("呼吸 (W*)", "breathing"),
+    ("流星 (W*)", "meteor"),
+    ("跑道 (W*)", "runway"),
+    ("星空 (W*)", "starry"),
+    ("色彩循环 (W*)", "color-cycle"),
+    ("覆盖周期 (W*)", "cover-cycle"),
+    ("波浪 (W*)", "wave"),
+    ("流星雨 (W*)", "meteor-shower"),
+    ("迪斯科 (W*)", "disco"),
+    ("爆破 (W*)", "collide"),
+    ("心跳 (W*)", "heartbeat"),
+    ("警示 (W*)", "warning"),
+    ("海洋 (W*)", "ocean"),
+    ("涟漪 (W*)", "ripple"),
+    ("回声 (W*)", "echo"),
+)
+LIANLI_EFFECT_ALIASES = {
+    "disco": "racing",
+    "echo": "voice",
+    "heartbeat": "twinkle",
+    "ocean": "tide",
+    "warning": "electric-current",
+}
 
 
 def _pages_override(name: str, fallback: Callable):
@@ -842,69 +870,7 @@ class LianLiWirelessPage(QWidget):
 
         self.lianli_effect_combo = QComboBox()
 
-        for label, key in (
-
-            ("关灯", "off"),
-
-            ("单色", "static"),
-
-            ("彩虹同步", "rainbow"),
-
-            ("呼吸", "breathing"),
-
-            ("渐变彩虹", "gradient-rainbow"),
-
-            ("流星", "meteor"),
-
-            ("跑道", "runway"),
-
-            ("交错", "staggered"),
-
-            ("潮汐", "tide"),
-
-            ("混色", "mixing"),
-
-            ("声控", "voice"),
-
-            ("开门", "door"),
-
-            ("渲染", "render"),
-
-            ("星空", "starry"),
-
-            ("色彩循环", "color-cycle"),
-
-            ("波浪", "wave"),
-
-            ("涟漪", "ripple"),
-
-            ("反射", "reflect"),
-
-            ("追尾", "tail-chasing"),
-
-            ("涂抹", "paint"),
-
-            ("乒乓", "ping-pong"),
-
-            ("堆叠", "stack"),
-
-            ("覆盖循环", "cover-cycle"),
-
-            ("竞速", "racing"),
-
-            ("乐透", "lottery"),
-
-            ("交织", "intertwine"),
-
-            ("流星雨", "meteor-shower"),
-
-            ("碰撞", "collide"),
-
-            ("电流", "electric-current"),
-
-            ("万花筒", "kaleidoscope"),
-
-        ):
+        for label, key in LIANLI_OFFICIAL_EFFECT_OPTIONS:
 
             self.lianli_effect_combo.addItem(label, key)
 
@@ -1349,79 +1315,9 @@ class LianLiWirelessPage(QWidget):
 
         self.lianli_effect_combo = QComboBox()
 
-        for label, key, enabled in (
-
-            ("彩虹同步", "rainbow"),
-
-            ("静态颜色", "static", True),
-
-            ("关灯", "off", True),
-
-            ("渐变彩虹", "gradient-rainbow", True),
-
-            ("呼吸", "breathing", True),
-
-            ("流星", "meteor", True),
-
-            ("跑道", "runway", True),
-
-            ("交错", "staggered", True),
-
-            ("潮汐", "tide", True),
-
-            ("混色", "mixing", True),
-
-            ("声控", "voice", True),
-
-            ("开门", "door", True),
-
-            ("渲染", "render", True),
-
-            ("星空", "starry", True),
-
-            ("色彩循环", "color-cycle", True),
-
-            ("波浪", "wave", True),
-
-            ("涟漪", "ripple", True),
-
-            ("反射", "reflect", True),
-
-            ("追尾", "tail-chasing", True),
-
-            ("涂抹", "paint", True),
-
-            ("乒乓", "ping-pong", True),
-
-            ("堆叠", "stack", True),
-
-            ("覆盖循环", "cover-cycle", True),
-
-            ("竞速", "racing", True),
-
-            ("乐透", "lottery", True),
-
-            ("交织", "intertwine", True),
-
-            ("流星雨", "meteor-shower", True),
-
-            ("碰撞", "collide", True),
-
-            ("电流", "electric-current", True),
-
-            ("万花筒", "kaleidoscope", True),
-
-        ):
+        for label, key in LIANLI_OFFICIAL_EFFECT_OPTIONS:
 
             self.lianli_effect_combo.addItem(label, key)
-
-            index = self.lianli_effect_combo.count() - 1
-
-            if not enabled:
-
-                model_index = self.lianli_effect_combo.model().index(index, 0)
-
-                self.lianli_effect_combo.model().setData(model_index, 0, Qt.ItemDataRole.UserRole - 1)
 
         effect_row.addWidget(QLabel("灯效"))
 
@@ -3678,7 +3574,11 @@ class LianLiWirelessPage(QWidget):
 
 
     def _lianli_tlv2_effect_name(self, effect: str) -> str:
-        return "twinkle" if effect == "starry" else effect
+        if effect == "starry":
+
+            return "twinkle"
+
+        return LIANLI_EFFECT_ALIASES.get(effect, effect)
 
 
 
@@ -3718,29 +3618,18 @@ class LianLiWirelessPage(QWidget):
             "breathing",
             "meteor",
             "runway",
-            "staggered",
-            "tide",
-            "mixing",
-            "voice",
-            "door",
-            "render",
             "wave",
             "starry",
             "color-cycle",
             "ripple",
-            "reflect",
-            "tail-chasing",
-            "paint",
-            "ping-pong",
-            "stack",
             "cover-cycle",
-            "racing",
-            "lottery",
-            "intertwine",
             "meteor-shower",
             "collide",
-            "electric-current",
-            "kaleidoscope",
+            "disco",
+            "heartbeat",
+            "warning",
+            "ocean",
+            "echo",
             "rainbow-morph",
         }
 
