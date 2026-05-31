@@ -1153,7 +1153,7 @@ def test_lianli_wireless_page_uses_effect_capabilities_for_parameter_visibility(
     assert page.lianli_color_button.isVisible() is True
     assert page.lianli_accent_color_button.isVisible() is False
     assert page.lianli_rotation_colors.isVisible() is False
-    assert page.lianli_direction_combo.isVisible() is False
+    assert page.lianli_direction_controls.isVisible() is False
 
     _set_lianli_effect(page, "twinkle")
     assert page.lianli_color_button.isVisible() is True
@@ -1164,12 +1164,12 @@ def test_lianli_wireless_page_uses_effect_capabilities_for_parameter_visibility(
     assert page.lianli_color_button.isVisible() is False
     assert page.lianli_accent_color_button.isVisible() is False
     assert page.lianli_rotation_colors.isVisible() is True
-    assert page.lianli_direction_combo.isVisible() is True
+    assert page.lianli_direction_controls.isVisible() is True
 
     _set_lianli_effect(page, "rainbow")
     assert page.lianli_color_button.isVisible() is False
     assert page.lianli_rotation_colors.isVisible() is False
-    assert page.lianli_direction_combo.isVisible() is True
+    assert page.lianli_direction_controls.isVisible() is True
 
     page.close()
     app.quit()
@@ -1254,11 +1254,20 @@ def test_lianli_wireless_page_edits_palette_as_color_swatches():
     page.set_lianli_rotation_color(1, "#123456")
     assert page._rotation_colors()[:4] == ["#fe0000", "#123456", "#0000fe", "#ffd60a"]
 
+    _set_lianli_effect(page, "ripple")
     page._set_lianli_rotation_colors(["#010203", "#040506", "#070809", "#0a0b0c", "#abcdef"])
     assert page._rotation_colors() == ["#010203", "#040506", "#070809", "#0a0b0c"]
     buttons = page.lianli_rotation_colors.findChildren(QPushButton)
-    assert len(buttons) == 4
+    assert len(buttons) == 2
     assert {button.text() for button in buttons} == {""}
+
+    _set_lianli_effect(page, "color-cycle")
+    buttons = page.lianli_rotation_colors.findChildren(QPushButton)
+    assert len(buttons) == 3
+
+    _set_lianli_effect(page, "meteor-shower")
+    buttons = page.lianli_rotation_colors.findChildren(QPushButton)
+    assert len(buttons) == 4
 
     page._remember_lianli_effect_settings("ripple")
     assert page.settings.lianli_wireless.rotation_colors == "#010203,#040506,#070809,#0a0b0c"
@@ -1280,8 +1289,39 @@ def test_lianli_wireless_page_renders_primary_and_accent_as_swatches():
 
     assert "#112233" not in page.lianli_color_button.text()
     assert "#aabbcc" not in page.lianli_accent_color_button.text()
-    assert page.lianli_color_button.toolTip() == "#112233"
-    assert page.lianli_accent_color_button.toolTip() == "#aabbcc"
+    assert page.lianli_color_button.toolTip().endswith("#112233")
+    assert page.lianli_accent_color_button.toolTip().endswith("#aabbcc")
+    assert page.lianli_color_button.text() == ""
+    assert page.lianli_accent_color_button.text() == ""
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_uses_lconnect_style_direction_buttons():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage()
+    page.show()
+    app.processEvents()
+    _set_lianli_effect(page, "ripple")
+
+    assert page.lianli_direction_controls.isVisible() is True
+    assert page.lianli_direction_left_button.text() == "<<<"
+    assert page.lianli_direction_right_button.text() == ">>>"
+
+    page._set_lianli_direction("right")
+    assert page.lianli_direction_combo.currentData() == "right"
+    assert page.lianli_direction_right_button.isChecked() is True
+    assert page.lianli_direction_left_button.isChecked() is False
+
+    page._set_lianli_direction("left")
+    assert page.lianli_direction_combo.currentData() == "left"
+    assert page.lianli_direction_left_button.isChecked() is True
+    assert page.lianli_direction_right_button.isChecked() is False
 
     page.close()
     app.quit()

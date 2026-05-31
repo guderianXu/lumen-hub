@@ -908,22 +908,30 @@ def test_tlv2_effect_capabilities_cover_all_specs_and_aliases():
 def test_tlv2_effect_capabilities_describe_user_controls():
     assert tlv2_effect_capability("static").uses_primary_color is True
     assert tlv2_effect_capability("static").uses_palette is False
+    assert tlv2_effect_capability("static").color_slots == 1
     assert tlv2_effect_capability("static").uses_speed is False
 
     assert tlv2_effect_capability("breathing").uses_primary_color is True
     assert tlv2_effect_capability("breathing").uses_palette is False
+    assert tlv2_effect_capability("breathing").color_slots == 1
     assert tlv2_effect_capability("breathing").uses_direction is False
 
     assert tlv2_effect_capability("twinkle").uses_primary_color is True
     assert tlv2_effect_capability("twinkle").uses_accent_color is True
     assert tlv2_effect_capability("twinkle").uses_palette is False
+    assert tlv2_effect_capability("twinkle").color_slots == 2
 
     assert tlv2_effect_capability("rainbow").uses_primary_color is False
     assert tlv2_effect_capability("rainbow").uses_palette is False
+    assert tlv2_effect_capability("rainbow").color_slots == 0
     assert tlv2_effect_capability("rainbow").uses_direction is True
 
     assert tlv2_effect_capability("ripple").uses_palette is True
+    assert tlv2_effect_capability("ripple").color_slots == 2
     assert tlv2_effect_capability("ripple").uses_direction is True
+
+    assert tlv2_effect_capability("color-cycle").color_slots == 3
+    assert tlv2_effect_capability("meteor-shower").color_slots == 4
 
 
 def test_tlv2_effect_capability_sets_include_expected_key_controls():

@@ -943,6 +943,35 @@ class LianLiWirelessPage(QWidget):
         direction_index = max(0, self.lianli_direction_combo.findData(self.settings.lianli_wireless.direction))
 
         self.lianli_direction_combo.setCurrentIndex(direction_index)
+        self.lianli_direction_combo.currentIndexChanged.connect(self._refresh_lianli_direction_buttons)
+
+        self.lianli_direction_controls = QWidget()
+
+        self.lianli_direction_controls_layout = QHBoxLayout(self.lianli_direction_controls)
+
+        self.lianli_direction_controls_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.lianli_direction_controls_layout.setSpacing(10)
+
+        self.lianli_direction_left_button = QPushButton("<<<")
+
+        self.lianli_direction_left_button.setCheckable(True)
+
+        self.lianli_direction_left_button.clicked.connect(lambda: self._set_lianli_direction("left"))
+
+        self.lianli_direction_right_button = QPushButton(">>>")
+
+        self.lianli_direction_right_button.setCheckable(True)
+
+        self.lianli_direction_right_button.clicked.connect(lambda: self._set_lianli_direction("right"))
+
+        self.lianli_direction_controls_layout.addWidget(self.lianli_direction_left_button)
+
+        self.lianli_direction_controls_layout.addWidget(self.lianli_direction_right_button)
+
+        self.lianli_direction_controls_layout.addStretch(1)
+
+        self._refresh_lianli_direction_buttons()
 
         self.lianli_static_color = self.settings.lianli_wireless.color
 
@@ -1042,7 +1071,7 @@ class LianLiWirelessPage(QWidget):
 
         light_layout.addWidget(self.lianli_direction_label, 6, 0)
 
-        light_layout.addWidget(self.lianli_direction_combo, 6, 1, 1, 2)
+        light_layout.addWidget(self.lianli_direction_controls, 6, 1, 1, 2)
 
         light_layout.addWidget(self.lianli_hold_label, 7, 0)
 
@@ -2952,17 +2981,55 @@ class LianLiWirelessPage(QWidget):
 
         normalized = self._normalize_lianli_hex_color(color)
 
-        red, green, blue = self._hex_to_rgb(normalized)
+        button.setObjectName("ColorSwatch")
 
-        text_color = "#111111" if (red * 299 + green * 587 + blue * 114) / 1000 > 145 else "#f4f7f5"
+        button.setFixedSize(34, 28)
 
-        button.setText(label)
+        button.setText("")
 
-        button.setToolTip(normalized)
+        button.setToolTip(f"{label} {normalized}")
 
         button.setStyleSheet(
-            f"background: {normalized}; color: {text_color}; border: 1px solid #6b7376; font-weight: 700;"
+            f"background: {normalized}; border: 1px solid #6b7376;"
         )
+
+    def _set_lianli_direction(self, direction: str) -> None:
+
+        index = self.lianli_direction_combo.findData(direction)
+
+        if index < 0:
+
+            return
+
+        self.lianli_direction_combo.setCurrentIndex(index)
+
+        self._refresh_lianli_direction_buttons()
+
+
+    def _refresh_lianli_direction_buttons(self) -> None:
+
+        current = str(self.lianli_direction_combo.currentData() or "left")
+
+        for direction, button in (
+            ("left", self.lianli_direction_left_button),
+            ("right", self.lianli_direction_right_button),
+        ):
+
+            selected = current == direction
+
+            button.setChecked(selected)
+
+            if selected:
+
+                button.setStyleSheet(
+                    "background: #12323b; color: #21caff; border: 1px solid #21caff; font-weight: 900;"
+                )
+
+            else:
+
+                button.setStyleSheet(
+                    "background: #1d2226; color: #6f7780; border: 1px solid #3a4248; font-weight: 900;"
+                )
 
 
     def choose_lianli_rotation_color(self, index: int) -> None:
@@ -3010,7 +3077,7 @@ class LianLiWirelessPage(QWidget):
 
                 widget.deleteLater()
 
-        for index, color in enumerate(self._rotation_colors()):
+        for index, color in enumerate(self._rotation_colors()[: self._lianli_rotation_color_slot_count()]):
 
             button = QPushButton()
 
@@ -3027,6 +3094,25 @@ class LianLiWirelessPage(QWidget):
             self.lianli_rotation_colors_layout.addWidget(button)
 
         self.lianli_rotation_colors_layout.addStretch(1)
+
+
+    def _lianli_rotation_color_slot_count(self) -> int:
+
+        try:
+
+            effect = self._lianli_tlv2_effect_name(str(self.lianli_effect_combo.currentData()))
+
+            capability = tlv2_effect_capability(effect)
+
+        except Exception:
+
+            return len(self._rotation_colors())
+
+        if capability.uses_palette:
+
+            return max(1, min(len(self._rotation_colors()), int(capability.color_slots or len(self._rotation_colors()))))
+
+        return 0
 
 
 
@@ -3657,6 +3743,16 @@ class LianLiWirelessPage(QWidget):
             effect_name = self._lianli_tlv2_effect_name(effect)
 
             capability = tlv2_effect_capability(effect_name)
+
+            if capability.uses_palette:
+
+                if capability.uses_primary_color and palette:
+
+                    primary_color = palette[0]
+
+                if capability.uses_accent_color and len(palette) > 1:
+
+                    accent_color = palette[1]
 
             direction = str(self.lianli_direction_combo.currentData() or "left")
 
@@ -4502,9 +4598,9 @@ class LianLiWirelessPage(QWidget):
 
             has_brightness = capability.uses_brightness
 
-            has_color = capability.uses_primary_color
+            has_color = capability.uses_primary_color and not capability.uses_palette
 
-            has_accent = capability.uses_accent_color
+            has_accent = capability.uses_accent_color and not capability.uses_palette
 
             has_rotation = capability.uses_palette
 
@@ -4530,7 +4626,11 @@ class LianLiWirelessPage(QWidget):
 
             widget.setVisible(has_rotation)
 
-        for widget in (self.lianli_direction_label, self.lianli_direction_combo):
+        if has_rotation:
+
+            self._refresh_lianli_rotation_color_buttons()
+
+        for widget in (self.lianli_direction_label, self.lianli_direction_controls):
 
             widget.setVisible(has_direction)
 
