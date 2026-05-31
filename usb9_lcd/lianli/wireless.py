@@ -232,6 +232,22 @@ TLV2_EFFECT_SPECS: dict[str, Tlv2EffectSpec] = {
     "twinkle": Tlv2EffectSpec("twinkle", 200, 55, 0x020A31DE),
 }
 
+TLV2_EFFECT_SEQUENCE_REPEAT_COUNTS: dict[str, int] = {
+    "rainbow": 2,
+    "rainbow-morph": 1,
+    "static": 6,
+    "breathing": 4,
+    "runway": 2,
+    "meteor": 1,
+    "color-cycle": 6,
+    "ripple": 3,
+    "wave": 2,
+    "meteor-shower": 5,
+    "electric-current": 6,
+    "kaleidoscope": 2,
+    "twinkle": 5,
+}
+
 TLV2_EFFECT_ALIASES = {
     "gradient-rainbow": "rainbow-morph",
     "rainbow_morph": "rainbow-morph",
@@ -687,17 +703,11 @@ class LianLiWirelessBackend:
             led_count=led_count,
             repeat_first_payload=repeat_first_payload,
         )
+        effect_key = _normalize_tlv2_effect_key(effect)
+        sequence_repeat = max(1, TLV2_EFFECT_SEQUENCE_REPEAT_COUNTS.get(effect_key, 1))
         preamble = build_static_rgb_preamble_payload(target)
+        packets_written = 0
         for packet in build_rf_chunks(target.channel, 0xFF, preamble):
-            written = self.sender.write(packet)
-            if written != len(packet):
-                raise LianLiWirelessError(
-                    f"incomplete sender packet write ({written}/{len(packet)})"
-                )
-            time.sleep(RGB_STATIC_CHUNK_DELAY_S)
-        time.sleep(RGB_STATIC_PREAMBLE_DELAY_S)
-        packets_written = 4
-        for packet in packets:
             written = self.sender.write(packet)
             if written != len(packet):
                 raise LianLiWirelessError(
@@ -705,6 +715,17 @@ class LianLiWirelessBackend:
                 )
             packets_written += 1
             time.sleep(RGB_STATIC_CHUNK_DELAY_S)
+        time.sleep(RGB_STATIC_PREAMBLE_DELAY_S)
+        for _ in range(sequence_repeat):
+            for packet in packets:
+                written = self.sender.write(packet)
+                if written != len(packet):
+                    raise LianLiWirelessError(
+                        f"incomplete sender packet write ({written}/{len(packet)})"
+                    )
+                packets_written += 1
+                time.sleep(RGB_STATIC_CHUNK_DELAY_S)
+            time.sleep(RGB_STATIC_SEQUENCE_DELAY_S)
         return packets_written
 
 
@@ -1195,6 +1216,7 @@ def build_tlv2_effect_payloads(
         interval_ms=spec.interval_ms,
         effect_index=spec.default_effect_index if effect_index is None else effect_index,
         first_packet_data=False,
+        compact_compression=True,
     )
 
 
@@ -1613,7 +1635,7 @@ def _tinyuz_compress_backrefs(
         distance, length = _find_tinyuz_match(payload, offset, max_distance=max_distance)
         if length >= 3:
             state.out_type(0)
-            state.out_len(length - 2, pack_bit=2)
+            state.out_len(length - 2, pack_bit=1)
             if state.have_data_back:
                 reuse_previous = previous_distance == distance
                 state.out_type(1 if reuse_previous else 0)

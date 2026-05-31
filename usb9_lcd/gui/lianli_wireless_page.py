@@ -2598,12 +2598,6 @@ class LianLiWirelessPage(QWidget):
 
         busy = self._operation_active
 
-        rainbow_selected = False
-
-        if hasattr(self, "lianli_effect_combo"):
-
-            rainbow_selected = str(self.lianli_effect_combo.currentData() or "") == "rainbow"
-
         for name in (
 
             "lianli_pwm_button",
@@ -2626,7 +2620,7 @@ class LianLiWirelessPage(QWidget):
 
             self.lianli_apply_effect_button.setEnabled(
 
-                has_target and (not busy or rainbow_selected or self._lianli_loop_effect is not None)
+                has_target and (not busy or self._lianli_loop_effect is not None)
 
             )
 
@@ -3193,20 +3187,6 @@ class LianLiWirelessPage(QWidget):
     def apply_lianli_lighting_once(self) -> None:
 
         effect = str(self.lianli_effect_combo.currentData())
-
-        if effect == "rainbow":
-
-            if self._operation_active:
-
-                self.stop_lianli_lighting_loop()
-
-                self._set_lianli_status("已请求停止联力灯效循环")
-
-            else:
-
-                self.start_lianli_lighting_loop()
-
-            return
 
         if self._operation_active and self._lianli_loop_effect is not None:
 

@@ -1128,6 +1128,40 @@ def test_lianli_wireless_page_sends_dynamic_effects_as_tlv2_frames(tmp_path: Pat
     app.quit()
 
 
+def test_lianli_wireless_page_apply_rainbow_uses_tlv2_once_path():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage()
+    applied: list[str] = []
+
+    index = page.lianli_effect_combo.findData("rainbow")
+    assert index >= 0
+    page.lianli_effect_combo.setCurrentIndex(index)
+
+    def fail_loop() -> None:
+        raise AssertionError("rainbow apply should not start the legacy streaming loop")
+
+    def run_immediately(_message, operation):
+        operation()
+
+    page.start_lianli_lighting_loop = fail_loop
+    page._run_lianli_operation = run_immediately
+    page._send_lianli_lighting_effect = lambda effect: applied.append(effect) or {
+        "operation": "gui-lianli-lighting",
+        "effect": effect,
+    }
+
+    page.apply_lianli_lighting_once()
+
+    assert applied == ["rainbow"]
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_static_effect_uses_backend_default_color_slot():
     from PySide6.QtWidgets import QApplication
 

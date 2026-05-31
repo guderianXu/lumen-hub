@@ -735,7 +735,7 @@ def test_tlv2_effect_payloads_keep_first_packet_metadata_only_like_lconnect():
         brightness=100,
         direction="left",
     )
-    compressed = tinyuz_compress_literal(raw)
+    compressed = tinyuz_compress(raw)
 
     payloads = build_tlv2_effect_payloads(
         target,
@@ -848,8 +848,34 @@ def test_backend_builds_tlv2_dynamic_effect_rf_chunks():
     assert first["interval_ms"] == 60
     assert first["rgb_payload"]["decoded_frame_count"] == 170
     assert first["rgb_payload"]["decoded_led_count"] == 26
+    assert first["rgb_payload"]["decode_status"] == "decoded-backref"
     assert first["rgb_payload"]["unique_color_count"] > 8
     assert "static_color" not in first["rgb_payload"]
+
+
+def test_backend_send_tlv2_effect_uses_official_preamble_compression_and_repeats(monkeypatch):
+    monkeypatch.setattr(wireless_module.time, "sleep", lambda _seconds: None)
+    target = parse_wireless_snapshot(_snapshot_payload())[0]
+    sender = FakeSenderTransport()
+    backend = LianLiWirelessBackend(sender=sender)
+
+    packets_written = backend.send_tlv2_effect(
+        target,
+        "breathing",
+        color=(255, 0, 0),
+        accent_color=(255, 255, 255),
+        palette=((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)),
+        brightness=100,
+        direction="left",
+        led_count=26,
+    )
+
+    assert packets_written == 4 + 4 * 28
+    assert sender.writes[0][:4] == bytes([RF_PACKET_HEADER, 0, 8, 0xFF])
+    assert sender.writes[0][4 : 4 + 16] == build_static_rgb_preamble_payload(target)[:16]
+    assert sender.writes[4][:4] == bytes([RF_PACKET_HEADER, 0, 8, 3])
+    assert sender.writes[4][4:24].hex() == "1220aabbccddeeff102030405060020953c40004"
+    assert sender.writes[32][:4] == bytes([RF_PACKET_HEADER, 0, 8, 3])
 
 
 def test_pyusb_transport_import_is_lazy():
