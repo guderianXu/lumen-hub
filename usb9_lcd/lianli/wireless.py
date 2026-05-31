@@ -1466,9 +1466,15 @@ def _official_tlv2_palette_basis(
     accent: tuple[int, int, int],
     palette: tuple[tuple[int, int, int], ...],
 ) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
-    colors = [_official_rgb_tuple(color) for color in palette[:4]]
+    colors = [_official_rgb_tuple(primary)]
+    for color in palette:
+        official = _official_rgb_tuple(color)
+        if official not in colors:
+            colors.append(official)
+        if len(colors) >= 4:
+            break
     while len(colors) < 3:
-        colors.append(_official_rgb_tuple(primary if not colors else accent))
+        colors.append(_official_rgb_tuple(accent))
     if len(colors) < 4:
         colors.append(_official_rgb_tuple(accent))
     return colors[0], colors[1], colors[2], colors[3]

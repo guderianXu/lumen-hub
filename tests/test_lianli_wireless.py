@@ -829,6 +829,33 @@ def test_tlv2_dynamic_effect_generators_do_not_collapse_to_static_rgb():
         assert len(colors) > 1
 
 
+def test_tlv2_breathing_honors_primary_color_when_palette_is_unchanged():
+    palette = ((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10))
+
+    blue_raw, _spec = generate_tlv2_effect_rgb_frames(
+        "breathing",
+        led_count=26,
+        color=(0, 0, 255),
+        accent_color=(255, 255, 255),
+        palette=palette,
+        brightness=100,
+    )
+    green_raw, _spec = generate_tlv2_effect_rgb_frames(
+        "breathing",
+        led_count=26,
+        color=(0, 255, 0),
+        accent_color=(255, 255, 255),
+        palette=palette,
+        brightness=100,
+    )
+
+    assert blue_raw != green_raw
+    blue_peak = max(_rgb_triplets(blue_raw), key=sum)
+    green_peak = max(_rgb_triplets(green_raw), key=sum)
+    assert blue_peak[2] >= 250 and blue_peak[:2] == (0, 0)
+    assert green_peak[1] >= 250 and green_peak[0] == 0 and green_peak[2] == 0
+
+
 def test_tlv2_effect_generators_match_official_lconnect_decoded_hashes():
     expected_hashes = {
         "rainbow": "57063be37a8377989e802aee22afd3decdb18bec206fc135da77ae50ad8065e5",

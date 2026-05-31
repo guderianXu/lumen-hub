@@ -1117,12 +1117,14 @@ def test_lianli_wireless_page_sends_dynamic_effects_as_tlv2_frames(tmp_path: Pat
 
     page.lianli_direct_led_count.setValue(26)
     page.lianli_brightness_slider.setValue(80)
+    page.set_lianli_static_color("#0000ff")
     packets = page._send_lianli_effect_with_backend(backend, target, "breathing")
 
     assert packets == 20
     assert backend.static_calls == []
     assert backend.tlv2_calls == [("aa:bb:cc:dd:ee:ff", "breathing", 26, 80)]
     assert "effect_index" not in backend.tlv2_kwargs[0]
+    assert backend.tlv2_kwargs[0]["color"] == (0, 0, 255)
 
     page.close()
     app.quit()
