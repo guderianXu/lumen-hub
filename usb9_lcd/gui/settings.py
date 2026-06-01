@@ -5,7 +5,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from usb9_lcd.gui.fan_curve_model import DEFAULT_FAN_CURVE_POINTS, sanitize_fan_curve_points
+from usb9_lcd.gui.fan_curve_model import (
+    DEFAULT_FAN_CURVE_POINTS,
+    normalize_fan_curve_preset,
+    sanitize_fan_curve_points,
+)
 from usb9_lcd.platforms import current_platform
 
 _PLATFORM = current_platform()
@@ -53,6 +57,7 @@ class MonitorUiSettings:
 class HostFanUiSettings:
     curve_enabled: bool = False
     curve_interval_seconds: int = 3
+    curve_preset: str = "normal"
     curve_points: list[list[int]] = field(default_factory=lambda: [list(point) for point in DEFAULT_FAN_CURVE_POINTS])
 
 
@@ -192,6 +197,7 @@ def _host_fan_from_dict(value: Any) -> HostFanUiSettings:
             60,
             defaults.curve_interval_seconds,
         ),
+        curve_preset=normalize_fan_curve_preset(value.get("curve_preset", defaults.curve_preset)),
         curve_points=sanitize_fan_curve_points(value.get("curve_points"), defaults.curve_points),
     )
 

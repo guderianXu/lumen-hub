@@ -187,3 +187,27 @@ git add README.md usb9_lcd/gui/fan_curve.py usb9_lcd/gui/fan_host.py usb9_lcd/gu
 git commit -m "Add ordinary fan curve control"
 git push origin main
 ```
+
+### Task 5: Ordinary Fan Curve Presets
+
+**Files:**
+- Modify: `usb9_lcd/gui/fan_curve_model.py`
+- Modify: `usb9_lcd/gui/fan_host.py`
+- Modify: `usb9_lcd/gui/settings.py`
+- Test: `tests/test_fan_host.py`
+
+- [x] **Step 1: Add preset curve definitions**
+
+Added `quiet`, `normal`, `high`, and `full` presets in `fan_curve_model.py`, plus helpers to normalize preset ids and return preset points.
+
+- [x] **Step 2: Persist selected preset**
+
+Added `HostFanUiSettings.curve_preset`, parsed it through settings loading, and kept `custom` for hand-edited curves.
+
+- [x] **Step 3: Add preset selector to ordinary fan page**
+
+Added a preset combo box with 安静/标准/高速/全速/自定义. Selecting a preset replaces curve points; dragging or adding points switches the preset to 自定义.
+
+- [x] **Step 4: Cover preset behavior in tests**
+
+Added tests for preset points, settings parsing, preset selection, and custom-state transition.

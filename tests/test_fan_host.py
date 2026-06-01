@@ -130,7 +130,11 @@ def test_scan_linux_hwmon_includes_pwm_only_channel(tmp_path):
 
 
 def test_fan_curve_helpers_sanitize_and_interpolate():
-    from usb9_lcd.gui.fan_curve import interpolate_fan_curve_percent, sanitize_fan_curve_points
+    from usb9_lcd.gui.fan_curve_model import (
+        fan_curve_preset_points,
+        interpolate_fan_curve_percent,
+        sanitize_fan_curve_points,
+    )
 
     points = sanitize_fan_curve_points([[80, 110], [20, -5], [50, 40]])
 
@@ -138,6 +142,8 @@ def test_fan_curve_helpers_sanitize_and_interpolate():
     assert interpolate_fan_curve_percent(points, 10) == 0
     assert interpolate_fan_curve_percent(points, 35) == 20
     assert interpolate_fan_curve_percent(points, 90) == 100
+    assert fan_curve_preset_points("quiet") == [[30, 18], [50, 25], [65, 38], [80, 62], [92, 100]]
+    assert fan_curve_preset_points("full") == [[0, 100], [100, 100]]
 
 
 def test_host_fan_settings_load_defaults_and_curve_points(tmp_path):
@@ -152,6 +158,7 @@ def test_host_fan_settings_load_defaults_and_curve_points(tmp_path):
                 "host_fan": {
                     "curve_enabled": True,
                     "curve_interval_seconds": 99,
+                    "curve_preset": "full",
                     "curve_points": [[90, 120], [20, -1]],
                 }
             }
@@ -163,6 +170,7 @@ def test_host_fan_settings_load_defaults_and_curve_points(tmp_path):
 
     assert settings.host_fan.curve_enabled is True
     assert settings.host_fan.curve_interval_seconds == 60
+    assert settings.host_fan.curve_preset == "full"
     assert settings.host_fan.curve_points == [[20, 0], [90, 100]]
 
 
@@ -257,6 +265,39 @@ def test_fan_host_applies_curve_pwm_from_cpu_temperature(tmp_path):
     assert pwm_enable_path.read_text(encoding="utf-8") == "1\n"
     assert pwm_path.read_text(encoding="utf-8") == "112\n"
     assert "CPU 52C -> PWM 44%" in page.details.toPlainText()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_host_curve_preset_updates_points_and_custom_state():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_curve_model import fan_curve_preset_points
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    saved: list[str] = []
+    settings = GuiSettings()
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=lambda value: saved.append(value.host_fan.curve_preset),
+    )
+
+    page.curve_preset_combo.setCurrentIndex(page.curve_preset_combo.findData("quiet"))
+
+    assert settings.host_fan.curve_preset == "quiet"
+    assert settings.host_fan.curve_points == fan_curve_preset_points("quiet")
+    assert page.curve_editor.points() == fan_curve_preset_points("quiet")
+    assert saved[-1] == "quiet"
+
+    page._curve_changed([[40, 30], [80, 90]])
+
+    assert settings.host_fan.curve_preset == "custom"
+    assert page.curve_preset_combo.currentData() == "custom"
+    assert settings.host_fan.curve_points == [[40, 30], [80, 90]]
 
     page.close()
     app.quit()

@@ -14,6 +14,7 @@ import ctypes
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -27,7 +28,14 @@ from PySide6.QtWidgets import (
 )
 
 from usb9_lcd.gui.fan_curve import FanCurveEditor
-from usb9_lcd.gui.fan_curve_model import interpolate_fan_curve_percent, sanitize_fan_curve_points
+from usb9_lcd.gui.fan_curve_model import (
+    FAN_CURVE_CUSTOM_PRESET,
+    FAN_CURVE_PRESETS,
+    fan_curve_preset_points,
+    interpolate_fan_curve_percent,
+    normalize_fan_curve_preset,
+    sanitize_fan_curve_points,
+)
 from usb9_lcd.gui.settings import GuiSettings, save_settings
 from usb9_lcd.monitoring.models import FanTelemetry, SystemTelemetry
 from usb9_lcd.monitoring.service import collect_system_telemetry
@@ -430,6 +438,7 @@ class FanControlHostPage(QWidget):
         self._loaded = False
         self._scan_active = False
         self._curve_applying = False
+        self._updating_curve_preset = False
         self._auto_grant_pwm_permissions = auto_grant_pwm_permissions
         self._auto_enable_pwm_control = auto_enable_pwm_control
         self._auto_probe_hwmon_drivers = auto_probe_hwmon_drivers
@@ -503,6 +512,12 @@ class FanControlHostPage(QWidget):
         self.curve_summary.setObjectName("FieldHint")
         self.curve_summary.setWordWrap(True)
         curve_options = QHBoxLayout()
+        self.curve_preset_combo = QComboBox()
+        for preset, (label, _points) in FAN_CURVE_PRESETS.items():
+            self.curve_preset_combo.addItem(label, preset)
+        self.curve_preset_combo.addItem("自定义", FAN_CURVE_CUSTOM_PRESET)
+        self._set_curve_preset_combo(self.settings.host_fan.curve_preset)
+        self.curve_preset_combo.currentIndexChanged.connect(self._curve_preset_changed)
         self.curve_enable = QCheckBox("启用曲线控制")
         self.curve_enable.setChecked(self.settings.host_fan.curve_enabled)
         self.curve_enable.toggled.connect(self._curve_enabled_changed)
@@ -514,6 +529,8 @@ class FanControlHostPage(QWidget):
         self.curve_apply_button = QPushButton("按曲线写入一次")
         self.curve_apply_button.setEnabled(False)
         self.curve_apply_button.clicked.connect(self._apply_curve_now)
+        curve_options.addWidget(QLabel("预设"))
+        curve_options.addWidget(self.curve_preset_combo)
         curve_options.addWidget(self.curve_enable)
         curve_options.addWidget(QLabel("刷新间隔"))
         curve_options.addWidget(self.curve_interval)
@@ -749,11 +766,44 @@ class FanControlHostPage(QWidget):
     def _curve_changed(self, points: object | None = None) -> None:
         curve_points = sanitize_fan_curve_points(points if points is not None else self.curve_editor.points())
         self.settings.host_fan.curve_points = curve_points
+        self.settings.host_fan.curve_preset = FAN_CURVE_CUSTOM_PRESET
+        self._set_curve_preset_combo(FAN_CURVE_CUSTOM_PRESET)
         self.curve_editor.set_points(curve_points)
         self._save_host_fan_settings()
         self._update_curve_summary()
         if self.curve_enable.isChecked():
             self._set_status("风扇曲线已更新，下一轮刷新时生效")
+
+    def _set_curve_preset_combo(self, preset: object) -> None:
+        if not hasattr(self, "curve_preset_combo"):
+            return
+        key = normalize_fan_curve_preset(preset)
+        index = self.curve_preset_combo.findData(key)
+        if index < 0:
+            index = self.curve_preset_combo.findData("normal")
+        self._updating_curve_preset = True
+        try:
+            self.curve_preset_combo.setCurrentIndex(max(0, index))
+        finally:
+            self._updating_curve_preset = False
+
+    def _curve_preset_changed(self) -> None:
+        if self._updating_curve_preset:
+            return
+        preset = normalize_fan_curve_preset(self.curve_preset_combo.currentData())
+        self.settings.host_fan.curve_preset = preset
+        if preset != FAN_CURVE_CUSTOM_PRESET:
+            points = fan_curve_preset_points(preset)
+            self.settings.host_fan.curve_points = points
+            self.curve_editor.set_points(points)
+        else:
+            self.settings.host_fan.curve_points = sanitize_fan_curve_points(self.curve_editor.points())
+        self._save_host_fan_settings()
+        self._update_curve_summary()
+        if self.curve_enable.isChecked() and self._snapshot is not None and self._snapshot.control_available:
+            self._apply_curve_to_snapshot(self._snapshot, source="曲线预设")
+        else:
+            self._set_status(f"已选择风扇曲线预设：{self.curve_preset_combo.currentText()}")
 
     def _curve_interval_changed(self, value: int) -> None:
         self.settings.host_fan.curve_interval_seconds = max(1, min(60, int(value)))
@@ -781,7 +831,8 @@ class FanControlHostPage(QWidget):
     def _update_curve_summary(self) -> None:
         points = sanitize_fan_curve_points(self.curve_editor.points())
         summary = "，".join(f"{temp}°C→{percent}%" for temp, percent in points)
-        self.curve_summary.setText(f"当前曲线：{summary}")
+        preset = self.curve_preset_combo.currentText() if hasattr(self, "curve_preset_combo") else "当前"
+        self.curve_summary.setText(f"{preset}曲线：{summary}")
 
     def _sync_curve_controls(self) -> None:
         has_control = bool(self._snapshot and self._snapshot.control_available)
