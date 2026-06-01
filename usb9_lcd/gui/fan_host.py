@@ -7,7 +7,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import ctypes
 
@@ -59,6 +59,12 @@ class LinuxFanProbeDiagnostics:
 
 
 _LINUX_FAN_MODULE_CANDIDATES = ("nct6683", "nct6775", "asus_ec_sensors", "it87", "asus_wmi")
+_LINUX_FAN_PROBE_MODULES = (
+    ("nct6683", "force=1"),
+    ("nct6775", ""),
+    ("asus_ec_sensors", ""),
+    ("it87", ""),
+)
 
 
 def _platform_label() -> str:
@@ -169,6 +175,13 @@ def _linux_hwmon_matching_files(hwmon_root: Path, pattern: str, *, fullmatch: st
     return files
 
 
+def _system_has_linux_fan_pwm_files(hwmon_root: Path = Path("/sys/class/hwmon")) -> bool:
+    return bool(
+        _linux_hwmon_matching_files(hwmon_root, "fan*_input", fullmatch=r"fan\d+_input")
+        or _linux_hwmon_matching_files(hwmon_root, "pwm[0-9]*", fullmatch=r"pwm\d+")
+    )
+
+
 def _available_linux_modules(candidates: tuple[str, ...] = _LINUX_FAN_MODULE_CANDIDATES) -> list[str]:
     if shutil.which("modinfo") is None:
         return []
@@ -197,6 +210,39 @@ def _join_or_none(values: list[str]) -> str:
     return ", ".join(values) if values else "none"
 
 
+def _fan_hwmon_probe_shell() -> str:
+    lines = [
+        "set +e",
+        "echo 'lumen-hub: probing Linux fan hwmon drivers'",
+    ]
+    for module, args in _LINUX_FAN_PROBE_MODULES:
+        modprobe_args = f"{module} {args}".strip()
+        lines.extend(
+            [
+                f"if modinfo {module} >/dev/null 2>&1; then",
+                f"  modprobe {modprobe_args} >/dev/null 2>&1",
+                f"  echo '{modprobe_args}='$?",
+                "else",
+                f"  echo '{module}=missing'",
+                "fi",
+            ]
+        )
+    lines.append("udevadm settle >/dev/null 2>&1 || true")
+    return "\n".join(lines)
+
+
+def _snapshot_with_probe_message(snapshot: GenericFanSnapshot, probe_message: str) -> GenericFanSnapshot:
+    if not probe_message:
+        return snapshot
+    diagnostic_details = snapshot.diagnostic_details
+    probe_details = f"启动驱动加载:\n{probe_message}"
+    if diagnostic_details:
+        diagnostic_details = f"{diagnostic_details}\n\n{probe_details}"
+    else:
+        diagnostic_details = probe_details
+    return replace(snapshot, diagnostic_details=diagnostic_details)
+
+
 def _linux_fan_probe_diagnostics(hwmon_root: Path = Path("/sys/class/hwmon")) -> LinuxFanProbeDiagnostics:
     hwmon_names = _read_linux_hwmon_names(hwmon_root)
     fan_files = _linux_hwmon_matching_files(hwmon_root, "fan*_input", fullmatch=r"fan\d+_input")
@@ -222,8 +268,9 @@ def _linux_fan_probe_diagnostics(hwmon_root: Path = Path("/sys/class/hwmon")) ->
         f"- lm-sensors 命令: {'installed' if sensors_command else 'not installed'}",
         "",
         "建议验证步骤:",
-        "1. 安装并识别传感器: sudo apt install lm-sensors && sudo sensors-detect",
-        "2. ASUS / Nuvoton 主板可逐个测试候选驱动，测试后回到本页点“扫描/刷新”。",
+        "1. 软件启动和点击“扫描/刷新”时会自动尝试加载本机已有的候选 hwmon 驱动。",
+        "2. 如果自动加载后仍没有节点，再安装并识别传感器: sudo apt install lm-sensors && sudo sensors-detect",
+        "3. ASUS / Nuvoton 主板也可手动逐个测试候选驱动，测试后回到本页点“扫描/刷新”。",
     ]
     if "nct6683" in available_modules:
         lines.append("   sudo modprobe nct6683 force=1")
@@ -233,8 +280,8 @@ def _linux_fan_probe_diagnostics(hwmon_root: Path = Path("/sys/class/hwmon")) ->
         lines.append("   sudo modprobe asus_ec_sensors")
     lines.extend(
         [
-            "3. 如果出现新的 /sys/class/hwmon/.../fan*_input，GUI 会显示转速。",
-            "4. 如果只有 fan*_input 没有可写 pwm*，GUI 只能读转速，不能调速。",
+            "4. 如果出现新的 /sys/class/hwmon/.../fan*_input，GUI 会显示转速。",
+            "5. 如果只有 fan*_input 没有可写 pwm*，GUI 只能读转速，不能调速。",
         ]
     )
     return LinuxFanProbeDiagnostics(summary=summary, details="\n".join(lines))
@@ -364,6 +411,7 @@ class FanControlHostPage(QWidget):
         auto_load: bool = True,
         auto_grant_pwm_permissions: bool = False,
         auto_enable_pwm_control: bool = False,
+        auto_probe_hwmon_drivers: bool = False,
         snapshot_collector: Callable[[], GenericFanSnapshot] = collect_generic_fan_snapshot,
         **_ignored: object,
     ) -> None:
@@ -375,6 +423,9 @@ class FanControlHostPage(QWidget):
         self._scan_active = False
         self._auto_grant_pwm_permissions = auto_grant_pwm_permissions
         self._auto_enable_pwm_control = auto_enable_pwm_control
+        self._auto_probe_hwmon_drivers = auto_probe_hwmon_drivers
+        self._driver_probe_attempted = False
+        self._driver_probe_message = ""
         self.scan_finished.connect(self._on_scan_finished)
 
         layout = QVBoxLayout(self)
@@ -429,6 +480,7 @@ class FanControlHostPage(QWidget):
         actions = QHBoxLayout()
         self.scan_button = QPushButton("扫描/刷新")
         self.load_button = self.scan_button
+        self.scan_button.setToolTip("Linux 下会先尝试加载主板 hwmon 风扇驱动，再刷新传感器。")
         self.scan_button.clicked.connect(lambda: self.reload_fan_control(interactive_driver_probe=True))
         self.help_button = QPushButton("为什么不能控制？")
         self.help_button.clicked.connect(self._explain_control_limit)
@@ -466,7 +518,7 @@ class FanControlHostPage(QWidget):
     def load_fan_control(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         self.reload_fan_control(*args, **kwargs)
 
-    def reload_fan_control(self, *args, **kwargs) -> None:  # noqa: ARG002, ANN002, ANN003
+    def reload_fan_control(self, *args, interactive_driver_probe: bool = False, **kwargs) -> None:  # noqa: ARG002, ANN002, ANN003
         if self._scan_active:
             self._set_status("普通风扇正在扫描中...")
             return
@@ -476,12 +528,94 @@ class FanControlHostPage(QWidget):
 
         def worker() -> None:
             try:
-                snapshot = self._snapshot_collector()
+                snapshot = self._collect_snapshot_after_optional_probe(interactive_driver_probe=interactive_driver_probe)
                 self.scan_finished.emit(snapshot, None)
             except Exception as exc:  # noqa: BLE001
                 self.scan_finished.emit(None, exc)
 
         threading.Thread(target=worker, name="fan-scan-worker", daemon=True).start()
+
+    def request_hwmon_driver_probe(self) -> None:
+        self.reload_fan_control(interactive_driver_probe=True)
+
+    def _collect_snapshot_after_optional_probe(self, *, interactive_driver_probe: bool) -> GenericFanSnapshot:
+        probe_message = ""
+        if self._should_probe_linux_hwmon_drivers(interactive_driver_probe=interactive_driver_probe):
+            self._driver_probe_attempted = True
+            _, probe_message = self._load_fan_hwmon_drivers(interactive=interactive_driver_probe)
+            self._driver_probe_message = probe_message
+        snapshot = self._snapshot_collector()
+        if probe_message:
+            return _snapshot_with_probe_message(snapshot, probe_message)
+        return snapshot
+
+    def _should_probe_linux_hwmon_drivers(self, *, interactive_driver_probe: bool) -> bool:
+        if not sys.platform.startswith("linux"):
+            return False
+        if os.environ.get("LUMEN_HUB_SKIP_FAN_DRIVER_PROBE") == "1":
+            return False
+        if self._system_has_fan_pwm_files():
+            return False
+        return interactive_driver_probe or (self._auto_probe_hwmon_drivers and not self._driver_probe_attempted)
+
+    def _system_has_fan_pwm_files(self) -> bool:
+        return _system_has_linux_fan_pwm_files()
+
+    def _load_fan_hwmon_drivers(self, *, interactive: bool = False) -> tuple[bool, str]:
+        if not sys.platform.startswith("linux"):
+            return False, "当前平台不是 Linux，已跳过 hwmon 驱动加载。"
+        commands = _fan_hwmon_probe_shell()
+        ok, output = self._run_privileged_shell(commands, timeout=30, interactive=interactive)
+        if self._system_has_fan_pwm_files():
+            message = output or "驱动加载命令已执行。"
+            return True, f"{message}\n驱动加载后已发现 fan/pwm 节点。"
+        if ok:
+            message = output or "驱动加载命令已执行。"
+            return False, f"{message}\n驱动加载执行完毕，但仍未暴露 fan/pwm 节点。"
+        return False, output
+
+    def _run_privileged_shell(self, commands: str, *, timeout: int, interactive: bool = False) -> tuple[bool, str]:
+        shell = shutil.which("sh") or "/bin/sh"
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            command = [shell, "-c", commands]
+            label = "root"
+        elif interactive:
+            pkexec = shutil.which("pkexec")
+            if not pkexec:
+                return False, "自动加载失败：系统没有 pkexec，无法弹出授权窗口。"
+            command = [pkexec, shell, "-c", commands]
+            label = "pkexec"
+        else:
+            sudo = shutil.which("sudo")
+            if not sudo:
+                return False, "自动加载已跳过：系统没有 sudo，无法非交互加载驱动。"
+            command = [sudo, "-n", shell, "-c", commands]
+            label = "sudo -n"
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return False, f"{label} 加载主板风扇驱动超时。"
+        except OSError as exc:
+            return False, f"{label} 加载主板风扇驱动失败: {exc}"
+
+        output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part and part.strip())
+        if result.returncode == 0:
+            return True, output or f"{label} 已执行主板风扇驱动加载。"
+        if not interactive and label == "sudo -n":
+            return (
+                False,
+                "自动加载已跳过：当前会话没有免密 sudo；点击“扫描/刷新”可弹出系统授权加载主板驱动。",
+            )
+        if interactive and label == "pkexec":
+            return False, output or "系统授权被取消或加载主板风扇驱动失败。"
+        return False, output or f"{label} 加载主板风扇驱动失败，退出码 {result.returncode}。"
 
     def _on_scan_finished(self, snapshot: object, error: object) -> None:
         self._scan_active = False

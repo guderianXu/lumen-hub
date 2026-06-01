@@ -98,7 +98,7 @@ If Linux denies access to `/dev/hidraw*`, add a udev rule similar to:
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1c7b", MODE="0660", GROUP="plugdev"
 ```
 
-PWM 风扇写入权限可以在 GUI 的 `风扇 -> 维护 -> 权限` 中诊断。风扇页默认延迟加载，进入页面或点击“重新扫描风扇”时会请求系统授权加载主板 hwmon 驱动；交互式探测会在标准模块无效时追加 `nct6683 force=1` 兜底。短期可以点击“请求系统权限”触发系统认证弹窗；长期建议复制 GUI 生成的 tmpfiles 规则模板，安装到 `/etc/tmpfiles.d/lumen-hub-pwm.conf`，然后执行：
+PWM 风扇写入权限可以在 GUI 的 `风扇` 页诊断。Linux 下软件启动后会自动触发一次普通风扇扫描；如果系统还没有暴露 `fan*_input` 或 `pwm*`，会请求系统授权并尝试加载本机已有的主板 hwmon 驱动，包括 `nct6683 force=1`、`nct6775`、`asus_ec_sensors` 和 `it87`。进入风扇页或点击“扫描/刷新”也会重新触发同样的授权探测。长期建议配置 tmpfiles/udev 权限，让 `/sys/class/hwmon/.../pwm*` 对当前用户组可写，然后执行：
 
 ```bash
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/lumen-hub-pwm.conf

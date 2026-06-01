@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from collections.abc import Callable
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -324,6 +325,7 @@ class MainWindow(QMainWindow):
             auto_load=False,
             auto_grant_pwm_permissions=False,
             auto_enable_pwm_control=False,
+            auto_probe_hwmon_drivers=True,
         )
         self.lianli_page = LianLiWirelessPage(settings=self.settings)
         self.page_indexes = {
@@ -394,6 +396,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.request_telemetry_refresh)
             QTimer.singleShot(0, self.refresh_devices)
             QTimer.singleShot(0, self.refresh_assets)
+            if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+                QTimer.singleShot(0, lambda: self.fan_page.load_fan_control(interactive_driver_probe=True))
 
     def _navigate_to_page(self, page: str) -> None:
         tab_indexes = {"monitor": 0, "assets": 1}

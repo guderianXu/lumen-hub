@@ -129,6 +129,55 @@ def test_scan_linux_hwmon_includes_pwm_only_channel(tmp_path):
     assert channels[0].pwm_path == hwmon0 / "pwm1"
 
 
+def test_linux_driver_probe_shell_loads_candidate_modules():
+    import usb9_lcd.gui.fan_host as fan_host
+
+    shell = fan_host._fan_hwmon_probe_shell()
+
+    assert "modprobe nct6683 force=1" in shell
+    assert "modprobe nct6775" in shell
+    assert "modprobe asus_ec_sensors" in shell
+    assert "modprobe it87" in shell
+
+
+def test_fan_host_auto_probe_runs_before_snapshot(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanSnapshot
+
+    seen = {}
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[],
+        control_available=False,
+        control_reason="Linux 当前没有暴露 fan*_input 或 pwm* 风扇节点",
+        diagnostic_details="Linux 风扇诊断",
+    )
+
+    class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return False
+
+        def _load_fan_hwmon_drivers(self, *, interactive=False):  # noqa: ANN001
+            seen["interactive"] = interactive
+            return False, "probe ran"
+
+    monkeypatch.setattr(fan_host.sys, "platform", "linux")
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage(auto_load=False, auto_probe_hwmon_drivers=True, snapshot_collector=lambda: snapshot)
+
+    result = page._collect_snapshot_after_optional_probe(interactive_driver_probe=True)
+
+    assert seen["interactive"] is True
+    assert "probe ran" in result.diagnostic_details
+    assert page._driver_probe_attempted is True
+
+    page.close()
+    app.quit()
+
+
 def test_fan_host_renders_control_state_from_snapshot():
     from PySide6.QtWidgets import QApplication
 
