@@ -479,6 +479,118 @@ def test_fan_host_renders_control_state_from_snapshot():
     app.quit()
 
 
+def test_fan_host_renders_realtime_cpu_and_all_fan_channels():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+
+    app = QApplication.instance() or QApplication([])
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(name="nct6799 fan1", rpm=987, percent=82, control_reason="read-only"),
+            GenericFanChannel(name="nct6799 fan2", rpm=1620, percent=58, control_reason="read-only"),
+            GenericFanChannel(name="nct6799 fan3", rpm=0, percent=58, control_reason="read-only"),
+            GenericFanChannel(name="nct6799 fan4", rpm=1888, percent=60, control_reason="read-only"),
+        ],
+        control_available=False,
+        control_reason="Fan sensors detected, but no writable PWM channel is available",
+    )
+    page = FanControlHostPage(auto_load=False, snapshot_collector=lambda: snapshot)
+
+    page._snapshot = snapshot
+    page._render_snapshot()
+
+    assert "52°C" in page.cpu_value.text()
+    assert "凉爽" in page.cpu_value.text()
+    assert "4 通道" in page.sensor_value.text()
+    assert "3 有转速" in page.sensor_value.text()
+    assert "最高 1888 RPM" in page.sensor_value.text()
+    assert "nct6799 fan4" in page.sensor_value.text()
+    assert "更新 12:00:00" in page.live_value.text()
+    assert "只读显示" in page.live_value.text()
+
+    page.release()
+    page.close()
+    app.quit()
+
+
+def test_fan_host_live_refresh_and_curve_tick_are_separated():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False)
+    calls: list[dict[str, object]] = []
+    page.reload_fan_control = lambda *args, **kwargs: calls.append(kwargs)  # type: ignore[method-assign]
+
+    page._live_refresh_tick()
+    page._curve_tick()
+
+    assert calls[0]["apply_curve_after_scan"] is False
+    assert calls[1]["apply_curve_after_scan"] is True
+
+    page.release()
+    page.close()
+    app.quit()
+
+
+def test_fan_host_render_does_not_apply_curve_during_readonly_refresh(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+
+    pwm_path = tmp_path / "pwm1"
+    pwm_enable_path = tmp_path / "pwm1_enable"
+    pwm_path.write_text("0\n", encoding="utf-8")
+    pwm_enable_path.write_text("2\n", encoding="utf-8")
+    settings = GuiSettings()
+    settings.host_fan.curve_enabled = True
+    settings.host_fan.curve_points = [[40, 20], [80, 100]]
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="CPU Fan",
+                rpm=900,
+                pwm_path=pwm_path,
+                pwm_enable_path=pwm_enable_path,
+                control_available=True,
+                control_reason="PWM writable",
+            )
+        ],
+        control_available=True,
+        control_reason="1 writable PWM channel(s) detected",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=lambda _settings: None,
+        snapshot_collector=lambda: snapshot,
+    )
+    page._snapshot = snapshot
+    page._render_snapshot()
+
+    assert pwm_enable_path.read_text(encoding="utf-8") == "2\n"
+    assert pwm_path.read_text(encoding="utf-8") == "0\n"
+
+    page._apply_curve_after_scan = True
+    page._render_snapshot()
+
+    assert pwm_enable_path.read_text(encoding="utf-8") == "1\n"
+    assert pwm_path.read_text(encoding="utf-8") == "112\n"
+
+    page.release()
+    page.close()
+    app.quit()
+
+
 def test_fan_host_applies_windows_control_percent(monkeypatch):
     from PySide6.QtWidgets import QApplication
 

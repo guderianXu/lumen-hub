@@ -3495,7 +3495,7 @@ def test_fan_page_interactive_privileged_shell_uses_pkexec(monkeypatch):
     monkeypatch.setattr(fan_host.subprocess, "run", fake_run)
 
     app = QApplication.instance() or QApplication([])
-    page = FanControlHostPage(auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
+    page = FanControlHostPage(auto_load=False, auto_grant_pwm_permissions=False, auto_probe_hwmon_drivers=False)
 
     ok, message = page._run_privileged_shell("id", timeout=120, interactive=True)
 

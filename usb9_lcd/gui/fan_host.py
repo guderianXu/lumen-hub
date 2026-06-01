@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from datetime import datetime
 import os
 import re
 import shlex
@@ -406,6 +407,87 @@ def _format_channel(channel: GenericFanChannel) -> str:
     return " / ".join(parts)
 
 
+def _cpu_temperature_label(snapshot: GenericFanSnapshot) -> str:
+    cpu = snapshot.telemetry.cpu
+    temp = cpu.package_temperature_c
+    if temp is None:
+        return cpu.error or "CPU --"
+    if temp < 55:
+        state = "凉爽"
+    elif temp < 75:
+        state = "正常"
+    elif temp < 88:
+        state = "偏热"
+    else:
+        state = "过热"
+    parts = [f"{temp:.0f}°C", state]
+    if cpu.utilization_percent is not None:
+        parts.append(f"{cpu.utilization_percent:.0f}% load")
+    return "\n".join([parts[0], " · ".join(parts[1:])])
+
+
+def _cpu_temperature_color(snapshot: GenericFanSnapshot) -> str:
+    temp = snapshot.telemetry.cpu.package_temperature_c
+    if temp is None:
+        return "#f2f3f0"
+    if temp < 55:
+        return "#70e000"
+    if temp < 75:
+        return "#ffd166"
+    if temp < 88:
+        return "#ff9f1c"
+    return "#ff4d4d"
+
+
+def _format_rpm(value: int | None) -> str:
+    if value is None:
+        return "-- RPM"
+    if value <= 0:
+        return "0 RPM"
+    return f"{value} RPM"
+
+
+def _format_pwm_percent(value: float | None) -> str:
+    if value is None:
+        return "PWM --"
+    return f"PWM {value:.0f}%"
+
+
+def _fan_live_summary(snapshot: GenericFanSnapshot) -> str:
+    if not snapshot.channels:
+        return "未发现风扇传感器"
+    rpm_values = [channel.rpm for channel in snapshot.channels if channel.rpm is not None]
+    active = [rpm for rpm in rpm_values if rpm > 0]
+    writable = sum(1 for channel in snapshot.channels if channel.control_available)
+    parts = [f"{len(snapshot.channels)} 通道", f"{len(active)} 有转速"]
+    if active:
+        parts.append(f"最高 {max(active)} RPM")
+        parts.append(f"平均 {round(sum(active) / len(active))} RPM")
+    parts.append(f"{writable} 可控" if writable else "只读")
+    return " · ".join(parts)
+
+
+def _fan_live_lines(snapshot: GenericFanSnapshot, *, limit: int = 12) -> list[str]:
+    lines = [_fan_live_summary(snapshot)]
+    for index, channel in enumerate(snapshot.channels[:limit], start=1):
+        state = "可控" if channel.control_available else "只读"
+        lines.append(
+            f"{index:02d}. {channel.name}: "
+            f"{_format_rpm(channel.rpm)} · {_format_pwm_percent(channel.percent)} · {state}"
+        )
+    remaining = len(snapshot.channels) - limit
+    if remaining > 0:
+        lines.append(f"... 还有 {remaining} 个通道")
+    return lines
+
+
+def _snapshot_update_time(snapshot: GenericFanSnapshot) -> str:
+    captured_at = snapshot.telemetry.captured_at
+    if isinstance(captured_at, datetime):
+        return captured_at.strftime("%H:%M:%S")
+    return "--:--:--"
+
+
 def _snapshot_details(snapshot: GenericFanSnapshot) -> str:
     lines = [f"Platform: {snapshot.platform_name}", f"Control capability: {snapshot.control_reason}"]
     cpu = snapshot.telemetry.cpu
@@ -465,6 +547,9 @@ class FanControlHostPage(QWidget):
         self._permission_grant_message = ""
         self._curve_timer = QTimer(self)
         self._curve_timer.timeout.connect(self._curve_tick)
+        self._live_timer = QTimer(self)
+        self._live_timer.timeout.connect(self._live_refresh_tick)
+        self._apply_curve_after_scan = False
         self.scan_finished.connect(self._on_scan_finished)
 
         layout = QVBoxLayout(self)
@@ -487,10 +572,12 @@ class FanControlHostPage(QWidget):
         grid.setSpacing(12)
         self.cpu_value = QLabel("CPU --")
         self.sensor_value = QLabel("风扇传感器未扫描")
+        self.live_value = QLabel("实时刷新未启动")
         self.control_value = QLabel("控制能力未知")
         grid.addWidget(self._metric_card("CPU", self.cpu_value), 0, 0)
-        grid.addWidget(self._metric_card("风扇传感器", self.sensor_value), 0, 1)
-        grid.addWidget(self._metric_card("控制能力", self.control_value), 1, 0, 1, 2)
+        grid.addWidget(self._metric_card("风扇实时转速", self.sensor_value), 0, 1)
+        grid.addWidget(self._metric_card("实时状态", self.live_value), 1, 0)
+        grid.addWidget(self._metric_card("控制能力", self.control_value), 1, 1)
         layout.addLayout(grid)
 
         control_card = QFrame()
@@ -578,10 +665,23 @@ class FanControlHostPage(QWidget):
         self.admin_button = QPushButton("管理员重启")
         self.admin_button.clicked.connect(self._restart_as_admin)
         self.admin_button.setVisible(sys.platform.startswith("win") and not _is_windows_admin())
+        self.live_refresh = QCheckBox("实时刷新")
+        self.live_refresh.setChecked(True)
+        self.live_refresh.setToolTip("只刷新 CPU 温度和风扇 RPM/PWM 显示，不写入 PWM。")
+        self.live_refresh.toggled.connect(self._live_refresh_changed)
+        self.live_interval = QSpinBox()
+        self.live_interval.setRange(1, 30)
+        self.live_interval.setSuffix(" s")
+        self.live_interval.setValue(2)
+        self.live_interval.setToolTip("普通风扇传感器刷新间隔。")
+        self.live_interval.valueChanged.connect(self._live_interval_changed)
         actions.addWidget(self.scan_button)
         actions.addWidget(self.permission_button)
         actions.addWidget(self.help_button)
         actions.addWidget(self.admin_button)
+        actions.addWidget(self.live_refresh)
+        actions.addWidget(QLabel("显示间隔"))
+        actions.addWidget(self.live_interval)
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -595,6 +695,7 @@ class FanControlHostPage(QWidget):
         else:
             self._set_status("普通风扇页已就绪")
         self._sync_curve_controls()
+        self._sync_live_timer()
 
     def home_status_text(self) -> str:
         if self._snapshot is None:
@@ -611,10 +712,19 @@ class FanControlHostPage(QWidget):
     def load_fan_control(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         self.reload_fan_control(*args, **kwargs)
 
-    def reload_fan_control(self, *args, interactive_driver_probe: bool = False, **kwargs) -> None:  # noqa: ARG002, ANN002, ANN003
+    def reload_fan_control(
+        self,
+        *args,
+        interactive_driver_probe: bool = False,
+        apply_curve_after_scan: bool = False,
+        **kwargs,
+    ) -> None:  # noqa: ARG002, ANN002, ANN003
         if self._scan_active:
+            if apply_curve_after_scan:
+                self._apply_curve_after_scan = True
             self._set_status("普通风扇正在扫描中...")
             return
+        self._apply_curve_after_scan = bool(apply_curve_after_scan)
         self._scan_active = True
         self.scan_button.setEnabled(False)
         self._set_status("正在扫描普通风扇...")
@@ -813,8 +923,10 @@ class FanControlHostPage(QWidget):
         self._scan_active = False
         self.scan_button.setEnabled(True)
         if isinstance(error, Exception):
+            self._apply_curve_after_scan = False
             self.details.setPlainText(f"普通风扇扫描失败:\n{error}")
             self._set_status("普通风扇扫描失败")
+            self._sync_live_timer()
             return
         if isinstance(snapshot, GenericFanSnapshot):
             self._snapshot = snapshot
@@ -823,6 +935,7 @@ class FanControlHostPage(QWidget):
             self._set_status(self.home_status_text())
 
     def release(self) -> None:
+        self._live_timer.stop()
         self._curve_timer.stop()
         return None
 
@@ -830,24 +943,20 @@ class FanControlHostPage(QWidget):
         if self._snapshot is None:
             return
         snapshot = self._snapshot
-        cpu_parts: list[str] = []
-        if snapshot.telemetry.cpu.package_temperature_c is not None:
-            cpu_parts.append(f"{snapshot.telemetry.cpu.package_temperature_c:.0f}C")
-        if snapshot.telemetry.cpu.utilization_percent is not None:
-            cpu_parts.append(f"{snapshot.telemetry.cpu.utilization_percent:.0f}% load")
-        self.cpu_value.setText(" / ".join(cpu_parts) if cpu_parts else snapshot.telemetry.cpu.error or "CPU --")
-
-        if snapshot.channels:
-            self.sensor_value.setText("\n".join(_format_channel(channel) for channel in snapshot.channels[:3]))
-        else:
-            self.sensor_value.setText("未发现风扇传感器")
+        self.cpu_value.setText(_cpu_temperature_label(snapshot))
+        self.cpu_value.setStyleSheet(f"color: {_cpu_temperature_color(snapshot)};")
+        self.sensor_value.setText("\n".join(_fan_live_lines(snapshot)))
 
         self.control_value.setText(snapshot.control_reason)
         self.apply_button.setEnabled(snapshot.control_available)
         self._sync_permission_controls()
         self._sync_curve_controls()
+        self._update_live_status(snapshot)
+        self._sync_live_timer()
         self.details.setPlainText(_snapshot_details(snapshot))
-        if self.curve_enable.isChecked() and snapshot.control_available and not self._curve_applying:
+        should_apply_curve = self._apply_curve_after_scan
+        self._apply_curve_after_scan = False
+        if should_apply_curve and self.curve_enable.isChecked() and snapshot.control_available and not self._curve_applying:
             self._apply_curve_to_snapshot(snapshot, source="曲线自动")
 
     def _apply_pwm(self) -> None:
@@ -964,6 +1073,39 @@ class FanControlHostPage(QWidget):
         self.curve_apply_button.setEnabled(has_control)
         self._sync_curve_timer()
 
+    def _sync_live_timer(self) -> None:
+        if not hasattr(self, "live_refresh"):
+            return
+        interval_ms = max(1, int(self.live_interval.value())) * 1000
+        self._live_timer.setInterval(interval_ms)
+        should_run = bool(self.live_refresh.isChecked() and self._snapshot is not None)
+        if should_run and not self._live_timer.isActive():
+            self._live_timer.start()
+        elif not should_run and self._live_timer.isActive():
+            self._live_timer.stop()
+
+    def _live_refresh_changed(self, enabled: bool) -> None:
+        self._sync_live_timer()
+        if self._snapshot is not None:
+            self._update_live_status(self._snapshot)
+        self._set_status("普通风扇实时刷新已开启" if enabled else "普通风扇实时刷新已暂停")
+
+    def _live_interval_changed(self, _value: int) -> None:
+        self._sync_live_timer()
+        if self._snapshot is not None:
+            self._update_live_status(self._snapshot)
+
+    def _live_refresh_tick(self) -> None:
+        if self._scan_active:
+            return
+        self.reload_fan_control(interactive_driver_probe=False, apply_curve_after_scan=False)
+
+    def _update_live_status(self, snapshot: GenericFanSnapshot) -> None:
+        if not hasattr(self, "live_value"):
+            return
+        mode = f"自动刷新 {self.live_interval.value()}s" if self.live_refresh.isChecked() else "自动刷新已暂停"
+        self.live_value.setText(f"更新 {_snapshot_update_time(snapshot)}\n{mode} · 只读显示")
+
     def _sync_permission_controls(self) -> None:
         if not hasattr(self, "permission_button"):
             return
@@ -985,8 +1127,9 @@ class FanControlHostPage(QWidget):
 
     def _curve_tick(self) -> None:
         if self._scan_active:
+            self._apply_curve_after_scan = True
             return
-        self.reload_fan_control(interactive_driver_probe=False)
+        self.reload_fan_control(interactive_driver_probe=False, apply_curve_after_scan=True)
 
     def _apply_curve_now(self) -> None:
         if self._snapshot is None or not self._snapshot.control_available:
