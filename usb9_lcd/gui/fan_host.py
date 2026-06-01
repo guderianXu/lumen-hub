@@ -2,6 +2,7 @@
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -48,6 +49,16 @@ class GenericFanSnapshot:
     channels: list[GenericFanChannel]
     control_available: bool
     control_reason: str
+    diagnostic_details: str = ""
+
+
+@dataclass(frozen=True)
+class LinuxFanProbeDiagnostics:
+    summary: str
+    details: str
+
+
+_LINUX_FAN_MODULE_CANDIDATES = ("nct6683", "nct6775", "asus_ec_sensors", "it87", "asus_wmi")
 
 
 def _platform_label() -> str:
@@ -86,42 +97,147 @@ def _fan_label(hwmon: Path, index: str) -> str:
     return f"{chip} fan{index}"
 
 
-def _scan_linux_hwmon_channels() -> list[GenericFanChannel]:
+def _linux_pwm_channel(hwmon: Path, index: str, rpm: int | None = None) -> GenericFanChannel:
+    pwm_path = hwmon / f"pwm{index}"
+    pwm_enable_path = hwmon / f"pwm{index}_enable"
+    raw_pwm = _read_int(pwm_path) if pwm_path.exists() else None
+    percent = None if raw_pwm is None else max(0.0, min(100.0, raw_pwm * 100.0 / 255.0))
+    writable = pwm_path.exists() and os.access(pwm_path, os.W_OK)
+    if writable:
+        reason = "PWM writable"
+    elif pwm_path.exists():
+        reason = "PWM exists but is not writable; run with permissions or configure udev/system service"
+    else:
+        reason = "No matching PWM output exposed for this fan input"
+    return GenericFanChannel(
+        name=_fan_label(hwmon, index),
+        rpm=rpm,
+        percent=percent,
+        pwm_path=pwm_path if pwm_path.exists() else None,
+        pwm_enable_path=pwm_enable_path if pwm_enable_path.exists() else None,
+        control_available=writable,
+        control_reason=reason,
+    )
+
+
+def _scan_linux_hwmon_channels(hwmon_root: Path = Path("/sys/class/hwmon")) -> list[GenericFanChannel]:
     channels: list[GenericFanChannel] = []
-    hwmon_root = Path("/sys/class/hwmon")
     if not hwmon_root.exists():
         return channels
 
     for hwmon in sorted(hwmon_root.glob("hwmon*")):
+        seen_indices: set[str] = set()
         for fan_input in sorted(hwmon.glob("fan*_input")):
             match = re.fullmatch(r"fan(\d+)_input", fan_input.name)
             if not match:
                 continue
             index = match.group(1)
+            seen_indices.add(index)
             rpm = _read_int(fan_input)
-            pwm_path = hwmon / f"pwm{index}"
-            pwm_enable_path = hwmon / f"pwm{index}_enable"
-            raw_pwm = _read_int(pwm_path) if pwm_path.exists() else None
-            percent = None if raw_pwm is None else max(0.0, min(100.0, raw_pwm * 100.0 / 255.0))
-            writable = pwm_path.exists() and os.access(pwm_path, os.W_OK)
-            if writable:
-                reason = "PWM writable"
-            elif pwm_path.exists():
-                reason = "PWM exists but is not writable; run with permissions or configure udev/system service"
-            else:
-                reason = "No matching PWM output exposed for this fan input"
-            channels.append(
-                GenericFanChannel(
-                    name=_fan_label(hwmon, index),
-                    rpm=rpm,
-                    percent=percent,
-                    pwm_path=pwm_path if pwm_path.exists() else None,
-                    pwm_enable_path=pwm_enable_path if pwm_enable_path.exists() else None,
-                    control_available=writable,
-                    control_reason=reason,
-                )
-            )
+            channels.append(_linux_pwm_channel(hwmon, index, rpm=rpm))
+        for pwm_path in sorted(hwmon.glob("pwm[0-9]*")):
+            match = re.fullmatch(r"pwm(\d+)", pwm_path.name)
+            if not match:
+                continue
+            index = match.group(1)
+            if index in seen_indices:
+                continue
+            channels.append(_linux_pwm_channel(hwmon, index))
     return channels
+
+
+def _read_linux_hwmon_names(hwmon_root: Path = Path("/sys/class/hwmon")) -> list[str]:
+    if not hwmon_root.exists():
+        return []
+    names: list[str] = []
+    for hwmon in sorted(hwmon_root.glob("hwmon*")):
+        name_path = hwmon / "name"
+        name = name_path.read_text(encoding="utf-8", errors="replace").strip() if name_path.exists() else ""
+        names.append(name or hwmon.name)
+    return names
+
+
+def _linux_hwmon_matching_files(hwmon_root: Path, pattern: str, *, fullmatch: str | None = None) -> list[str]:
+    if not hwmon_root.exists():
+        return []
+    files: list[str] = []
+    for hwmon in sorted(hwmon_root.glob("hwmon*")):
+        for candidate in sorted(hwmon.glob(pattern)):
+            if fullmatch and not re.fullmatch(fullmatch, candidate.name):
+                continue
+            files.append(str(candidate))
+    return files
+
+
+def _available_linux_modules(candidates: tuple[str, ...] = _LINUX_FAN_MODULE_CANDIDATES) -> list[str]:
+    if shutil.which("modinfo") is None:
+        return []
+    available: list[str] = []
+    for module in candidates:
+        result = subprocess.run(
+            ["modinfo", module],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if result.returncode == 0:
+            available.append(module)
+    return available
+
+
+def _loaded_linux_modules(candidates: tuple[str, ...] = _LINUX_FAN_MODULE_CANDIDATES) -> list[str]:
+    try:
+        loaded = {line.split()[0] for line in Path("/proc/modules").read_text(encoding="utf-8").splitlines() if line}
+    except OSError:
+        return []
+    return [module for module in candidates if module in loaded]
+
+
+def _join_or_none(values: list[str]) -> str:
+    return ", ".join(values) if values else "none"
+
+
+def _linux_fan_probe_diagnostics(hwmon_root: Path = Path("/sys/class/hwmon")) -> LinuxFanProbeDiagnostics:
+    hwmon_names = _read_linux_hwmon_names(hwmon_root)
+    fan_files = _linux_hwmon_matching_files(hwmon_root, "fan*_input", fullmatch=r"fan\d+_input")
+    pwm_files = _linux_hwmon_matching_files(hwmon_root, "pwm[0-9]*", fullmatch=r"pwm\d+")
+    available_modules = _available_linux_modules()
+    loaded_modules = _loaded_linux_modules()
+    sensors_command = shutil.which("sensors")
+
+    if fan_files or pwm_files:
+        summary = "Linux 找到了 fan/pwm 文件，但没有匹配出可用普通风扇通道"
+    elif hwmon_names:
+        summary = "Linux 当前没有暴露 fan*_input 或 pwm* 风扇节点"
+    else:
+        summary = "Linux 当前没有暴露 /sys/class/hwmon 传感器目录"
+
+    lines = [
+        "Linux 风扇诊断:",
+        f"- hwmon 芯片: {_join_or_none(hwmon_names)}",
+        f"- fan*_input: {_join_or_none(fan_files[:12])}",
+        f"- pwm*: {_join_or_none(pwm_files[:12])}",
+        f"- 已加载候选驱动: {_join_or_none(loaded_modules)}",
+        f"- 当前内核可用候选驱动: {_join_or_none(available_modules)}",
+        f"- lm-sensors 命令: {'installed' if sensors_command else 'not installed'}",
+        "",
+        "建议验证步骤:",
+        "1. 安装并识别传感器: sudo apt install lm-sensors && sudo sensors-detect",
+        "2. ASUS / Nuvoton 主板可逐个测试候选驱动，测试后回到本页点“扫描/刷新”。",
+    ]
+    if "nct6683" in available_modules:
+        lines.append("   sudo modprobe nct6683 force=1")
+    if "nct6775" in available_modules:
+        lines.append("   sudo modprobe nct6775")
+    if "asus_ec_sensors" in available_modules:
+        lines.append("   sudo modprobe asus_ec_sensors")
+    lines.extend(
+        [
+            "3. 如果出现新的 /sys/class/hwmon/.../fan*_input，GUI 会显示转速。",
+            "4. 如果只有 fan*_input 没有可写 pwm*，GUI 只能读转速，不能调速。",
+        ]
+    )
+    return LinuxFanProbeDiagnostics(summary=summary, details="\n".join(lines))
 
 
 def _channels_from_telemetry(fans: list[FanTelemetry]) -> list[GenericFanChannel]:
@@ -152,7 +268,16 @@ def collect_generic_fan_snapshot(
         elif channels:
             reason = "Fan sensors detected, but no writable PWM channel is available"
         else:
-            reason = "No hwmon fan sensors detected"
+            diagnostics = _linux_fan_probe_diagnostics()
+            reason = diagnostics.summary
+            return GenericFanSnapshot(
+                platform_name,
+                telemetry,
+                channels,
+                False,
+                reason,
+                diagnostics.details,
+            )
         return GenericFanSnapshot(platform_name, telemetry, channels, bool(writable_count), reason)
 
     if sys.platform.startswith("win"):
@@ -223,6 +348,9 @@ def _snapshot_details(snapshot: GenericFanSnapshot) -> str:
         lines.extend(f"  - {_format_channel(channel)}" for channel in snapshot.channels)
     else:
         lines.append("Fan channels: none detected")
+    if snapshot.diagnostic_details:
+        lines.append("")
+        lines.append(snapshot.diagnostic_details)
     return "\n".join(lines)
 
 
@@ -432,11 +560,13 @@ class FanControlHostPage(QWidget):
 
     def _explain_control_limit(self) -> None:
         reason = self._snapshot.control_reason if self._snapshot else "尚未扫描普通风扇"
+        diagnostics = f"\n\n{self._snapshot.diagnostic_details}" if self._snapshot and self._snapshot.diagnostic_details else ""
         self.details.append(
             "\n控制限制说明:\n"
             f"{reason}\n"
             "Windows 普通主板风扇没有统一系统 API，通常只能通过 LibreHardwareMonitor/OpenHardwareMonitor 读取。"
             "Linux 下如果 hwmon 暴露 pwm* 且当前用户有写权限，本页会自动启用应用按钮。"
+            f"{diagnostics}"
         )
         self._set_status("已显示普通风扇控制限制")
 

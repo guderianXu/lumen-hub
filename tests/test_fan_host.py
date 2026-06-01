@@ -87,6 +87,48 @@ def test_windows_snapshot_reports_missing_motherboard_control(monkeypatch):
     assert "administrator" in snapshot.control_reason
 
 
+def test_linux_snapshot_reports_missing_hwmon_fan_diagnostics(monkeypatch):
+    import usb9_lcd.gui.fan_host as fan_host
+
+    monkeypatch.setattr(fan_host.sys, "platform", "linux")
+    monkeypatch.setattr(fan_host, "_scan_linux_hwmon_channels", lambda: [])
+    monkeypatch.setattr(
+        fan_host,
+        "_linux_fan_probe_diagnostics",
+        lambda: fan_host.LinuxFanProbeDiagnostics(
+            summary="Linux 当前没有暴露 fan*_input 或 pwm* 风扇节点",
+            details="Linux 风扇诊断:\n- hwmon 芯片: asus, k10temp\n- pwm*: none",
+        ),
+    )
+
+    snapshot = fan_host.collect_generic_fan_snapshot(lambda: _telemetry())
+
+    assert snapshot.control_available is False
+    assert "fan*_input" in snapshot.control_reason
+    assert "asus, k10temp" in snapshot.diagnostic_details
+    assert "Linux 风扇诊断" in fan_host._snapshot_details(snapshot)
+
+
+def test_scan_linux_hwmon_includes_pwm_only_channel(tmp_path):
+    import usb9_lcd.gui.fan_host as fan_host
+
+    hwmon_root = tmp_path / "hwmon"
+    hwmon0 = hwmon_root / "hwmon0"
+    hwmon0.mkdir(parents=True)
+    (hwmon0 / "name").write_text("nct6683\n", encoding="utf-8")
+    (hwmon0 / "pwm1").write_text("128\n", encoding="utf-8")
+    (hwmon0 / "pwm1_enable").write_text("2\n", encoding="utf-8")
+
+    channels = fan_host._scan_linux_hwmon_channels(hwmon_root)
+
+    assert len(channels) == 1
+    assert channels[0].name == "nct6683 fan1"
+    assert channels[0].rpm is None
+    assert 50 <= (channels[0].percent or 0) <= 51
+    assert channels[0].control_available is True
+    assert channels[0].pwm_path == hwmon0 / "pwm1"
+
+
 def test_fan_host_renders_control_state_from_snapshot():
     from PySide6.QtWidgets import QApplication
 
