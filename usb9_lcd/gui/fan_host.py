@@ -242,6 +242,8 @@ class FanControlHostPage(QWidget):
         super().__init__()
         self._snapshot_collector = snapshot_collector
         self._snapshot: GenericFanSnapshot | None = None
+        self.monitor = None
+        self._loaded = False
         self._scan_active = False
         self._auto_grant_pwm_permissions = auto_grant_pwm_permissions
         self._auto_enable_pwm_control = auto_enable_pwm_control
@@ -283,7 +285,9 @@ class FanControlHostPage(QWidget):
         self.pwm_slider.setRange(20, 100)
         self.pwm_slider.setValue(40)
         self.pwm_slider.valueChanged.connect(lambda value: self.pwm_label.setText(f"目标 PWM: {value}%"))
-        self.enable_manual = QCheckBox("启用手动 PWM 模式")
+        self.enable_manual = QCheckBox("写入前切到手动 PWM 模式")
+        self.enable_manual.setChecked(True)
+        self.enable_manual.setToolTip("大多数 Linux hwmon 风扇需要 pwm_enable=1，直接写 pwm 数值才会生效。")
         self.apply_button = QPushButton("应用到普通风扇")
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self._apply_pwm)
@@ -296,6 +300,7 @@ class FanControlHostPage(QWidget):
 
         actions = QHBoxLayout()
         self.scan_button = QPushButton("扫描/刷新")
+        self.load_button = self.scan_button
         self.scan_button.clicked.connect(lambda: self.reload_fan_control(interactive_driver_probe=True))
         self.help_button = QPushButton("为什么不能控制？")
         self.help_button.clicked.connect(self._explain_control_limit)
@@ -359,6 +364,7 @@ class FanControlHostPage(QWidget):
             return
         if isinstance(snapshot, GenericFanSnapshot):
             self._snapshot = snapshot
+            self._loaded = True
             self._render_snapshot()
             self._set_status(self.home_status_text())
 
@@ -389,7 +395,6 @@ class FanControlHostPage(QWidget):
         if self._snapshot is None or not self._snapshot.control_available:
             self._explain_control_limit()
             return
-        value = round(self.pwm_slider.value() * 255 / 100)
         percent_value = self.pwm_slider.value()
         written: list[str] = []
         errors: list[str] = []
@@ -400,11 +405,8 @@ class FanControlHostPage(QWidget):
             try:
                 if channel.windows_control_id:
                     set_windows_fan_control_percent(channel.windows_control_id, percent_value)
-                elif self.enable_manual.isChecked() and channel.pwm_enable_path is not None:
-                    channel.pwm_enable_path.write_text("1\n", encoding="utf-8")
-                    channel.pwm_path.write_text(f"{value}\n", encoding="utf-8")
                 elif channel.pwm_path is not None:
-                    channel.pwm_path.write_text(f"{value}\n", encoding="utf-8")
+                    self._write_linux_pwm(channel, percent_value)
                 written.append(channel.name)
             except OSError as exc:
                 errors.append(f"{channel.name}: {exc}")
@@ -417,6 +419,16 @@ class FanControlHostPage(QWidget):
             self.details.append(f"\n已写入 PWM {self.pwm_slider.value()}%: " + ", ".join(written))
             self._set_status(f"已应用 PWM {self.pwm_slider.value()}%")
         self.reload_fan_control(interactive_driver_probe=False)
+
+    def _write_linux_pwm(self, channel: GenericFanChannel, percent_value: int) -> None:
+        if channel.pwm_path is None:
+            raise ValueError("Linux PWM channel has no pwm path")
+        if self.enable_manual.isChecked() and channel.pwm_enable_path is not None:
+            current_mode = _read_int(channel.pwm_enable_path)
+            if current_mode != 1:
+                channel.pwm_enable_path.write_text("1\n", encoding="utf-8")
+        raw_value = round(max(0, min(100, percent_value)) * 255 / 100)
+        channel.pwm_path.write_text(f"{raw_value}\n", encoding="utf-8")
 
     def _explain_control_limit(self) -> None:
         reason = self._snapshot.control_reason if self._snapshot else "尚未扫描普通风扇"

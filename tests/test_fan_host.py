@@ -165,3 +165,60 @@ def test_fan_host_applies_windows_control_percent(monkeypatch):
 
     page.close()
     app.quit()
+
+
+def test_fan_host_applies_linux_pwm_after_enabling_manual_mode(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+
+    pwm_path = tmp_path / "pwm1"
+    pwm_enable_path = tmp_path / "pwm1_enable"
+    pwm_path.write_text("100\n", encoding="utf-8")
+    pwm_enable_path.write_text("2\n", encoding="utf-8")
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="Nuvoton fan1",
+                rpm=1200,
+                percent=39,
+                pwm_path=pwm_path,
+                pwm_enable_path=pwm_enable_path,
+                control_available=True,
+                control_reason="PWM writable",
+            )
+        ],
+        control_available=True,
+        control_reason="1 writable PWM channel(s) detected",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False, snapshot_collector=lambda: snapshot)
+    page.reload_fan_control = lambda *args, **kwargs: None
+    page._snapshot = snapshot
+    page.pwm_slider.setValue(55)
+
+    page._apply_pwm()
+
+    assert pwm_enable_path.read_text(encoding="utf-8") == "1\n"
+    assert pwm_path.read_text(encoding="utf-8") == "140\n"
+    assert "已写入 PWM 55%" in page.details.toPlainText()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_host_manual_pwm_mode_is_enabled_by_default():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False)
+
+    assert page.enable_manual.isChecked() is True
+
+    page.close()
+    app.quit()
