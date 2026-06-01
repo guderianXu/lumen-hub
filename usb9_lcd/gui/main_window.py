@@ -323,7 +323,7 @@ class MainWindow(QMainWindow):
         self.screen_page = self._screen_page()
         self.fan_page = FanControlHostPage(
             auto_load=False,
-            auto_grant_pwm_permissions=False,
+            auto_grant_pwm_permissions=True,
             auto_enable_pwm_control=False,
             auto_probe_hwmon_drivers=True,
             settings=self.settings,

@@ -2,6 +2,7 @@
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -120,11 +121,15 @@ def _linux_pwm_channel(hwmon: Path, index: str, rpm: int | None = None) -> Gener
     pwm_enable_path = hwmon / f"pwm{index}_enable"
     raw_pwm = _read_int(pwm_path) if pwm_path.exists() else None
     percent = None if raw_pwm is None else max(0.0, min(100.0, raw_pwm * 100.0 / 255.0))
-    writable = pwm_path.exists() and os.access(pwm_path, os.W_OK)
+    pwm_writable = pwm_path.exists() and os.access(pwm_path, os.W_OK)
+    pwm_enable_writable = not pwm_enable_path.exists() or os.access(pwm_enable_path, os.W_OK)
+    writable = pwm_writable and pwm_enable_writable
     if writable:
         reason = "PWM writable"
-    elif pwm_path.exists():
+    elif pwm_path.exists() and not pwm_writable:
         reason = "PWM exists but is not writable; run with permissions or configure udev/system service"
+    elif pwm_enable_path.exists() and not pwm_enable_writable:
+        reason = "PWM enable exists but is not writable; run with permissions or configure udev/system service"
     else:
         reason = "No matching PWM output exposed for this fan input"
     return GenericFanChannel(
@@ -252,6 +257,18 @@ def _snapshot_with_probe_message(snapshot: GenericFanSnapshot, probe_message: st
         diagnostic_details = f"{diagnostic_details}\n\n{probe_details}"
     else:
         diagnostic_details = probe_details
+    return replace(snapshot, diagnostic_details=diagnostic_details)
+
+
+def _snapshot_with_permission_message(snapshot: GenericFanSnapshot, permission_message: str) -> GenericFanSnapshot:
+    if not permission_message:
+        return snapshot
+    diagnostic_details = snapshot.diagnostic_details
+    permission_details = f"PWM 权限授权:\n{permission_message}"
+    if diagnostic_details:
+        diagnostic_details = f"{diagnostic_details}\n\n{permission_details}"
+    else:
+        diagnostic_details = permission_details
     return replace(snapshot, diagnostic_details=diagnostic_details)
 
 
@@ -444,6 +461,8 @@ class FanControlHostPage(QWidget):
         self._auto_probe_hwmon_drivers = auto_probe_hwmon_drivers
         self._driver_probe_attempted = False
         self._driver_probe_message = ""
+        self._permission_grant_attempted = False
+        self._permission_grant_message = ""
         self._curve_timer = QTimer(self)
         self._curve_timer.timeout.connect(self._curve_tick)
         self.scan_finished.connect(self._on_scan_finished)
@@ -549,12 +568,18 @@ class FanControlHostPage(QWidget):
         self.load_button = self.scan_button
         self.scan_button.setToolTip("Linux 下会先尝试加载主板 hwmon 风扇驱动，再刷新传感器。")
         self.scan_button.clicked.connect(lambda: self.reload_fan_control(interactive_driver_probe=True))
+        self.permission_button = QPushButton("授权 PWM 权限")
+        self.permission_button.setToolTip("给当前用户授权写入已发现的 /sys/class/hwmon/.../pwm* 文件。")
+        self.permission_button.setEnabled(False)
+        self.permission_button.setVisible(sys.platform.startswith("linux"))
+        self.permission_button.clicked.connect(self.request_pwm_permission_grant)
         self.help_button = QPushButton("为什么不能控制？")
         self.help_button.clicked.connect(self._explain_control_limit)
         self.admin_button = QPushButton("管理员重启")
         self.admin_button.clicked.connect(self._restart_as_admin)
         self.admin_button.setVisible(sys.platform.startswith("win") and not _is_windows_admin())
         actions.addWidget(self.scan_button)
+        actions.addWidget(self.permission_button)
         actions.addWidget(self.help_button)
         actions.addWidget(self.admin_button)
         actions.addStretch(1)
@@ -613,8 +638,16 @@ class FanControlHostPage(QWidget):
             _, probe_message = self._load_fan_hwmon_drivers(interactive=interactive_driver_probe)
             self._driver_probe_message = probe_message
         snapshot = self._snapshot_collector()
+        permission_message = ""
+        if self._should_grant_pwm_permissions(snapshot, interactive_driver_probe=interactive_driver_probe):
+            self._permission_grant_attempted = True
+            _, permission_message = self._grant_pwm_permissions(snapshot, interactive=interactive_driver_probe)
+            self._permission_grant_message = permission_message
+            snapshot = self._snapshot_collector()
         if probe_message:
-            return _snapshot_with_probe_message(snapshot, probe_message)
+            snapshot = _snapshot_with_probe_message(snapshot, probe_message)
+        if permission_message:
+            snapshot = _snapshot_with_permission_message(snapshot, permission_message)
         return snapshot
 
     def _should_probe_linux_hwmon_drivers(self, *, interactive_driver_probe: bool) -> bool:
@@ -629,11 +662,75 @@ class FanControlHostPage(QWidget):
     def _system_has_fan_pwm_files(self) -> bool:
         return _system_has_linux_fan_pwm_files()
 
+    def _should_grant_pwm_permissions(self, snapshot: GenericFanSnapshot, *, interactive_driver_probe: bool) -> bool:
+        if not sys.platform.startswith("linux"):
+            return False
+        if os.environ.get("LUMEN_HUB_SKIP_FAN_PERMISSION_GRANT") == "1":
+            return False
+        if snapshot.control_available:
+            return False
+        if not self._pwm_permission_paths(snapshot):
+            return False
+        return interactive_driver_probe or (self._auto_grant_pwm_permissions and not self._permission_grant_attempted)
+
+    def _pwm_permission_paths(self, snapshot: GenericFanSnapshot | None = None) -> list[Path]:
+        target = snapshot or self._snapshot
+        if target is None:
+            return []
+        paths: list[Path] = []
+        seen: set[str] = set()
+        for channel in target.channels:
+            for path in (channel.pwm_path, channel.pwm_enable_path):
+                if path is None or not path.exists():
+                    continue
+                key = str(path)
+                if key in seen:
+                    continue
+                if not os.access(path, os.W_OK):
+                    paths.append(path)
+                    seen.add(key)
+        return paths
+
+    def _pwm_permission_shell(self, paths: list[Path]) -> str:
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        gid = os.getgid() if hasattr(os, "getgid") else 0
+        quoted_paths = " ".join(shlex.quote(str(path)) for path in paths)
+        return "\n".join(
+            [
+                "set -e",
+                f"chown {uid}:{gid} -- {quoted_paths}",
+                f"chmod u+rw,g+rw -- {quoted_paths}",
+                f"echo 'pwm-permissions=ok files={len(paths)}'",
+            ]
+        )
+
+    def _grant_pwm_permissions(self, snapshot: GenericFanSnapshot, *, interactive: bool = False) -> tuple[bool, str]:
+        paths = self._pwm_permission_paths(snapshot)
+        if not paths:
+            return False, "没有找到需要授权的 pwm* 或 pwm*_enable 文件。"
+        ok, output = self._run_privileged_shell_compat(
+            self._pwm_permission_shell(paths),
+            timeout=30,
+            interactive=interactive,
+            action_label="授权 PWM 权限",
+        )
+        if ok:
+            return True, output or f"已授权 {len(paths)} 个 PWM 文件。"
+        return False, output
+
+    def request_pwm_permission_grant(self) -> None:
+        self.reload_fan_control(interactive_driver_probe=True)
+
     def _load_fan_hwmon_drivers(self, *, interactive: bool = False) -> tuple[bool, str]:
         if not sys.platform.startswith("linux"):
             return False, "当前平台不是 Linux，已跳过 hwmon 驱动加载。"
         commands = _fan_hwmon_probe_shell()
-        ok, output = self._run_privileged_shell(commands, timeout=30, interactive=interactive)
+        ok, output = self._run_privileged_shell_compat(
+            commands,
+            timeout=30,
+            interactive=interactive,
+            action_label="加载主板风扇驱动",
+        )
         if self._system_has_fan_pwm_files():
             message = output or "驱动加载命令已执行。"
             return True, f"{message}\n驱动加载后已发现 fan/pwm 节点。"
@@ -642,7 +739,34 @@ class FanControlHostPage(QWidget):
             return False, f"{message}\n驱动加载执行完毕，但仍未暴露 fan/pwm 节点。"
         return False, output
 
-    def _run_privileged_shell(self, commands: str, *, timeout: int, interactive: bool = False) -> tuple[bool, str]:
+    def _run_privileged_shell_compat(
+        self,
+        commands: str,
+        *,
+        timeout: int,
+        interactive: bool,
+        action_label: str,
+    ) -> tuple[bool, str]:
+        try:
+            return self._run_privileged_shell(
+                commands,
+                timeout=timeout,
+                interactive=interactive,
+                action_label=action_label,
+            )
+        except TypeError as exc:
+            if "action_label" not in str(exc):
+                raise
+            return self._run_privileged_shell(commands, timeout=timeout, interactive=interactive)
+
+    def _run_privileged_shell(
+        self,
+        commands: str,
+        *,
+        timeout: int,
+        interactive: bool = False,
+        action_label: str = "加载主板风扇驱动",
+    ) -> tuple[bool, str]:
         shell = shutil.which("sh") or "/bin/sh"
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             command = [shell, "-c", commands]
@@ -650,13 +774,13 @@ class FanControlHostPage(QWidget):
         elif interactive:
             pkexec = shutil.which("pkexec")
             if not pkexec:
-                return False, "自动加载失败：系统没有 pkexec，无法弹出授权窗口。"
+                return False, f"{action_label}失败：系统没有 pkexec，无法弹出授权窗口。"
             command = [pkexec, shell, "-c", commands]
             label = "pkexec"
         else:
             sudo = shutil.which("sudo")
             if not sudo:
-                return False, "自动加载已跳过：系统没有 sudo，无法非交互加载驱动。"
+                return False, f"{action_label}已跳过：系统没有 sudo，无法非交互执行。"
             command = [sudo, "-n", shell, "-c", commands]
             label = "sudo -n"
         try:
@@ -669,21 +793,21 @@ class FanControlHostPage(QWidget):
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired:
-            return False, f"{label} 加载主板风扇驱动超时。"
+            return False, f"{label} {action_label}超时。"
         except OSError as exc:
-            return False, f"{label} 加载主板风扇驱动失败: {exc}"
+            return False, f"{label} {action_label}失败: {exc}"
 
         output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part and part.strip())
         if result.returncode == 0:
-            return True, output or f"{label} 已执行主板风扇驱动加载。"
+            return True, output or "ok"
         if not interactive and label == "sudo -n":
             return (
                 False,
-                "自动加载已跳过：当前会话没有免密 sudo；点击“扫描/刷新”可弹出系统授权加载主板驱动。",
+                f"{action_label}已跳过：当前会话没有免密 sudo；点击“扫描/刷新”可弹出系统授权。",
             )
         if interactive and label == "pkexec":
-            return False, output or "系统授权被取消或加载主板风扇驱动失败。"
-        return False, output or f"{label} 加载主板风扇驱动失败，退出码 {result.returncode}。"
+            return False, output or f"系统授权被取消或{action_label}失败。"
+        return False, output or f"{label} {action_label}失败，退出码 {result.returncode}。"
 
     def _on_scan_finished(self, snapshot: object, error: object) -> None:
         self._scan_active = False
@@ -720,6 +844,7 @@ class FanControlHostPage(QWidget):
 
         self.control_value.setText(snapshot.control_reason)
         self.apply_button.setEnabled(snapshot.control_available)
+        self._sync_permission_controls()
         self._sync_curve_controls()
         self.details.setPlainText(_snapshot_details(snapshot))
         if self.curve_enable.isChecked() and snapshot.control_available and not self._curve_applying:
@@ -839,6 +964,12 @@ class FanControlHostPage(QWidget):
         self.curve_apply_button.setEnabled(has_control)
         self._sync_curve_timer()
 
+    def _sync_permission_controls(self) -> None:
+        if not hasattr(self, "permission_button"):
+            return
+        has_permission_targets = bool(self._snapshot and self._pwm_permission_paths(self._snapshot))
+        self.permission_button.setEnabled(has_permission_targets)
+
     def _sync_curve_timer(self) -> None:
         interval_ms = max(1, int(self.curve_interval.value())) * 1000
         self._curve_timer.setInterval(interval_ms)
@@ -903,7 +1034,7 @@ class FanControlHostPage(QWidget):
             "\n控制限制说明:\n"
             f"{reason}\n"
             "Windows 普通主板风扇没有统一系统 API，通常只能通过 LibreHardwareMonitor/OpenHardwareMonitor 读取。"
-            "Linux 下如果 hwmon 暴露 pwm* 且当前用户有写权限，本页会自动启用应用按钮。"
+            "Linux 下如果 hwmon 暴露 pwm* 但不可写，请点击“授权 PWM 权限”；授权后本页会自动重扫并启用手动 PWM/曲线控制。"
             f"{diagnostics}"
         )
         self._set_status("已显示普通风扇控制限制")

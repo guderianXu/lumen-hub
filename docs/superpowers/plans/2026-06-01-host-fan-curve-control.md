@@ -211,3 +211,26 @@ Added a preset combo box with 安静/标准/高速/全速/自定义. Selecting a
 - [x] **Step 4: Cover preset behavior in tests**
 
 Added tests for preset points, settings parsing, preset selection, and custom-state transition.
+
+### Task 6: PWM Permission Grant Flow
+
+**Files:**
+- Modify: `usb9_lcd/gui/fan_host.py`
+- Modify: `usb9_lcd/gui/main_window.py`
+- Test: `tests/test_fan_host.py`
+
+- [x] **Step 1: Detect writable PWM and pwm_enable together**
+
+Treat a Linux fan channel as controllable only when `pwm*` is writable and, if present, `pwm*_enable` is writable too.
+
+- [x] **Step 2: Add system authorization path**
+
+Added a GUI action that builds a privileged `chown/chmod` shell command for the discovered `pwm*` and `pwm*_enable` files, runs it through the existing pkexec/sudo wrapper, and rescans afterward.
+
+- [x] **Step 3: Auto-grant on startup/refresh**
+
+Enabled automatic one-shot PWM permission grant from the main window so the path that now finds `nct6799` fans can immediately transition into writable fan control after system authorization.
+
+- [x] **Step 4: Cover permission behavior in tests**
+
+Added tests for command generation, automatic permission grant/rescan, and the GUI permission button enabled state.

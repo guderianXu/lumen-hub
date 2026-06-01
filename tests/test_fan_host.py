@@ -303,6 +303,147 @@ def test_fan_host_curve_preset_updates_points_and_custom_state():
     app.quit()
 
 
+def test_fan_host_builds_pwm_permission_command(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    pwm_path = tmp_path / "pwm1"
+    pwm_enable_path = tmp_path / "pwm1_enable"
+    pwm_path.write_text("80\n", encoding="utf-8")
+    pwm_enable_path.write_text("2\n", encoding="utf-8")
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False)
+
+    command = page._pwm_permission_shell([pwm_path, pwm_enable_path])
+
+    assert "chown" in command
+    assert "chmod u+rw,g+rw" in command
+    assert str(pwm_path) in command
+    assert str(pwm_enable_path) in command
+
+    page.close()
+    app.quit()
+
+
+def test_fan_host_auto_grants_pwm_permissions_and_rescans(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+
+    monkeypatch.setattr(fan_host.sys, "platform", "linux")
+    pwm_path = tmp_path / "pwm1"
+    pwm_enable_path = tmp_path / "pwm1_enable"
+    pwm_path.write_text("80\n", encoding="utf-8")
+    pwm_enable_path.write_text("2\n", encoding="utf-8")
+    unwritable = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="nct6799 fan1",
+                rpm=987,
+                percent=82,
+                pwm_path=pwm_path,
+                pwm_enable_path=pwm_enable_path,
+                control_available=False,
+                control_reason="PWM exists but is not writable",
+            )
+        ],
+        control_available=False,
+        control_reason="Fan sensors detected, but no writable PWM channel is available",
+    )
+    writable = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="nct6799 fan1",
+                rpm=987,
+                percent=82,
+                pwm_path=pwm_path,
+                pwm_enable_path=pwm_enable_path,
+                control_available=True,
+                control_reason="PWM writable",
+            )
+        ],
+        control_available=True,
+        control_reason="1 writable PWM channel(s) detected",
+    )
+    snapshots = [unwritable, writable]
+    seen: dict[str, object] = {}
+
+    class FakeFanPage(FanControlHostPage):
+        def _system_has_fan_pwm_files(self):
+            return True
+
+        def _pwm_permission_paths(self, snapshot=None):  # noqa: ANN001
+            return [pwm_path, pwm_enable_path]
+
+        def _grant_pwm_permissions(self, snapshot, *, interactive=False):  # noqa: ANN001
+            seen["interactive"] = interactive
+            seen["snapshot"] = snapshot
+            return True, "pwm-permissions=ok files=2"
+
+    app = QApplication.instance() or QApplication([])
+    page = FakeFanPage(
+        auto_load=False,
+        auto_grant_pwm_permissions=True,
+        snapshot_collector=lambda: snapshots.pop(0),
+    )
+
+    result = page._collect_snapshot_after_optional_probe(interactive_driver_probe=False)
+
+    assert seen["interactive"] is False
+    assert result.control_available is True
+    assert "pwm-permissions=ok files=2" in result.diagnostic_details
+    assert page._permission_grant_attempted is True
+
+    page.close()
+    app.quit()
+
+
+def test_fan_host_permission_button_enables_for_unwritable_pwm(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+
+    pwm_path = tmp_path / "pwm1"
+    pwm_enable_path = tmp_path / "pwm1_enable"
+    pwm_path.write_text("80\n", encoding="utf-8")
+    pwm_enable_path.write_text("2\n", encoding="utf-8")
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="nct6799 fan1",
+                rpm=987,
+                pwm_path=pwm_path,
+                pwm_enable_path=pwm_enable_path,
+                control_available=False,
+                control_reason="PWM exists but is not writable",
+            )
+        ],
+        control_available=False,
+        control_reason="Fan sensors detected, but no writable PWM channel is available",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False, snapshot_collector=lambda: snapshot)
+    page._pwm_permission_paths = lambda _snapshot=None: [pwm_path, pwm_enable_path]
+    page._snapshot = snapshot
+    page._render_snapshot()
+
+    assert page.permission_button.isEnabled() is True
+    assert page.apply_button.isEnabled() is False
+
+    page.close()
+    app.quit()
+
+
 def test_fan_host_renders_control_state_from_snapshot():
     from PySide6.QtWidgets import QApplication
 

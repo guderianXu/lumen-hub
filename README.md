@@ -98,7 +98,7 @@ If Linux denies access to `/dev/hidraw*`, add a udev rule similar to:
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1c7b", MODE="0660", GROUP="plugdev"
 ```
 
-PWM 风扇写入权限可以在 GUI 的 `风扇` 页诊断。Linux 下软件启动后会自动触发一次普通风扇扫描；如果系统还没有暴露 `fan*_input` 或 `pwm*`，会请求系统授权并尝试加载本机已有的主板 hwmon 驱动，包括 `nct6683 force=1`、`nct6775`、`asus_ec_sensors` 和 `it87`。进入风扇页或点击“扫描/刷新”也会重新触发同样的授权探测。普通风扇页支持手动 PWM，也支持和联力页一致的 CPU 温度曲线控制：内置安静、标准、高速、全速和自定义预设；拖动点位调整温度到 PWM 百分比，启用后按设定间隔自动写入可控风扇。长期建议配置 tmpfiles/udev 权限，让 `/sys/class/hwmon/.../pwm*` 对当前用户组可写，然后执行：
+PWM 风扇写入权限可以在 GUI 的 `风扇` 页诊断。Linux 下软件启动后会自动触发一次普通风扇扫描；如果系统还没有暴露 `fan*_input` 或 `pwm*`，会请求系统授权并尝试加载本机已有的主板 hwmon 驱动，包括 `nct6683 force=1`、`nct6775`、`asus_ec_sensors` 和 `it87`。如果已经发现 `pwm*` 但当前用户不可写，软件会在启动/刷新时请求系统授权执行一次临时 `chown/chmod`；也可以手动点击“授权 PWM 权限”。普通风扇页支持手动 PWM，也支持和联力页一致的 CPU 温度曲线控制：内置安静、标准、高速、全速和自定义预设；拖动点位调整温度到 PWM 百分比，启用后按设定间隔自动写入可控风扇。长期建议配置 tmpfiles/udev 权限，让 `/sys/class/hwmon/.../pwm*` 对当前用户组可写，然后执行：
 
 ```bash
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/lumen-hub-pwm.conf
