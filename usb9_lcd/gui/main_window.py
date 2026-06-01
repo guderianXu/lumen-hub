@@ -326,6 +326,7 @@ class MainWindow(QMainWindow):
             auto_grant_pwm_permissions=False,
             auto_enable_pwm_control=False,
             auto_probe_hwmon_drivers=True,
+            settings=self.settings,
         )
         self.lianli_page = LianLiWirelessPage(settings=self.settings)
         self.page_indexes = {

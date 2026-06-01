@@ -129,6 +129,43 @@ def test_scan_linux_hwmon_includes_pwm_only_channel(tmp_path):
     assert channels[0].pwm_path == hwmon0 / "pwm1"
 
 
+def test_fan_curve_helpers_sanitize_and_interpolate():
+    from usb9_lcd.gui.fan_curve import interpolate_fan_curve_percent, sanitize_fan_curve_points
+
+    points = sanitize_fan_curve_points([[80, 110], [20, -5], [50, 40]])
+
+    assert points == [[20, 0], [50, 40], [80, 100]]
+    assert interpolate_fan_curve_percent(points, 10) == 0
+    assert interpolate_fan_curve_percent(points, 35) == 20
+    assert interpolate_fan_curve_percent(points, 90) == 100
+
+
+def test_host_fan_settings_load_defaults_and_curve_points(tmp_path):
+    import json
+
+    from usb9_lcd.gui.settings import load_settings
+
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "host_fan": {
+                    "curve_enabled": True,
+                    "curve_interval_seconds": 99,
+                    "curve_points": [[90, 120], [20, -1]],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(path)
+
+    assert settings.host_fan.curve_enabled is True
+    assert settings.host_fan.curve_interval_seconds == 60
+    assert settings.host_fan.curve_points == [[20, 0], [90, 100]]
+
+
 def test_linux_driver_probe_shell_loads_candidate_modules():
     import usb9_lcd.gui.fan_host as fan_host
 
@@ -173,6 +210,53 @@ def test_fan_host_auto_probe_runs_before_snapshot(monkeypatch):
     assert seen["interactive"] is True
     assert "probe ran" in result.diagnostic_details
     assert page._driver_probe_attempted is True
+
+    page.close()
+    app.quit()
+
+
+def test_fan_host_applies_curve_pwm_from_cpu_temperature(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+
+    pwm_path = tmp_path / "pwm1"
+    pwm_enable_path = tmp_path / "pwm1_enable"
+    pwm_path.write_text("0\n", encoding="utf-8")
+    pwm_enable_path.write_text("2\n", encoding="utf-8")
+    settings = GuiSettings()
+    settings.host_fan.curve_points = [[40, 20], [80, 100]]
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="CPU Fan",
+                rpm=900,
+                pwm_path=pwm_path,
+                pwm_enable_path=pwm_enable_path,
+                control_available=True,
+                control_reason="PWM writable",
+            )
+        ],
+        control_available=True,
+        control_reason="1 writable PWM channel(s) detected",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=lambda _settings: None,
+        snapshot_collector=lambda: snapshot,
+    )
+    page._snapshot = snapshot
+    page._apply_curve_to_snapshot(snapshot, source="test")
+
+    assert pwm_enable_path.read_text(encoding="utf-8") == "1\n"
+    assert pwm_path.read_text(encoding="utf-8") == "112\n"
+    assert "CPU 52C -> PWM 44%" in page.details.toPlainText()
 
     page.close()
     app.quit()

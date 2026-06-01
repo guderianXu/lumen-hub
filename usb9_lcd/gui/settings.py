@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from usb9_lcd.gui.fan_curve_model import DEFAULT_FAN_CURVE_POINTS, sanitize_fan_curve_points
 from usb9_lcd.platforms import current_platform
 
 _PLATFORM = current_platform()
@@ -49,6 +50,13 @@ class MonitorUiSettings:
 
 
 @dataclass
+class HostFanUiSettings:
+    curve_enabled: bool = False
+    curve_interval_seconds: int = 3
+    curve_points: list[list[int]] = field(default_factory=lambda: [list(point) for point in DEFAULT_FAN_CURVE_POINTS])
+
+
+@dataclass
 class LianLiWirelessTargetSettings:
     mac: str = ""
     master_mac: str = ""
@@ -83,6 +91,7 @@ class GuiSettings:
     config_version: int = CONFIG_VERSION
     lighting: LightingUiSettings = field(default_factory=LightingUiSettings)
     monitor: MonitorUiSettings = field(default_factory=MonitorUiSettings)
+    host_fan: HostFanUiSettings = field(default_factory=HostFanUiSettings)
     openrgb: OpenRgbUiSettings = field(default_factory=OpenRgbUiSettings)
     lianli_wireless: LianLiWirelessUiSettings = field(default_factory=LianLiWirelessUiSettings)
     keepalive_enabled: bool = True
@@ -100,6 +109,7 @@ def load_settings(path: Path = DEFAULT_SETTINGS_PATH) -> GuiSettings:
         config_version=CONFIG_VERSION,
         lighting=_lighting_from_dict(payload.get("lighting")),
         monitor=_monitor_from_dict(payload.get("monitor")),
+        host_fan=_host_fan_from_dict(payload.get("host_fan")),
         openrgb=_openrgb_from_dict(payload.get("openrgb")),
         lianli_wireless=_lianli_wireless_from_dict(payload.get("lianli_wireless")),
         keepalive_enabled=bool(payload.get("keepalive_enabled", True)),
@@ -167,6 +177,22 @@ def _monitor_from_dict(value: Any) -> MonitorUiSettings:
         active_profile=str(value.get("active_profile", "")),
         palette=str(value.get("palette", defaults.palette)),
         profiles=value.get("profiles") if isinstance(value.get("profiles"), dict) else {},
+    )
+
+
+def _host_fan_from_dict(value: Any) -> HostFanUiSettings:
+    if not isinstance(value, dict):
+        return HostFanUiSettings()
+    defaults = HostFanUiSettings()
+    return HostFanUiSettings(
+        curve_enabled=bool(value.get("curve_enabled", defaults.curve_enabled)),
+        curve_interval_seconds=_clamp_int(
+            value.get("curve_interval_seconds"),
+            1,
+            60,
+            defaults.curve_interval_seconds,
+        ),
+        curve_points=sanitize_fan_curve_points(value.get("curve_points"), defaults.curve_points),
     )
 
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import ctypes
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -20,11 +20,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSlider,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from usb9_lcd.gui.fan_curve import FanCurveEditor
+from usb9_lcd.gui.fan_curve_model import interpolate_fan_curve_percent, sanitize_fan_curve_points
+from usb9_lcd.gui.settings import GuiSettings, save_settings
 from usb9_lcd.monitoring.models import FanTelemetry, SystemTelemetry
 from usb9_lcd.monitoring.service import collect_system_telemetry
 from usb9_lcd.monitoring.windows import WindowsFanChannel, collect_windows_fan_channels, set_windows_fan_control_percent
@@ -412,20 +416,27 @@ class FanControlHostPage(QWidget):
         auto_grant_pwm_permissions: bool = False,
         auto_enable_pwm_control: bool = False,
         auto_probe_hwmon_drivers: bool = False,
+        settings: GuiSettings | None = None,
+        settings_saver: Callable[[GuiSettings], None] = save_settings,
         snapshot_collector: Callable[[], GenericFanSnapshot] = collect_generic_fan_snapshot,
         **_ignored: object,
     ) -> None:
         super().__init__()
+        self.settings = settings or GuiSettings()
+        self._settings_saver = settings_saver
         self._snapshot_collector = snapshot_collector
         self._snapshot: GenericFanSnapshot | None = None
         self.monitor = None
         self._loaded = False
         self._scan_active = False
+        self._curve_applying = False
         self._auto_grant_pwm_permissions = auto_grant_pwm_permissions
         self._auto_enable_pwm_control = auto_enable_pwm_control
         self._auto_probe_hwmon_drivers = auto_probe_hwmon_drivers
         self._driver_probe_attempted = False
         self._driver_probe_message = ""
+        self._curve_timer = QTimer(self)
+        self._curve_timer.timeout.connect(self._curve_tick)
         self.scan_finished.connect(self._on_scan_finished)
 
         layout = QVBoxLayout(self)
@@ -477,6 +488,45 @@ class FanControlHostPage(QWidget):
         control_layout.addWidget(self.apply_button)
         layout.addWidget(control_card)
 
+        curve_card = QFrame()
+        curve_card.setObjectName("MetricCard")
+        curve_layout = QVBoxLayout(curve_card)
+        curve_title = QLabel("风扇曲线")
+        curve_title.setObjectName("SectionLabel")
+        curve_hint = QLabel("CPU 温度到 PWM 输出的曲线；拖动控制点，双击空白处增加点，右键点位删除。")
+        curve_hint.setObjectName("FieldHint")
+        curve_hint.setWordWrap(True)
+        self.curve_editor = FanCurveEditor()
+        self.curve_editor.set_points(self.settings.host_fan.curve_points)
+        self.curve_editor.curve_changed.connect(self._curve_changed)
+        self.curve_summary = QLabel("")
+        self.curve_summary.setObjectName("FieldHint")
+        self.curve_summary.setWordWrap(True)
+        curve_options = QHBoxLayout()
+        self.curve_enable = QCheckBox("启用曲线控制")
+        self.curve_enable.setChecked(self.settings.host_fan.curve_enabled)
+        self.curve_enable.toggled.connect(self._curve_enabled_changed)
+        self.curve_interval = QSpinBox()
+        self.curve_interval.setRange(1, 60)
+        self.curve_interval.setSuffix(" s")
+        self.curve_interval.setValue(self.settings.host_fan.curve_interval_seconds)
+        self.curve_interval.valueChanged.connect(self._curve_interval_changed)
+        self.curve_apply_button = QPushButton("按曲线写入一次")
+        self.curve_apply_button.setEnabled(False)
+        self.curve_apply_button.clicked.connect(self._apply_curve_now)
+        curve_options.addWidget(self.curve_enable)
+        curve_options.addWidget(QLabel("刷新间隔"))
+        curve_options.addWidget(self.curve_interval)
+        curve_options.addStretch(1)
+        curve_options.addWidget(self.curve_apply_button)
+        curve_layout.addWidget(curve_title)
+        curve_layout.addWidget(curve_hint)
+        curve_layout.addWidget(self.curve_editor)
+        curve_layout.addWidget(self.curve_summary)
+        curve_layout.addLayout(curve_options)
+        layout.addWidget(curve_card)
+        self._update_curve_summary()
+
         actions = QHBoxLayout()
         self.scan_button = QPushButton("扫描/刷新")
         self.load_button = self.scan_button
@@ -502,6 +552,7 @@ class FanControlHostPage(QWidget):
             self.load_fan_control(interactive_driver_probe=False)
         else:
             self._set_status("普通风扇页已就绪")
+        self._sync_curve_controls()
 
     def home_status_text(self) -> str:
         if self._snapshot is None:
@@ -631,6 +682,7 @@ class FanControlHostPage(QWidget):
             self._set_status(self.home_status_text())
 
     def release(self) -> None:
+        self._curve_timer.stop()
         return None
 
     def _render_snapshot(self) -> None:
@@ -651,29 +703,17 @@ class FanControlHostPage(QWidget):
 
         self.control_value.setText(snapshot.control_reason)
         self.apply_button.setEnabled(snapshot.control_available)
+        self._sync_curve_controls()
         self.details.setPlainText(_snapshot_details(snapshot))
+        if self.curve_enable.isChecked() and snapshot.control_available and not self._curve_applying:
+            self._apply_curve_to_snapshot(snapshot, source="曲线自动")
 
     def _apply_pwm(self) -> None:
         if self._snapshot is None or not self._snapshot.control_available:
             self._explain_control_limit()
             return
         percent_value = self.pwm_slider.value()
-        written: list[str] = []
-        errors: list[str] = []
-        for channel in self._snapshot.channels:
-            if not channel.control_available or channel.pwm_path is None:
-                if not channel.control_available or not channel.windows_control_id:
-                    continue
-            try:
-                if channel.windows_control_id:
-                    set_windows_fan_control_percent(channel.windows_control_id, percent_value)
-                elif channel.pwm_path is not None:
-                    self._write_linux_pwm(channel, percent_value)
-                written.append(channel.name)
-            except OSError as exc:
-                errors.append(f"{channel.name}: {exc}")
-            except Exception as exc:  # noqa: BLE001 - hardware write errors should stay in the UI.
-                errors.append(f"{channel.name}: {exc}")
+        written, errors = self._write_pwm_percent_to_channels(percent_value)
         if errors:
             self.details.append("\n写入失败:\n" + "\n".join(errors))
             self._set_status("普通风扇 PWM 写入失败")
@@ -681,6 +721,119 @@ class FanControlHostPage(QWidget):
             self.details.append(f"\n已写入 PWM {self.pwm_slider.value()}%: " + ", ".join(written))
             self._set_status(f"已应用 PWM {self.pwm_slider.value()}%")
         self.reload_fan_control(interactive_driver_probe=False)
+
+    def _write_pwm_percent_to_channels(self, percent_value: int) -> tuple[list[str], list[str]]:
+        if self._snapshot is None:
+            return [], ["普通风扇尚未扫描"]
+        written: list[str] = []
+        errors: list[str] = []
+        for channel in self._snapshot.channels:
+            if not channel.control_available:
+                continue
+            try:
+                if channel.windows_control_id:
+                    set_windows_fan_control_percent(channel.windows_control_id, percent_value)
+                elif channel.pwm_path is not None:
+                    self._write_linux_pwm(channel, percent_value)
+                else:
+                    continue
+                written.append(channel.name)
+            except OSError as exc:
+                errors.append(f"{channel.name}: {exc}")
+            except Exception as exc:  # noqa: BLE001 - hardware write errors should stay in the UI.
+                errors.append(f"{channel.name}: {exc}")
+        if not written and not errors:
+            errors.append("没有可写 PWM 通道")
+        return written, errors
+
+    def _curve_changed(self, points: object | None = None) -> None:
+        curve_points = sanitize_fan_curve_points(points if points is not None else self.curve_editor.points())
+        self.settings.host_fan.curve_points = curve_points
+        self.curve_editor.set_points(curve_points)
+        self._save_host_fan_settings()
+        self._update_curve_summary()
+        if self.curve_enable.isChecked():
+            self._set_status("风扇曲线已更新，下一轮刷新时生效")
+
+    def _curve_interval_changed(self, value: int) -> None:
+        self.settings.host_fan.curve_interval_seconds = max(1, min(60, int(value)))
+        self._save_host_fan_settings()
+        self._sync_curve_timer()
+
+    def _curve_enabled_changed(self, enabled: bool) -> None:
+        self.settings.host_fan.curve_enabled = bool(enabled)
+        self._save_host_fan_settings()
+        self._sync_curve_timer()
+        if enabled:
+            if self._snapshot is not None and self._snapshot.control_available:
+                self._apply_curve_to_snapshot(self._snapshot, source="曲线启用")
+            else:
+                self._set_status("风扇曲线已启用，等待可写 PWM 通道")
+        else:
+            self._set_status("风扇曲线控制已暂停")
+
+    def _save_host_fan_settings(self) -> None:
+        try:
+            self._settings_saver(self.settings)
+        except OSError as exc:
+            self.details.append(f"\n风扇曲线设置保存失败: {exc}")
+
+    def _update_curve_summary(self) -> None:
+        points = sanitize_fan_curve_points(self.curve_editor.points())
+        summary = "，".join(f"{temp}°C→{percent}%" for temp, percent in points)
+        self.curve_summary.setText(f"当前曲线：{summary}")
+
+    def _sync_curve_controls(self) -> None:
+        has_control = bool(self._snapshot and self._snapshot.control_available)
+        self.curve_apply_button.setEnabled(has_control)
+        self._sync_curve_timer()
+
+    def _sync_curve_timer(self) -> None:
+        interval_ms = max(1, int(self.curve_interval.value())) * 1000
+        self._curve_timer.setInterval(interval_ms)
+        should_run = bool(
+            self.curve_enable.isChecked()
+            and self._snapshot is not None
+            and self._snapshot.control_available
+        )
+        if should_run and not self._curve_timer.isActive():
+            self._curve_timer.start()
+        elif not should_run and self._curve_timer.isActive():
+            self._curve_timer.stop()
+
+    def _curve_tick(self) -> None:
+        if self._scan_active:
+            return
+        self.reload_fan_control(interactive_driver_probe=False)
+
+    def _apply_curve_now(self) -> None:
+        if self._snapshot is None or not self._snapshot.control_available:
+            self._explain_control_limit()
+            return
+        self._apply_curve_to_snapshot(self._snapshot, source="曲线手动")
+
+    def _apply_curve_to_snapshot(self, snapshot: GenericFanSnapshot, *, source: str) -> None:
+        temp = snapshot.telemetry.cpu.package_temperature_c
+        percent = interpolate_fan_curve_percent(self.curve_editor.points(), temp)
+        if percent is None:
+            self.details.append("\n风扇曲线跳过：CPU 温度不可用")
+            self._set_status("风扇曲线跳过：CPU 温度不可用")
+            return
+        previous_snapshot = self._snapshot
+        self._snapshot = snapshot
+        self._curve_applying = True
+        try:
+            written, errors = self._write_pwm_percent_to_channels(percent)
+        finally:
+            self._curve_applying = False
+            self._snapshot = previous_snapshot if previous_snapshot is not None else snapshot
+        temp_text = f"{float(temp):.0f}C"
+        if errors:
+            self.details.append(f"\n{source}写入失败：CPU {temp_text} -> PWM {percent}%\n" + "\n".join(errors))
+            self._set_status("风扇曲线 PWM 写入失败")
+            return
+        self.details.append(f"\n{source}：CPU {temp_text} -> PWM {percent}%: " + ", ".join(written))
+        self._set_status(f"风扇曲线已写入 PWM {percent}%")
 
     def _write_linux_pwm(self, channel: GenericFanChannel, percent_value: int) -> None:
         if channel.pwm_path is None:
