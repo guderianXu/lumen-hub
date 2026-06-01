@@ -303,6 +303,69 @@ def test_fan_host_curve_preset_updates_points_and_custom_state():
     app.quit()
 
 
+def test_fan_host_curve_change_persists_to_settings_file(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+    from usb9_lcd.gui.settings import GuiSettings, load_settings, save_settings
+
+    path = tmp_path / "settings.json"
+    settings = GuiSettings()
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=lambda value: save_settings(value, path),
+    )
+
+    page._curve_changed([[42, 33], [79, 88]])
+    loaded = load_settings(path)
+
+    assert loaded.host_fan.curve_preset == "custom"
+    assert loaded.host_fan.curve_points == [[42, 33], [79, 88]]
+    assert page.curve_preset_combo.currentData() == "custom"
+    assert "42°C→33%" in page.curve_summary.text()
+    assert "已保存" in page.status_label.text()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_curve_editor_commits_final_drag_position_on_release():
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_curve import FanCurveEditor
+
+    app = QApplication.instance() or QApplication([])
+    editor = FanCurveEditor()
+    editor.resize(520, 320)
+    editor.set_points([[30, 25], [85, 100]])
+    captured: list[list[list[int]]] = []
+    editor.curve_changed.connect(lambda points: captured.append(points))
+    x, y = editor._to_screen(40, 60)
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(x, y),
+        QPointF(x, y),
+        QPointF(x, y),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    editor._dragging_idx = 0
+    editor.mouseReleaseEvent(event)
+
+    assert captured
+    assert captured[-1] == [[40, 60], [85, 100]]
+    assert editor.points() == [[40, 60], [85, 100]]
+
+    editor.close()
+    app.quit()
+
+
 def test_fan_host_builds_pwm_permission_command(tmp_path):
     from PySide6.QtWidgets import QApplication
 

@@ -139,6 +139,13 @@ class FanCurveEditor(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: ANN001
+        if self._dragging_idx >= 0:
+            points = self.points()
+            if self._dragging_idx < len(points):
+                pos = event.position()
+                points[self._dragging_idx] = self._from_screen(pos.x(), pos.y())
+                self._points = sanitize_fan_curve_points(points)
+                self.curve_changed.emit(self.points())
         self._dragging_idx = -1
         self.update()
 

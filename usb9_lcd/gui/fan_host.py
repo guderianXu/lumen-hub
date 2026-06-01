@@ -1003,10 +1003,14 @@ class FanControlHostPage(QWidget):
         self.settings.host_fan.curve_preset = FAN_CURVE_CUSTOM_PRESET
         self._set_curve_preset_combo(FAN_CURVE_CUSTOM_PRESET)
         self.curve_editor.set_points(curve_points)
-        self._save_host_fan_settings()
+        saved = self._save_host_fan_settings()
         self._update_curve_summary()
+        if not saved:
+            return
         if self.curve_enable.isChecked():
             self._set_status("风扇曲线已更新，下一轮刷新时生效")
+        else:
+            self._set_status("风扇曲线已保存")
 
     def _set_curve_preset_combo(self, preset: object) -> None:
         if not hasattr(self, "curve_preset_combo"):
@@ -1056,11 +1060,14 @@ class FanControlHostPage(QWidget):
         else:
             self._set_status("风扇曲线控制已暂停")
 
-    def _save_host_fan_settings(self) -> None:
+    def _save_host_fan_settings(self) -> bool:
         try:
             self._settings_saver(self.settings)
         except OSError as exc:
             self.details.append(f"\n风扇曲线设置保存失败: {exc}")
+            self._set_status("风扇曲线设置保存失败")
+            return False
+        return True
 
     def _update_curve_summary(self) -> None:
         points = sanitize_fan_curve_points(self.curve_editor.points())
