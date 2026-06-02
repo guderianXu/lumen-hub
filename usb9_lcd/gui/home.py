@@ -195,10 +195,11 @@ class ControlCenterPage(QWidget):
             self.gpu_value.setText("GPU 不可用")
             return
         cpu = "--" if telemetry.cpu.package_temperature_c is None else f"{telemetry.cpu.package_temperature_c:.0f}°C"
-        cpu_load = "--" if telemetry.cpu.utilization_percent is None else f"{telemetry.cpu.utilization_percent}%"
+        cpu_load = "--" if telemetry.cpu.utilization_percent is None else f"{telemetry.cpu.utilization_percent:.0f}%"
+        cpu_power = "--" if telemetry.cpu.power_w is None else f"{telemetry.cpu.power_w:.0f}W"
         gpu = "--" if telemetry.gpu.temperature_c is None else f"{telemetry.gpu.temperature_c:.0f}°C"
         gpu_load = "--" if telemetry.gpu.utilization_percent is None else f"{telemetry.gpu.utilization_percent}%"
-        self.cpu_value.setText(f"{cpu}\n{cpu_load}")
+        self.cpu_value.setText(f"温度 {cpu}\n负载 {cpu_load}\n功耗 {cpu_power}")
         self.gpu_value.setText(f"{gpu}\n{gpu_load}")
 
     def update_fan_status(self, text: str) -> None:

@@ -410,7 +410,14 @@ def _format_channel(channel: GenericFanChannel) -> str:
 def _cpu_temperature_label(snapshot: GenericFanSnapshot) -> str:
     cpu = snapshot.telemetry.cpu
     temp = cpu.package_temperature_c
+    details: list[str] = []
+    if cpu.utilization_percent is not None:
+        details.append(f"负载 {cpu.utilization_percent:.0f}%")
+    if cpu.power_w is not None:
+        details.append(f"功耗 {cpu.power_w:.0f}W")
     if temp is None:
+        if details:
+            return "\n".join(["CPU --", " · ".join(details)])
         return cpu.error or "CPU --"
     if temp < 55:
         state = "凉爽"
@@ -420,9 +427,7 @@ def _cpu_temperature_label(snapshot: GenericFanSnapshot) -> str:
         state = "偏热"
     else:
         state = "过热"
-    parts = [f"{temp:.0f}°C", state]
-    if cpu.utilization_percent is not None:
-        parts.append(f"{cpu.utilization_percent:.0f}% load")
+    parts = [f"{temp:.0f}°C", state, *details]
     return "\n".join([parts[0], " · ".join(parts[1:])])
 
 
@@ -491,12 +496,14 @@ def _snapshot_update_time(snapshot: GenericFanSnapshot) -> str:
 def _snapshot_details(snapshot: GenericFanSnapshot) -> str:
     lines = [f"Platform: {snapshot.platform_name}", f"Control capability: {snapshot.control_reason}"]
     cpu = snapshot.telemetry.cpu
-    if cpu.package_temperature_c is not None or cpu.utilization_percent is not None:
+    if cpu.package_temperature_c is not None or cpu.utilization_percent is not None or cpu.power_w is not None:
         cpu_parts: list[str] = []
         if cpu.package_temperature_c is not None:
             cpu_parts.append(f"{cpu.package_temperature_c:.0f}C")
         if cpu.utilization_percent is not None:
             cpu_parts.append(f"{cpu.utilization_percent:.0f}% load")
+        if cpu.power_w is not None:
+            cpu_parts.append(f"{cpu.power_w:.0f}W")
         lines.append(f"CPU: {' / '.join(cpu_parts)}")
     else:
         lines.append(f"CPU: {cpu.error or 'unavailable'}")

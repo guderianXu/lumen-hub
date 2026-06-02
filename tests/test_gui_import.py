@@ -199,7 +199,7 @@ class MultiDeviceLightingController(FakeLightingController):
 
 def _fake_telemetry() -> SystemTelemetry:
     return SystemTelemetry(
-        cpu=CpuTelemetry(package_temperature_c=54.0, utilization_percent=18, available=True),
+        cpu=CpuTelemetry(package_temperature_c=54.0, utilization_percent=18, power_w=86.4, available=True),
         gpu=GpuTelemetry(
             name="RTX",
             temperature_c=61,
@@ -335,6 +335,7 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     assert "CPU" in window.cpu_temp_value.text()
     assert "GPU" in window.gpu_temp_value.text()
     assert "54°C" in window.home_page.cpu_value.text()
+    assert "功耗 86W" in window.home_page.cpu_value.text()
     assert "61°C" in window.home_page.gpu_value.text()
     assert window.home_page.mode_value.text() == "日常"
     assert window.home_page.fan_value.text() in {"未加载", "未扫描"}

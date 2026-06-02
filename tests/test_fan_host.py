@@ -11,7 +11,7 @@ from usb9_lcd.monitoring.windows import WindowsFanChannel
 
 def _telemetry(fans=None):
     return SystemTelemetry(
-        cpu=CpuTelemetry(package_temperature_c=52.0, utilization_percent=12.0, available=True),
+        cpu=CpuTelemetry(package_temperature_c=52.0, utilization_percent=12.0, power_w=86.4, available=True),
         gpu=GpuTelemetry(name="RTX", available=False),
         fans=fans or [],
         captured_at=datetime(2026, 5, 30, 12, 0, 0),
@@ -567,6 +567,7 @@ def test_fan_host_renders_realtime_cpu_and_all_fan_channels():
 
     assert "52°C" in page.cpu_value.text()
     assert "凉爽" in page.cpu_value.text()
+    assert "功耗 86W" in page.cpu_value.text()
     assert "4 通道" in page.sensor_value.text()
     assert "3 有转速" in page.sensor_value.text()
     assert "最高 1888 RPM" in page.sensor_value.text()

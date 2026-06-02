@@ -99,6 +99,56 @@ def test_collect_cpu_temperature_from_hwmon_prefers_package_label(tmp_path: Path
     assert telemetry.error == ""
 
 
+def test_collect_cpu_temperature_from_hwmon_reads_cpu_power_input(tmp_path: Path):
+    hwmon = tmp_path / "hwmon0"
+    hwmon.mkdir()
+    (hwmon / "name").write_text("zenpower\n", encoding="utf-8")
+    (hwmon / "temp1_label").write_text("Tctl\n", encoding="utf-8")
+    (hwmon / "temp1_input").write_text("54875\n", encoding="utf-8")
+    (hwmon / "power1_label").write_text("PPT\n", encoding="utf-8")
+    (hwmon / "power1_input").write_text("67500000\n", encoding="utf-8")
+
+    telemetry = collect_cpu_temperature_from_hwmon(tmp_path, powercap_root=tmp_path / "powercap")
+
+    assert telemetry.available is True
+    assert telemetry.package_temperature_c == 54.875
+    assert telemetry.power_w == 67.5
+    assert telemetry.error == ""
+
+
+def test_collect_cpu_temperature_from_hwmon_estimates_power_from_powercap_delta(tmp_path: Path):
+    hwmon = tmp_path / "hwmon0"
+    hwmon.mkdir()
+    (hwmon / "name").write_text("coretemp\n", encoding="utf-8")
+    (hwmon / "temp1_label").write_text("Package id 0\n", encoding="utf-8")
+    (hwmon / "temp1_input").write_text("50000\n", encoding="utf-8")
+    powercap_root = tmp_path / "powercap"
+    rapl = powercap_root / "intel-rapl:0"
+    rapl.mkdir(parents=True)
+    (rapl / "name").write_text("package-0\n", encoding="utf-8")
+    (rapl / "energy_uj").write_text("100000000\n", encoding="utf-8")
+    (rapl / "max_energy_range_uj").write_text("1000000000\n", encoding="utf-8")
+    cache: dict[str, tuple[int, float, int]] = {}
+    times = iter([10.0, 12.0])
+
+    first = collect_cpu_temperature_from_hwmon(
+        tmp_path,
+        powercap_root=powercap_root,
+        monotonic_clock=lambda: next(times),
+        powercap_cache=cache,
+    )
+    (rapl / "energy_uj").write_text("130000000\n", encoding="utf-8")
+    second = collect_cpu_temperature_from_hwmon(
+        tmp_path,
+        powercap_root=powercap_root,
+        monotonic_clock=lambda: next(times),
+        powercap_cache=cache,
+    )
+
+    assert first.power_w is None
+    assert second.power_w == 15.0
+
+
 def test_collect_cpu_temperature_from_hwmon_ignores_non_cpu_hwmon_when_cpu_exists(tmp_path: Path):
     nvme = tmp_path / "hwmon0"
     nvme.mkdir()
@@ -168,6 +218,33 @@ def test_collect_system_telemetry_combines_cpu_gpu_and_timestamp():
     assert telemetry.cpu.package_temperature_c == 50.0
     assert telemetry.gpu.temperature_c == 61
     assert telemetry.captured_at == now
+
+
+def test_windows_cpu_power_prefers_cpu_power_sensor(monkeypatch):
+    import usb9_lcd.monitoring.windows as windows
+
+    monkeypatch.setattr(
+        windows,
+        "_hardware_sensor_data",
+        lambda sensor_types, name_pattern="": [
+            {
+                "Name": "CPU Package",
+                "SensorType": "Power",
+                "Value": 88.4,
+                "HardwareName": "AMD Ryzen 9",
+                "HardwareType": "Cpu",
+            },
+            {
+                "Name": "GPU Package",
+                "SensorType": "Power",
+                "Value": 300.0,
+                "HardwareName": "NVIDIA RTX",
+                "HardwareType": "GpuNvidia",
+            },
+        ],
+    )
+
+    assert windows._cpu_power_from_hardware_monitor() == 88.4
 
 
 def test_collect_windows_fan_channels_pairs_rpm_and_control_sensors():

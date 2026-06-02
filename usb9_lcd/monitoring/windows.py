@@ -344,6 +344,23 @@ def _cpu_temperature_from_hardware_monitor() -> float | None:
     return max(readings) if readings else None
 
 
+def _cpu_power_from_hardware_monitor() -> float | None:
+    readings: list[float] = []
+    for item in _hardware_sensor_data(("Power",), "CPU|Package|Processor|PPT|Ryzen|Intel"):
+        value = _first_number(item)
+        if value is None or value < 0 or value > 2000:
+            continue
+        hardware = str(item.get("HardwareName") or "")
+        hardware_type = str(item.get("HardwareType") or "")
+        sensor_name = str(item.get("Name") or "")
+        text = f"{hardware_type} {hardware} {sensor_name}".casefold()
+        if _is_gpu_hardware(hardware_type, hardware) or "gpu" in text:
+            continue
+        if "cpu" in text or "processor" in text or "package" in text or "ppt" in text:
+            readings.append(value)
+    return max(readings) if readings else None
+
+
 def _cpu_temperature_from_acpi() -> float | None:
     script = """
 $items = Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue |
@@ -363,12 +380,18 @@ $items | ConvertTo-Json -Depth 3
 def collect_windows_cpu_telemetry() -> CpuTelemetry:
     load: float | None = None
     temperature: float | None = None
+    power: float | None = None
     errors: list[str] = []
 
     try:
         load = _cpu_load_percent()
     except Exception as error:  # noqa: BLE001 - telemetry should degrade gracefully.
         errors.append(f"cpu load unavailable: {error}")
+
+    try:
+        power = _cpu_power_from_hardware_monitor()
+    except Exception as error:  # noqa: BLE001 - telemetry should degrade gracefully.
+        errors.append(f"cpu power unavailable: {error}")
 
     for collector in (_cpu_temperature_from_hardware_monitor, _cpu_temperature_from_acpi):
         try:
@@ -379,7 +402,7 @@ def collect_windows_cpu_telemetry() -> CpuTelemetry:
         if temperature is not None:
             break
 
-    available = load is not None or temperature is not None
+    available = load is not None or temperature is not None or power is not None
     if not available and not errors:
         errors.append("no Windows CPU telemetry source available")
     if temperature is None:
@@ -388,6 +411,7 @@ def collect_windows_cpu_telemetry() -> CpuTelemetry:
     return CpuTelemetry(
         package_temperature_c=temperature,
         utilization_percent=round(load, 1) if load is not None else None,
+        power_w=round(power, 1) if power is not None else None,
         available=available,
         error="; ".join(dict.fromkeys(error for error in errors if error)),
     )

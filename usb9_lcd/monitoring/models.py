@@ -21,6 +21,7 @@ class GpuTelemetry:
 class CpuTelemetry:
     package_temperature_c: float | None = None
     utilization_percent: float | None = None
+    power_w: float | None = None
     available: bool = False
     error: str = ""
 

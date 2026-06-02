@@ -28,17 +28,21 @@ def format_cpu_temperature(cpu: CpuTelemetry) -> str:
 
     if cpu.package_temperature_c is not None:
 
-        parts.append(f"CPU {cpu.package_temperature_c:.0f}C")
+        parts.append(f"CPU {cpu.package_temperature_c:.0f}°C")
 
     if cpu.utilization_percent is not None:
 
         parts.append(f"Load {cpu.utilization_percent:.0f}%")
 
+    if cpu.power_w is not None:
+
+        parts.append(f"Power {cpu.power_w:.0f}W")
+
     if parts:
 
         return "\n".join(parts)
 
-    return cpu.error or "CPU telemetry unavailable"
+    return "CPU 不可用"
 
 
 
@@ -48,9 +52,9 @@ def format_gpu_temperature(gpu: GpuTelemetry) -> str:
 
     if gpu.available and gpu.temperature_c is not None:
 
-        return f"GPU {gpu.temperature_c}C"
+        return f"GPU {gpu.temperature_c}°C"
 
-    return gpu.error or "GPU unavailable"
+    return "GPU 不可用"
 
 
 
@@ -456,9 +460,9 @@ class MonitorPage(QWidget):
 
     def show_unavailable(self) -> None:
 
-        self.cpu_temp_value.setText("CPU telemetry unavailable")
+        self.cpu_temp_value.setText("CPU 不可用")
 
-        self.gpu_temp_value.setText("GPU unavailable")
+        self.gpu_temp_value.setText("GPU 不可用")
 
         self.gpu_detail_value.setText("NVIDIA GPU unavailable")
 
