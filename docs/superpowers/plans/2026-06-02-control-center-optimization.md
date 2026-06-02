@@ -8,6 +8,21 @@
 
 **Tech Stack:** Python 3, PySide6, pytest, Linux hwmon/powercap/hidraw, Windows LibreHardwareMonitor/OpenHardwareMonitor, OpenRGB SDK wrapper.
 
+## Implementation Status
+
+Completed on 2026-06-02:
+
+- [x] `a5823e5 Add unified dashboard diagnostics foundation`: added `usb9_lcd/gui/system_status.py`, unified permission/component/recent-event reporting, homepage permission card, diagnostics-window system status, and recent log tail access.
+- [x] `2dbfdd2 Add lighting target partition preview`: added OpenRGB target partition summaries and an apply-preview panel showing scope, target count, effect, color, brightness, speed, LED count, and frame behavior.
+- [x] `8f9ec16 Improve Windows diagnostics for fan backends`: added Windows diagnostics for administrator status, PowerShell availability, `LibreHardwareMonitorLib.dll`, and ordinary fan-control backend availability.
+- [x] `e8b76ef Show configuration save feedback`: added visible save feedback in the main settings/monitor flows and lighting-page save actions.
+
+Known follow-up areas:
+
+- [ ] Full `tests/test_gui_import.py` still has unrelated pre-existing LIAN LI/fan async failures in this working tree; this plan's touched tests pass.
+- [ ] Fan and LIAN LI pages already have several page-local saved/status messages, but they can be standardized further later if a dedicated UI-wide toast/status system is introduced.
+- [ ] Deeper Linux/Windows backend split can continue after the current GUI foundation stabilizes.
+
 ---
 
 ## File Structure
@@ -266,14 +281,14 @@ git commit -m "Standardize saved setting feedback"
 
 ## Completion Audit Checklist
 
-- Item 1 is complete when GUI has a unified permission summary and can trigger/record relevant permission grants.
-- Item 2 is complete when homepage shows component statuses for LCD, CPU, GPU, fan, OpenRGB lighting, LIAN LI wireless, and permissions.
-- Item 3 is complete when diagnostics report combines platform, permissions, Windows/OpenRGB, and recent events.
-- Item 4 is complete when GUI exposes recent log/operation events beyond transient statusBar text.
-- Item 7 is complete when lighting page shows a preview/summary before applying effects.
-- Item 9 is complete when OpenRGB target partitions/zones are visible and selectable/apply-able.
-- Item 13 is complete when new logic is factored into platform/lighting/status modules rather than only page methods.
-- Item 14 is complete when Windows diagnostics report admin state and LibreHardwareMonitor/OpenHardwareMonitor availability.
-- Item 16 is complete when homepage is an actionable dashboard, not only raw labels.
-- Item 17 is complete when key operations report target counts, success counts, and errors in GUI and recent events.
-- Item 19 is complete when setting changes show explicit saved feedback.
+- [x] Item 1 is complete when GUI has a unified permission summary and can trigger/record relevant permission grants.
+- [x] Item 2 is complete when homepage shows component statuses for LCD, CPU, GPU, fan, OpenRGB lighting, LIAN LI wireless, and permissions.
+- [x] Item 3 is complete when diagnostics report combines platform, permissions, Windows/OpenRGB, and recent events.
+- [x] Item 4 is complete when GUI exposes recent log/operation events beyond transient statusBar text.
+- [x] Item 7 is complete when lighting page shows a preview/summary before applying effects.
+- [x] Item 9 is complete when OpenRGB target partitions/zones are visible and selectable/apply-able.
+- [x] Item 13 is complete when new logic is factored into platform/lighting/status modules rather than only page methods.
+- [x] Item 14 is complete when Windows diagnostics report admin state and LibreHardwareMonitor/OpenHardwareMonitor availability.
+- [x] Item 16 is complete when homepage is an actionable dashboard, not only raw labels.
+- [x] Item 17 is complete when key operations report target counts, success counts, and errors in GUI and recent events.
+- [x] Item 19 is complete when setting changes show explicit saved feedback.
