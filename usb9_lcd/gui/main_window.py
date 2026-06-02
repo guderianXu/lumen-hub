@@ -94,6 +94,7 @@ from usb9_lcd.gui.theme import gui_stylesheet
 from usb9_lcd.keepalive import DEFAULT_PID_FILE, stop_existing_keepalive
 from usb9_lcd.image import FitMode, FrameConfig, Rotation, image_to_jpeg_bytes
 from usb9_lcd.monitoring.models import SystemTelemetry
+from usb9_lcd.monitoring.cpu import cpu_power_permission_paths, cpu_power_permission_shell
 from usb9_lcd.monitoring.render import render_monitoring_frame, render_monitoring_image
 from usb9_lcd.monitoring.service import collect_system_telemetry
 from usb9_lcd.platforms import current_platform
@@ -251,6 +252,7 @@ class MainWindow(QMainWindow):
         self._telemetry_thread: threading.Thread | None = None
         self._telemetry_result: SystemTelemetry | None = None
         self._telemetry_error: Exception | None = None
+        self._cpu_power_permission_grant_attempted = False
         self._last_uploaded_frame_path = self.platform_adapter.last_frame_path()
         self._last_uploaded_device: DisplayDevice | None = None
         self._sleep_mode_active = False
@@ -394,6 +396,8 @@ class MainWindow(QMainWindow):
         self.monitor_upload_timer.timeout.connect(self._poll_monitor_worker)
         if auto_refresh:
             self.telemetry_timer.start()
+            if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+                QTimer.singleShot(0, lambda: self.request_cpu_power_permission_grant(interactive=True))
             QTimer.singleShot(0, self.request_telemetry_refresh)
             QTimer.singleShot(0, self.refresh_devices)
             QTimer.singleShot(0, self.refresh_assets)
@@ -676,6 +680,35 @@ class MainWindow(QMainWindow):
         self.monitor_page.update_telemetry(telemetry)
         self.home_page.update_telemetry(telemetry)
         self.update_monitor_preview()
+
+    def request_cpu_power_permission_grant(self, *, interactive: bool = True) -> None:
+        if self._cpu_power_permission_grant_attempted:
+            return
+        self._cpu_power_permission_grant_attempted = True
+        if not sys.platform.startswith("linux"):
+            return
+        if os.environ.get("LUMEN_HUB_SKIP_CPU_POWER_PERMISSION_GRANT") == "1":
+            return
+        paths = cpu_power_permission_paths()
+        if not paths:
+            return
+        run_privileged_shell = getattr(self.fan_page, "_run_privileged_shell_compat", None)
+        if not callable(run_privileged_shell):
+            self.home_page.add_event("CPU 功耗权限授权不可用")
+            return
+        ok, output = run_privileged_shell(
+            cpu_power_permission_shell(paths),
+            timeout=30,
+            interactive=interactive,
+            action_label="授权 CPU 功耗权限",
+        )
+        if ok:
+            self.statusBar().showMessage(f"CPU 功耗权限已授权：{len(paths)} 个文件")
+            self.home_page.add_event("CPU 功耗权限已授权")
+            return
+        message = output or "CPU 功耗权限授权失败"
+        self.statusBar().showMessage(message)
+        self.home_page.add_event(message)
 
     def request_telemetry_refresh(self) -> None:
         thread = self._telemetry_thread

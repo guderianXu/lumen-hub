@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shlex
 import time
 from pathlib import Path
 
@@ -85,6 +87,39 @@ def _powercap_package_entries(powercap_root: Path) -> list[Path]:
         if "package" in name or (is_top_level_package and name.startswith("intel-rapl")):
             entries.append(entry)
     return entries
+
+
+def cpu_power_permission_paths(
+    powercap_root: Path = Path("/sys/class/powercap"),
+    *,
+    access_checker=os.access,
+) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for entry in _powercap_package_entries(powercap_root):
+        for path in (entry / "energy_uj", entry / "max_energy_range_uj"):
+            if not path.exists() or access_checker(path, os.R_OK):
+                continue
+            key = str(path)
+            if key in seen:
+                continue
+            paths.append(path)
+            seen.add(key)
+    return paths
+
+
+def cpu_power_permission_shell(paths: list[Path]) -> str:
+    uid = os.getuid() if hasattr(os, "getuid") else 0
+    gid = os.getgid() if hasattr(os, "getgid") else 0
+    quoted_paths = " ".join(shlex.quote(str(path)) for path in paths)
+    return "\n".join(
+        [
+            "set -e",
+            f"chown {uid}:{gid} -- {quoted_paths}",
+            f"chmod u+r,g+r -- {quoted_paths}",
+            f"echo 'cpu-power-permissions=ok files={len(paths)}'",
+        ]
+    )
 
 
 def _cpu_power_from_powercap(

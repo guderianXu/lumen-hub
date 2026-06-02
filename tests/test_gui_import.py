@@ -5581,6 +5581,54 @@ def test_main_window_configures_telemetry_timer_for_auto_refresh():
     app.quit()
 
 
+def test_main_window_cpu_power_permission_grant_uses_privileged_runner(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.main_window as main_window
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    power_path = Path("/sys/class/powercap/intel-rapl:0/energy_uj")
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(main_window.sys, "platform", "linux")
+    monkeypatch.setattr(main_window, "cpu_power_permission_paths", lambda: [power_path])
+    monkeypatch.setattr(main_window, "cpu_power_permission_shell", lambda paths: f"grant {paths[0]}")
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+
+    def fake_runner(commands, *, timeout, interactive, action_label):  # noqa: ANN001
+        calls.append(
+            {
+                "commands": commands,
+                "timeout": timeout,
+                "interactive": interactive,
+                "action_label": action_label,
+            }
+        )
+        return True, "ok"
+
+    window.fan_page._run_privileged_shell_compat = fake_runner
+
+    window.request_cpu_power_permission_grant(interactive=True)
+    window.request_cpu_power_permission_grant(interactive=True)
+
+    assert calls == [
+        {
+            "commands": f"grant {power_path}",
+            "timeout": 30,
+            "interactive": True,
+            "action_label": "授权 CPU 功耗权限",
+        }
+    ]
+    assert "CPU 功耗权限已授权" in window.statusBar().currentMessage()
+
+    window.close()
+    app.quit()
+
+
 def test_main_window_auto_refresh_does_not_collect_telemetry_during_construction():
     from PySide6.QtWidgets import QApplication
 

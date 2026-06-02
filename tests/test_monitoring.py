@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from usb9_lcd.monitoring.cpu import collect_cpu_temperature_from_hwmon
+from usb9_lcd.monitoring.cpu import (
+    collect_cpu_temperature_from_hwmon,
+    cpu_power_permission_paths,
+    cpu_power_permission_shell,
+)
 from usb9_lcd.monitoring.models import CpuTelemetry, GpuTelemetry
 from usb9_lcd.monitoring.nvidia import collect_nvidia_gpu, parse_nvidia_smi_csv
 from usb9_lcd.monitoring.service import collect_system_telemetry
@@ -147,6 +151,26 @@ def test_collect_cpu_temperature_from_hwmon_estimates_power_from_powercap_delta(
 
     assert first.power_w is None
     assert second.power_w == 15.0
+
+
+def test_cpu_power_permission_paths_and_shell_target_unreadable_powercap_files(tmp_path: Path):
+    powercap_root = tmp_path / "powercap"
+    rapl = powercap_root / "intel-rapl:0"
+    rapl.mkdir(parents=True)
+    energy = rapl / "energy_uj"
+    max_range = rapl / "max_energy_range_uj"
+    (rapl / "name").write_text("package-0\n", encoding="utf-8")
+    energy.write_text("100000000\n", encoding="utf-8")
+    max_range.write_text("1000000000\n", encoding="utf-8")
+
+    paths = cpu_power_permission_paths(powercap_root, access_checker=lambda path, _mode: path != energy)
+    shell = cpu_power_permission_shell(paths)
+
+    assert paths == [energy]
+    assert "chown" in shell
+    assert "chmod u+r,g+r" in shell
+    assert str(energy) in shell
+    assert "cpu-power-permissions=ok files=1" in shell
 
 
 def test_collect_cpu_temperature_from_hwmon_ignores_non_cpu_hwmon_when_cpu_exists(tmp_path: Path):
