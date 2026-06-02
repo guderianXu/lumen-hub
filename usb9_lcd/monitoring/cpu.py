@@ -13,6 +13,7 @@ PRIMARY_CPU_HWMON_NAMES = {"coretemp", "k10temp", "zenpower", "cpu_thermal", "fa
 FALLBACK_CPU_HWMON_NAMES = {"acpitz"}
 NON_CPU_HWMON_NAME_MARKERS = ("nvme", "amdgpu", "nvidia", "asus", "iwlwifi")
 _POWERCAP_PREVIOUS: dict[str, tuple[int, float, int]] = {}
+_PROC_STAT_PREVIOUS: dict[str, tuple[int, int]] = {}
 
 
 def _read_text(path: Path) -> str:
@@ -44,6 +45,55 @@ def _read_int(path: Path) -> int | None:
         return int(_read_text(path))
     except ValueError:
         return None
+
+
+def _proc_stat_cpu_totals(proc_stat_path: Path) -> tuple[int, int] | None:
+    text = _read_text(proc_stat_path)
+    first_line = text.splitlines()[0] if text else ""
+    if not first_line.startswith("cpu "):
+        return None
+    try:
+        values = [int(value) for value in first_line.split()[1:]]
+    except ValueError:
+        return None
+    if len(values) < 4:
+        return None
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    return sum(values), idle
+
+
+def _cpu_utilization_from_proc_stat(
+    proc_stat_path: Path = Path("/proc/stat"),
+    *,
+    cache: dict[str, tuple[int, int]] | None = None,
+    initial_sample_seconds: float = 0.05,
+    sleep_func=time.sleep,
+) -> float | None:
+    target_cache = _PROC_STAT_PREVIOUS if cache is None else cache
+    key = str(proc_stat_path)
+    current = _proc_stat_cpu_totals(proc_stat_path)
+    if current is None:
+        return None
+
+    previous = target_cache.get(key)
+    if previous is None and initial_sample_seconds > 0:
+        target_cache[key] = current
+        sleep_func(initial_sample_seconds)
+        current = _proc_stat_cpu_totals(proc_stat_path)
+        if current is None:
+            return None
+        previous = target_cache.get(key)
+
+    target_cache[key] = current
+    if previous is None:
+        return None
+
+    total_delta = current[0] - previous[0]
+    idle_delta = current[1] - previous[1]
+    if total_delta <= 0 or idle_delta < 0:
+        return None
+    busy_delta = max(0, total_delta - idle_delta)
+    return round(max(0.0, min(100.0, busy_delta * 100.0 / total_delta)), 1)
 
 
 def _label_priority(label: str) -> int:
@@ -163,8 +213,12 @@ def collect_cpu_temperature_from_hwmon(
     hwmon_root: Path = Path("/sys/class/hwmon"),
     *,
     powercap_root: Path = Path("/sys/class/powercap"),
+    proc_stat_path: Path = Path("/proc/stat"),
     monotonic_clock=time.monotonic,
     powercap_cache: dict[str, tuple[int, float, int]] | None = None,
+    proc_stat_cache: dict[str, tuple[int, int]] | None = None,
+    initial_utilization_sample_seconds: float = 0.05,
+    sleep_func=time.sleep,
 ) -> CpuTelemetry:
     readings: list[tuple[int, int, float]] = []
     power_readings: list[tuple[int, int, float]] = []
@@ -207,14 +261,24 @@ def collect_cpu_temperature_from_hwmon(
             cache=powercap_cache,
         )
 
-    available = temperature is not None or power is not None
+    utilization = _cpu_utilization_from_proc_stat(
+        proc_stat_path,
+        cache=proc_stat_cache,
+        initial_sample_seconds=initial_utilization_sample_seconds,
+        sleep_func=sleep_func,
+    )
+
+    available = temperature is not None or power is not None or utilization is not None
     errors: list[str] = []
     if temperature is None:
         errors.append("no identifiable CPU temperature sensor found in hwmon")
     if power is None:
         errors.append("CPU power sensor unavailable")
+    if utilization is None:
+        errors.append("CPU utilization unavailable")
     return CpuTelemetry(
         package_temperature_c=temperature,
+        utilization_percent=utilization,
         power_w=round(power, 1) if power is not None else None,
         available=available,
         error="; ".join(errors) if not available else "",

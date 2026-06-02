@@ -120,6 +120,32 @@ def test_collect_cpu_temperature_from_hwmon_reads_cpu_power_input(tmp_path: Path
     assert telemetry.error == ""
 
 
+def test_collect_cpu_temperature_from_hwmon_reads_linux_cpu_utilization(tmp_path: Path):
+    hwmon = tmp_path / "hwmon0"
+    hwmon.mkdir()
+    (hwmon / "name").write_text("coretemp\n", encoding="utf-8")
+    (hwmon / "temp1_label").write_text("Package id 0\n", encoding="utf-8")
+    (hwmon / "temp1_input").write_text("54875\n", encoding="utf-8")
+    proc_stat = tmp_path / "proc_stat"
+    proc_stat.write_text("cpu 100 0 100 800 0 0 0 0 0 0\n", encoding="utf-8")
+    cache: dict[str, tuple[int, int]] = {}
+
+    def write_second_sample(_seconds: float) -> None:
+        proc_stat.write_text("cpu 150 0 150 900 0 0 0 0 0 0\n", encoding="utf-8")
+
+    telemetry = collect_cpu_temperature_from_hwmon(
+        tmp_path,
+        powercap_root=tmp_path / "powercap",
+        proc_stat_path=proc_stat,
+        proc_stat_cache=cache,
+        sleep_func=write_second_sample,
+    )
+
+    assert telemetry.package_temperature_c == 54.875
+    assert telemetry.utilization_percent == 50.0
+    assert telemetry.error == ""
+
+
 def test_collect_cpu_temperature_from_hwmon_estimates_power_from_powercap_delta(tmp_path: Path):
     hwmon = tmp_path / "hwmon0"
     hwmon.mkdir()
@@ -198,7 +224,11 @@ def test_collect_cpu_temperature_from_hwmon_returns_unavailable_for_non_cpu_hwmo
     (hwmon / "name").write_text("nvme\n", encoding="utf-8")
     (hwmon / "temp1_input").write_text("70000\n", encoding="utf-8")
 
-    telemetry = collect_cpu_temperature_from_hwmon(tmp_path)
+    telemetry = collect_cpu_temperature_from_hwmon(
+        tmp_path,
+        powercap_root=tmp_path / "missing_powercap",
+        proc_stat_path=tmp_path / "missing_proc_stat",
+    )
 
     assert telemetry.available is False
     assert telemetry.package_temperature_c is None
@@ -223,7 +253,11 @@ def test_collect_cpu_temperature_from_hwmon_prefers_cpu_labels(tmp_path: Path, l
 
 
 def test_collect_cpu_temperature_from_hwmon_returns_unavailable_when_missing(tmp_path: Path):
-    telemetry = collect_cpu_temperature_from_hwmon(tmp_path)
+    telemetry = collect_cpu_temperature_from_hwmon(
+        tmp_path,
+        powercap_root=tmp_path / "missing_powercap",
+        proc_stat_path=tmp_path / "missing_proc_stat",
+    )
 
     assert telemetry.available is False
     assert telemetry.package_temperature_c is None
