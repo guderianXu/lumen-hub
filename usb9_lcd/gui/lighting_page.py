@@ -60,6 +60,39 @@ def save_settings(settings: GuiSettings) -> None:
     _save_settings_impl(settings)
 
 
+def render_lighting_target_partition_summary(targets: list[LightingTarget]) -> str:
+    if not targets:
+        return "分区统计：未发现 OpenRGB 目标"
+    device_indexes = sorted({target.device_index for target in targets})
+    whole_count = sum(1 for target in targets if target.zone_index is None)
+    zone_count = sum(1 for target in targets if target.zone_index is not None)
+    lines = [
+        "分区统计：",
+        f"设备 {len(device_indexes)} 个 / 全设备目标 {whole_count} 个 / 区域 {zone_count} 个",
+    ]
+    for device_index in device_indexes:
+        device_targets = [target for target in targets if target.device_index == device_index]
+        whole_targets = [target for target in device_targets if target.zone_index is None]
+        zone_targets = [target for target in device_targets if target.zone_index is not None]
+        label = _target_device_label(device_targets[0])
+        lines.append(f"- {label}: 全设备 {len(whole_targets)} / 分区 {len(zone_targets)}")
+        for zone in sorted(zone_targets, key=lambda target: target.zone_index or 0)[:6]:
+            lines.append(f"  {zone.zone_index}: {_target_zone_label(zone)}")
+        if len(zone_targets) > 6:
+            lines.append(f"  ... 还有 {len(zone_targets) - 6} 个分区")
+    return "\n".join(lines)
+
+
+def _target_device_label(target: LightingTarget) -> str:
+    return target.name.split(" / ", 1)[0] or f"device:{target.device_index}"
+
+
+def _target_zone_label(target: LightingTarget) -> str:
+    if " / " in target.name:
+        return target.name.split(" / ", 1)[1]
+    return target.name
+
+
 class OpenRgbTestDialog(QDialog):
     def __init__(self, page: "LightingPage") -> None:
         super().__init__(page)
@@ -257,6 +290,7 @@ class LightingPage(QWidget):
         layout.addWidget(self.lighting_workspace_tabs)
 
         self._restore_lighting_settings(self.settings.lighting)
+        self._update_lighting_apply_preview()
 
         self.status_changed.emit(self.home_status_text())
 
@@ -386,7 +420,7 @@ class LightingPage(QWidget):
 
         preset_panel.setMaximumHeight(118)
 
-        action_panel.setMaximumHeight(96)
+        action_panel.setMaximumHeight(170)
 
         color_panel.setMaximumHeight(360)
 
@@ -453,6 +487,8 @@ class LightingPage(QWidget):
             self.effect_group.addButton(button, index)
 
             effect_grid.addWidget(button, index // 6, index % 6)
+
+        self.effect_group.buttonClicked.connect(lambda _button: self._update_lighting_apply_preview())
 
         layout.addLayout(effect_grid)
 
@@ -769,10 +805,19 @@ class LightingPage(QWidget):
         self.apply_all_lighting_checkbox.setChecked(True)
 
         self.apply_all_lighting_checkbox.setToolTip("开启后会把当前灯效写入每个 OpenRGB 设备；关闭后只写入上方选中的目标。")
+        self.apply_all_lighting_checkbox.stateChanged.connect(self._update_lighting_apply_preview)
+
+        self.lighting_apply_preview_text = QTextEdit()
+
+        self.lighting_apply_preview_text.setReadOnly(True)
+
+        self.lighting_apply_preview_text.setFixedHeight(82)
 
         layout.addWidget(title)
 
         layout.addWidget(self.apply_all_lighting_checkbox)
+
+        layout.addWidget(self.lighting_apply_preview_text)
 
         layout.addWidget(self.apply_lighting_button)
 
@@ -821,6 +866,7 @@ class LightingPage(QWidget):
             ]
 
         )
+        self.sync_mode_combo.currentIndexChanged.connect(self._update_lighting_apply_preview)
 
         layout.addWidget(self.sync_mode_combo)
 
@@ -845,6 +891,7 @@ class LightingPage(QWidget):
         self.argb_zone_size.setValue(self.settings.lighting.argb_zone_size)
 
         self.argb_zone_size.setSuffix(" 灯")
+        self.argb_zone_size.valueChanged.connect(self._update_lighting_apply_preview)
 
         settings_grid.addWidget(QLabel("高温阈值"), 0, 0)
 
@@ -859,6 +906,7 @@ class LightingPage(QWidget):
         self.save_mode_checkbox = QCheckBox("保存到 OpenRGB 设备配置")
 
         self.save_mode_checkbox.setChecked(self.settings.lighting.save_mode)
+        self.save_mode_checkbox.stateChanged.connect(self._update_lighting_apply_preview)
 
         layout.addWidget(self.save_mode_checkbox)
 
@@ -2278,6 +2326,109 @@ class LightingPage(QWidget):
         )
 
 
+    def _update_lighting_apply_preview(self, *args) -> None:  # noqa: ANN002
+
+        if not hasattr(self, "lighting_apply_preview_text"):
+
+            return
+
+        self.lighting_apply_preview_text.setPlainText(self._lighting_apply_preview_text())
+
+
+    def _lighting_apply_preview_text(self) -> str:
+
+        target_id = str(self.lighting_target_combo.currentData() or "") if hasattr(self, "lighting_target_combo") else ""
+
+        settings = self._current_lighting_settings(target_id)
+
+        apply_all = self._apply_all_lighting_enabled()
+
+        try:
+
+            target_ids = self._resolve_lighting_apply_target_ids(settings, self.targets, apply_all) if self.targets else []
+
+        except ValueError:
+
+            target_ids = []
+
+        target_id_set = set(target_ids)
+
+        target_names = [
+
+            self._target_display_name(target)
+
+            for target in self.targets
+
+            if target.id in target_id_set
+
+        ]
+
+        if not self.targets:
+
+            scope = "连接后自动扫描"
+
+            target_line = "目标：连接后自动选择"
+
+        elif apply_all:
+
+            scope = "同步到所有 OpenRGB 设备"
+
+            target_line = f"目标：{len(target_ids)} 个"
+
+        else:
+
+            scope = "只写入当前目标"
+
+            target_line = f"目标：{target_names[0] if target_names else target_id or '未选择'}"
+
+        if target_names and apply_all:
+
+            preview_names = "，".join(target_names[:3])
+
+            if len(target_names) > 3:
+
+                preview_names += f" 等 {len(target_names)} 个"
+
+            target_line += f"（{preview_names}）"
+
+        effect = settings.effect
+
+        lines = [
+
+            "应用预览：",
+
+            f"范围：{scope}",
+
+            target_line,
+
+            f"灯效：{self._effect_label(effect)} / {self._lighting_effect_preview_note(effect, settings.brightness_percent)}",
+
+            f"颜色：{settings.color} / 亮度 {settings.brightness_percent}% / 速度 {settings.speed_percent}%",
+
+            f"灯珠数量：{settings.zone_size or '--'} / 保存到设备：{'是' if settings.save else '否'}",
+
+        ]
+
+        return "\n".join(lines)
+
+
+    def _lighting_effect_preview_note(self, effect: str, brightness_percent: int) -> str:
+
+        if effect == "off" or brightness_percent <= 0:
+
+            return "关闭/黑色写入"
+
+        if effect == "static":
+
+            return "静态单色稳定写入"
+
+        if effect in {"star", "meteor", "comet", "scan", "visor", "matrix", "gradient", "chase"}:
+
+            return "软件帧循环"
+
+        return "OpenRGB 模式优先"
+
+
 
     @staticmethod
 
@@ -2390,6 +2541,7 @@ class LightingPage(QWidget):
         )
 
         self.selected_color_preview.setToolTip(color)
+        self._update_lighting_apply_preview()
 
 
 
@@ -2402,6 +2554,7 @@ class LightingPage(QWidget):
         if hasattr(self, "speed_value_label"):
 
             self.speed_value_label.setText(f"{self.speed_slider.value() * 10}%")
+        self._update_lighting_apply_preview()
 
 
 
@@ -2506,6 +2659,7 @@ class LightingPage(QWidget):
             if self.effect_map.get(button.text()) == effect:
 
                 button.setChecked(True)
+                self._update_lighting_apply_preview()
 
                 return
 
@@ -2731,9 +2885,10 @@ class LightingPage(QWidget):
 
             self.lighting_target_combo.addItem("OpenRGB 未发现灯光设备", "")
 
-            self.openrgb_modes_text.setPlainText("")
+            self.openrgb_modes_text.setPlainText(render_lighting_target_partition_summary([]))
 
             self._update_scene_summary()
+            self._update_lighting_apply_preview()
 
             return
 
@@ -2761,6 +2916,7 @@ class LightingPage(QWidget):
         self._target_changed(self.lighting_target_combo.currentIndex())
 
         self._update_scene_summary()
+        self._update_lighting_apply_preview()
 
 
     def _remember_openrgb_device_profiles(self, targets: list[LightingTarget]) -> bool:
@@ -2795,9 +2951,10 @@ class LightingPage(QWidget):
 
         if target is None:
 
-            self.openrgb_modes_text.setPlainText("")
+            self.openrgb_modes_text.setPlainText(render_lighting_target_partition_summary(self.targets))
 
             self.target_alias_input.setText("")
+            self._update_lighting_apply_preview()
 
             return
 
@@ -2819,7 +2976,18 @@ class LightingPage(QWidget):
 
             ]
 
-        self.openrgb_modes_text.setPlainText("可用模式：\n" + "\n".join(target.modes + tuple(profile_lines)))
+        lines = [
+            "当前目标：",
+            f"{self._target_display_name(target)} ({target.id})",
+            "",
+            "可用模式：",
+            *target.modes,
+            *profile_lines,
+            "",
+            render_lighting_target_partition_summary(self.targets),
+        ]
+        self.openrgb_modes_text.setPlainText("\n".join(lines))
+        self._update_lighting_apply_preview()
 
 
 

@@ -4374,6 +4374,67 @@ def test_lighting_page_connects_to_openrgb_and_applies_settings():
     app.quit()
 
 
+def test_lighting_page_reports_target_partitions_after_connect():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LightingPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    app = QApplication.instance() or QApplication([])
+    controller = MultiDeviceLightingController()
+    page = LightingPage(controller=controller, settings=GuiSettings())
+
+    page.connect_openrgb()
+
+    assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 4)
+    report = page.openrgb_modes_text.toPlainText()
+    preview = page.lighting_apply_preview_text.toPlainText()
+    assert "分区统计" in report
+    assert "设备 2 个" in report
+    assert "全设备目标 2 个" in report
+    assert "区域 2 个" in report
+    assert "G.Skill Memory" in report
+    assert "应用预览" in preview
+    assert "目标：2 个" in preview
+
+    page.close()
+    app.quit()
+
+
+def test_lighting_page_updates_apply_preview_from_controls():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LightingPage
+
+    app = QApplication.instance() or QApplication([])
+    controller = FakeLightingController()
+    page = LightingPage(controller=controller)
+
+    page.connect_openrgb()
+    assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
+    page.lighting_target_combo.setCurrentIndex(1)
+    page.apply_all_lighting_checkbox.setChecked(False)
+    page.set_selected_color("#00e5ff")
+    page.brightness_slider.setValue(60)
+    page.speed_slider.setValue(7)
+    for button in page.effect_group.buttons():
+        if button.text() == "静态":
+            button.click()
+            break
+
+    preview = page.lighting_apply_preview_text.toPlainText()
+
+    assert "只写入当前目标" in preview
+    assert "ARGB Header" in preview
+    assert "静态" in preview
+    assert "#00e5ff" in preview
+    assert "亮度 60%" in preview
+    assert "速度 70%" in preview
+
+    page.close()
+    app.quit()
+
+
 def test_lighting_defaults_to_off():
     from PySide6.QtWidgets import QApplication
 
