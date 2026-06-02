@@ -331,6 +331,36 @@ def test_fan_host_curve_change_persists_to_settings_file(tmp_path):
     app.quit()
 
 
+def test_fan_host_curve_save_button_persists_current_points(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+    from usb9_lcd.gui.settings import GuiSettings, load_settings, save_settings
+
+    path = tmp_path / "settings.json"
+    settings = GuiSettings()
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=lambda value: save_settings(value, path),
+    )
+
+    page.curve_editor.set_points([[45, 35], [82, 91]])
+    page.curve_save_button.click()
+    loaded = load_settings(path)
+
+    assert page.curve_save_button.text() == "保存曲线"
+    assert loaded.host_fan.curve_preset == "custom"
+    assert loaded.host_fan.curve_points == [[45, 35], [82, 91]]
+    assert settings.host_fan.curve_points == [[45, 35], [82, 91]]
+    assert "45°C→35%" in page.curve_summary.text()
+    assert "风扇曲线已保存" in page.status_label.text()
+
+    page.close()
+    app.quit()
+
+
 def test_fan_curve_editor_commits_final_drag_position_on_release():
     from PySide6.QtCore import QEvent, QPointF, Qt
     from PySide6.QtGui import QMouseEvent

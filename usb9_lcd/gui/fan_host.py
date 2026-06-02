@@ -642,12 +642,15 @@ class FanControlHostPage(QWidget):
         self.curve_apply_button = QPushButton("按曲线写入一次")
         self.curve_apply_button.setEnabled(False)
         self.curve_apply_button.clicked.connect(self._apply_curve_now)
+        self.curve_save_button = QPushButton("保存曲线")
+        self.curve_save_button.clicked.connect(self._save_curve_now)
         curve_options.addWidget(QLabel("预设"))
         curve_options.addWidget(self.curve_preset_combo)
         curve_options.addWidget(self.curve_enable)
         curve_options.addWidget(QLabel("刷新间隔"))
         curve_options.addWidget(self.curve_interval)
         curve_options.addStretch(1)
+        curve_options.addWidget(self.curve_save_button)
         curve_options.addWidget(self.curve_apply_button)
         curve_layout.addWidget(curve_title)
         curve_layout.addWidget(curve_hint)
@@ -1066,6 +1069,19 @@ class FanControlHostPage(QWidget):
                 self._set_status("风扇曲线已启用，等待可写 PWM 通道")
         else:
             self._set_status("风扇曲线控制已暂停")
+
+    def _save_curve_now(self) -> None:
+        curve_points = sanitize_fan_curve_points(self.curve_editor.points())
+        preset = normalize_fan_curve_preset(self.curve_preset_combo.currentData())
+        if preset == FAN_CURVE_CUSTOM_PRESET or curve_points != fan_curve_preset_points(preset):
+            preset = FAN_CURVE_CUSTOM_PRESET
+        self.settings.host_fan.curve_points = curve_points
+        self.settings.host_fan.curve_preset = preset
+        self._set_curve_preset_combo(preset)
+        self.curve_editor.set_points(curve_points)
+        self._update_curve_summary()
+        if self._save_host_fan_settings():
+            self._set_status("风扇曲线已保存")
 
     def _save_host_fan_settings(self) -> bool:
         try:
