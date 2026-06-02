@@ -42,7 +42,7 @@ from usb9_lcd.animation import AnimatedFrame, AnimationRenderSettings, iter_anim
 from usb9_lcd.assets import AssetLibrary
 from usb9_lcd.drivers import AsusLcIiiDriver, DisplayDriver
 from usb9_lcd.drivers.base import DisplayDevice, PixelFormat
-from usb9_lcd.gui.debug import log_event, log_exception
+from usb9_lcd.gui.debug import log_event, log_exception, recent_log_lines
 try:
     from usb9_lcd.gui.fan_host import FanControlHostPage
 except Exception as fan_host_import_error:  # noqa: BLE001 - keep the GUI usable on Windows if Linux fan page is unavailable.
@@ -90,6 +90,12 @@ from usb9_lcd.gui.lighting_page import LightingPage
 from usb9_lcd.gui.platform_diagnostics import PlatformDiagnosticsDialog
 from usb9_lcd.gui.preview import fit_preview_geometry
 from usb9_lcd.gui.settings import DEFAULT_SETTINGS_PATH, GuiSettings, load_settings, save_settings
+from usb9_lcd.gui.system_status import (
+    StatusItem,
+    SystemStatusSnapshot,
+    render_system_status_report,
+    summarize_permission_status,
+)
 from usb9_lcd.gui.theme import gui_stylesheet
 from usb9_lcd.keepalive import DEFAULT_PID_FILE, stop_existing_keepalive
 from usb9_lcd.image import FitMode, FrameConfig, Rotation, image_to_jpeg_bytes
@@ -108,6 +114,42 @@ def _mix_color(start: tuple[int, int, int], end: tuple[int, int, int], ratio: fl
 
 def _hex_color(color: tuple[int, int, int]) -> str:
     return "#{:02x}{:02x}{:02x}".format(*color)
+
+
+def _compact_log_line(line: str, *, max_length: int = 140) -> str:
+    compact = " ".join(line.split())
+    if len(compact) <= max_length:
+        return compact
+    return compact[-max_length:]
+
+
+def _state_from_summary(text: str) -> str:
+    lowered = text.lower()
+    if any(marker in text for marker in ("失败", "错误", "不可用", "不可写", "未发现")):
+        return "warn"
+    if any(marker in text for marker in ("可控", "已连接", "已就绪", "成功", "可写")):
+        return "ok"
+    if "unavailable" in lowered or "failed" in lowered:
+        return "warn"
+    return "info"
+
+
+def _cpu_status_detail(telemetry: SystemTelemetry) -> str:
+    if not telemetry.cpu.available:
+        return telemetry.cpu.error or "不可用"
+    temperature = "--" if telemetry.cpu.package_temperature_c is None else f"{telemetry.cpu.package_temperature_c:.0f}°C"
+    load = "--" if telemetry.cpu.utilization_percent is None else f"{telemetry.cpu.utilization_percent:.0f}%"
+    power = "--" if telemetry.cpu.power_w is None else f"{telemetry.cpu.power_w:.0f}W"
+    return f"温度 {temperature} / 负载 {load} / 功耗 {power}"
+
+
+def _gpu_status_detail(telemetry: SystemTelemetry) -> str:
+    if not telemetry.gpu.available:
+        return telemetry.gpu.error or "不可用"
+    temperature = "--" if telemetry.gpu.temperature_c is None else f"{telemetry.gpu.temperature_c:.0f}°C"
+    load = "--" if telemetry.gpu.utilization_percent is None else f"{telemetry.gpu.utilization_percent:.0f}%"
+    power = "--" if telemetry.gpu.power_w is None else f"{telemetry.gpu.power_w:.0f}W"
+    return f"{telemetry.gpu.name or 'GPU'} / 温度 {temperature} / 负载 {load} / 功耗 {power}"
 
 
 class _OneShotUploadSession(AbstractContextManager):
@@ -349,12 +391,13 @@ class MainWindow(QMainWindow):
             self.lighting_page.connect_openrgb,
             self.sleep_all_off,
         )
-        self.fan_page.status_changed.connect(self.home_page.update_fan_status)
-        self.lighting_page.status_changed.connect(self.home_page.update_lighting_status)
-        self.lianli_page.status_changed.connect(self.home_page.update_lianli_status)
+        self.fan_page.status_changed.connect(self._fan_status_changed)
+        self.lighting_page.status_changed.connect(self._lighting_status_changed)
+        self.lianli_page.status_changed.connect(self._lianli_status_changed)
         self.home_page.update_fan_status(self.fan_page.home_status_text())
         self.home_page.update_lighting_status(self.lighting_page.home_status_text())
         self.home_page.update_lianli_status(self.lianli_page.home_status_text())
+        self._refresh_home_permission_status()
         self.pages.addWidget(_scrollable_page(self.home_page))
         self.pages.addWidget(_scrollable_page(self.screen_page))
         self.pages.addWidget(_scrollable_page(self.fan_page))
@@ -417,6 +460,118 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(index)
         if index == self.page_indexes.get("fan"):
             self.fan_page.load_fan_control(interactive_driver_probe=False)
+
+    def _fan_status_changed(self, text: str) -> None:
+        self.home_page.update_fan_status(text)
+        self._refresh_home_permission_status()
+
+    def _lighting_status_changed(self, text: str) -> None:
+        self.home_page.update_lighting_status(text)
+
+    def _lianli_status_changed(self, text: str) -> None:
+        self.home_page.update_lianli_status(text)
+
+    def _refresh_home_permission_status(self) -> None:
+        if not hasattr(self, "home_page"):
+            return
+        self.home_page.update_permission_status(summarize_permission_status(self._system_status_snapshot()))
+
+    def _system_status_snapshot(self) -> SystemStatusSnapshot:
+        events = self.home_page.recent_events() if hasattr(self, "home_page") else []
+        log_lines = [_compact_log_line(line) for line in recent_log_lines(limit=3)]
+        recent_events = events + [f"日志: {line}" for line in log_lines if line not in events]
+        return SystemStatusSnapshot(
+            components=self._system_component_status_items(log_lines),
+            permissions=self._permission_status_items(),
+            recent_events=recent_events[:6],
+        )
+
+    def _system_component_status_items(self, log_lines: list[str]) -> list[StatusItem]:
+        components = [
+            StatusItem(
+                "LCD 设备",
+                "ok" if self.devices else "warn",
+                f"{len(self.devices)} 个设备" if self.devices else "未发现设备",
+            )
+        ]
+        telemetry = self.latest_telemetry
+        if telemetry is None:
+            components.extend(
+                [
+                    StatusItem("CPU", "info", "等待遥测采集"),
+                    StatusItem("GPU", "info", "等待遥测采集"),
+                ]
+            )
+        else:
+            components.extend(
+                [
+                    StatusItem(
+                        "CPU",
+                        "ok" if telemetry.cpu.available else "warn",
+                        _cpu_status_detail(telemetry),
+                    ),
+                    StatusItem(
+                        "GPU",
+                        "ok" if telemetry.gpu.available else "warn",
+                        _gpu_status_detail(telemetry),
+                    ),
+                ]
+            )
+        components.extend(
+            [
+                StatusItem("普通风扇", _state_from_summary(self.fan_page.home_status_text()), self.fan_page.home_status_text()),
+                StatusItem("灯效", _state_from_summary(self.lighting_page.home_status_text()), self.lighting_page.home_status_text()),
+                StatusItem("联力无线", _state_from_summary(self.lianli_page.home_status_text()), self.lianli_page.home_status_text()),
+                StatusItem(
+                    "GUI 日志",
+                    "ok" if log_lines else "info",
+                    f"最近 {len(log_lines)} 条可读" if log_lines else "暂无日志或未配置日志路径",
+                ),
+            ]
+        )
+        return components
+
+    def _permission_status_items(self) -> list[StatusItem]:
+        items: list[StatusItem] = []
+        if self.devices:
+            writable_count = sum(1 for device in self.devices if device.connection.writable)
+            items.append(
+                StatusItem(
+                    "LCD 写权限",
+                    "ok" if writable_count else "warn",
+                    f"{writable_count}/{len(self.devices)} 个设备可写",
+                )
+            )
+        else:
+            items.append(StatusItem("LCD 写权限", "info", "等待设备扫描"))
+
+        if sys.platform.startswith("linux"):
+            power_paths = cpu_power_permission_paths()
+            items.append(
+                StatusItem(
+                    "CPU 功耗权限",
+                    "warn" if power_paths else "ok",
+                    f"{len(power_paths)} 个 powercap 文件需授权" if power_paths else "无需授权或已可读",
+                )
+            )
+        else:
+            items.append(StatusItem("CPU 功耗权限", "info", "非 Linux 平台无需 powercap 授权"))
+
+        pwm_paths: list[Path] = []
+        pwm_permission_paths = getattr(self.fan_page, "_pwm_permission_paths", None)
+        if callable(pwm_permission_paths):
+            try:
+                pwm_paths = list(pwm_permission_paths())
+            except Exception as error:  # pragma: no cover - defensive diagnostic boundary
+                log_exception("fan_pwm_permission_status_failed", error)
+        fan_status = self.fan_page.home_status_text()
+        if pwm_paths:
+            items.append(StatusItem("PWM 写权限", "warn", f"{len(pwm_paths)} 个 pwm* 文件需授权"))
+        elif "可控" in fan_status:
+            items.append(StatusItem("PWM 写权限", "ok", fan_status))
+        else:
+            items.append(StatusItem("PWM 写权限", "info", "未发现需要授权的 PWM 文件"))
+        return items
 
     def _apply_theme(self) -> None:
         self.setStyleSheet(gui_stylesheet())
@@ -635,12 +790,14 @@ class MainWindow(QMainWindow):
         self.lighting_page.openrgb_port_input.setValue(self.settings.openrgb.port)
         save_settings(self.settings)
         self.statusBar().showMessage("设置已保存")
+        self.home_page.add_event("设置已保存")
 
     def clear_gif_cache(self) -> None:
         cache = self.platform_adapter.gif_preview_cache_dir()
         if cache.exists():
             shutil.rmtree(cache)
         self.statusBar().showMessage("GIF 缓存已清理")
+        self.home_page.add_event("GIF 缓存已清理")
 
     def clear_logs(self) -> None:
         for log_path in self.platform_adapter.log_dir().glob("*.log"):
@@ -649,13 +806,18 @@ class MainWindow(QMainWindow):
             except OSError:
                 pass
         self.statusBar().showMessage("日志已清理")
+        self.home_page.add_event("日志已清理")
 
     def open_platform_diagnostics(self) -> None:
         if self._platform_diagnostics_dialog is not None and self._platform_diagnostics_dialog.isVisible():
             self._platform_diagnostics_dialog.raise_()
             self._platform_diagnostics_dialog.activateWindow()
             return
-        self._platform_diagnostics_dialog = PlatformDiagnosticsDialog(self.settings, self)
+        self._platform_diagnostics_dialog = PlatformDiagnosticsDialog(
+            self.settings,
+            self,
+            status_provider=self._system_status_snapshot,
+        )
         self._platform_diagnostics_dialog.destroyed.connect(lambda: setattr(self, "_platform_diagnostics_dialog", None))
         self._platform_diagnostics_dialog.show()
 
@@ -667,6 +829,7 @@ class MainWindow(QMainWindow):
         self.settings = GuiSettings()
         save_settings(self.settings)
         self.statusBar().showMessage("配置已重置，重启 GUI 后完全生效")
+        self.home_page.add_event("配置已重置")
 
     def refresh_telemetry(self) -> None:
         try:
@@ -679,6 +842,7 @@ class MainWindow(QMainWindow):
         self.latest_telemetry = telemetry
         self.monitor_page.update_telemetry(telemetry)
         self.home_page.update_telemetry(telemetry)
+        self._refresh_home_permission_status()
         self.update_monitor_preview()
 
     def request_cpu_power_permission_grant(self, *, interactive: bool = True) -> None:
@@ -695,6 +859,7 @@ class MainWindow(QMainWindow):
         run_privileged_shell = getattr(self.fan_page, "_run_privileged_shell_compat", None)
         if not callable(run_privileged_shell):
             self.home_page.add_event("CPU 功耗权限授权不可用")
+            self._refresh_home_permission_status()
             return
         ok, output = run_privileged_shell(
             cpu_power_permission_shell(paths),
@@ -705,10 +870,12 @@ class MainWindow(QMainWindow):
         if ok:
             self.statusBar().showMessage(f"CPU 功耗权限已授权：{len(paths)} 个文件")
             self.home_page.add_event("CPU 功耗权限已授权")
+            self._refresh_home_permission_status()
             return
         message = output or "CPU 功耗权限授权失败"
         self.statusBar().showMessage(message)
         self.home_page.add_event(message)
+        self._refresh_home_permission_status()
 
     def request_telemetry_refresh(self) -> None:
         thread = self._telemetry_thread
@@ -751,6 +918,7 @@ class MainWindow(QMainWindow):
         self.latest_telemetry = telemetry
         self.monitor_page.update_telemetry(telemetry)
         self.home_page.update_telemetry(telemetry)
+        self._refresh_home_permission_status()
         self.update_monitor_preview()
 
     def _connect_monitor_customization(self) -> None:
@@ -998,6 +1166,7 @@ class MainWindow(QMainWindow):
             self.device_details.setPlainText(f"设备发现失败：{message}")
             self.preview.set_device(None)
             self.statusBar().showMessage(f"设备发现失败：{message}")
+            self._refresh_home_permission_status()
             return
 
         self.device_combo.clear()
@@ -1014,6 +1183,7 @@ class MainWindow(QMainWindow):
             self.preview.set_device(None)
             self._stop_animation_if_target_missing()
             self.statusBar().showMessage("未发现设备")
+            self._refresh_home_permission_status()
             return
 
         selected_index = 0
@@ -1033,6 +1203,7 @@ class MainWindow(QMainWindow):
         self.home_page.add_event(f"发现 {len(self.devices)} 个 LCD 设备")
         log_event("refresh_devices_finished", count=len(self.devices), selected_index=selected_index)
         self.statusBar().showMessage(f"发现 {len(self.devices)} 个设备")
+        self._refresh_home_permission_status()
         self.run_diagnostics()
 
     def choose_image(self) -> None:
@@ -1468,6 +1639,7 @@ class MainWindow(QMainWindow):
             self.home_page.update_device(None)
             self.device_status_label.setText("未发现设备")
             self.device_details.setPlainText("未发现设备")
+            self._refresh_home_permission_status()
             return
 
         paths = ", ".join(str(path) for path in device.connection.paths) or "无路径"
@@ -1496,6 +1668,7 @@ class MainWindow(QMainWindow):
                 ]
             )
         )
+        self._refresh_home_permission_status()
 
     def run_diagnostics(self) -> None:
         items = self.platform_adapter.diagnostic_items(
@@ -1514,7 +1687,9 @@ class MainWindow(QMainWindow):
                 ),
             ]
         )
-        self.diagnostics_text.setPlainText("\n".join(rows))
+        self.diagnostics_text.setPlainText("\n".join(rows) + "\n\n" + render_system_status_report(self._system_status_snapshot()))
+        self.home_page.add_event("诊断已刷新")
+        self._refresh_home_permission_status()
 
     def _diagnostic_row(self, label: str, ok: bool, detail: str) -> str:
         return f"{'OK' if ok else 'WARN'}  {label}: {detail}"

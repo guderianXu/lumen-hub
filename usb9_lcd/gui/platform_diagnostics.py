@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
 from usb9_lcd.gui.settings import GuiSettings
+from usb9_lcd.gui.system_status import SystemStatusSnapshot, render_system_status_report
 from usb9_lcd.platforms import PlatformAdapter, current_platform
 
 
 def render_platform_diagnostic_report(
     settings: GuiSettings,
     adapter: PlatformAdapter | None = None,
+    snapshot: SystemStatusSnapshot | None = None,
 ) -> str:
     platform_adapter = adapter or current_platform()
     items = platform_adapter.diagnostic_items(
@@ -27,13 +31,21 @@ def render_platform_diagnostic_report(
         for candidate in candidates:
             marker = "OK" if candidate.is_file() else "--"
             lines.append(f"{marker}  {candidate}")
+    if snapshot is not None:
+        lines.extend(["", render_system_status_report(snapshot)])
     return "\n".join(lines)
 
 
 class PlatformDiagnosticsDialog(QDialog):
-    def __init__(self, settings: GuiSettings, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        settings: GuiSettings,
+        parent: QWidget | None = None,
+        status_provider: Callable[[], SystemStatusSnapshot] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.settings = settings
+        self.status_provider = status_provider
         self.setWindowTitle("系统诊断 / 平台状态")
         self.resize(760, 520)
 
@@ -68,4 +80,5 @@ class PlatformDiagnosticsDialog(QDialog):
         self.refresh_report()
 
     def refresh_report(self) -> None:
-        self.report_text.setPlainText(render_platform_diagnostic_report(self.settings))
+        snapshot = self.status_provider() if self.status_provider is not None else None
+        self.report_text.setPlainText(render_platform_diagnostic_report(self.settings, snapshot=snapshot))

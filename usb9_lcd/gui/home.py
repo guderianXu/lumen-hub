@@ -47,12 +47,14 @@ class ControlCenterPage(QWidget):
         self.fan_value = QLabel("未加载")
         self.lighting_value = QLabel("默认关闭")
         self.lianli_value = QLabel("未连接")
+        self.permission_value = QLabel("权限未检查")
         overview.addWidget(self._status_card("LCD 设备", self.device_value), 0, 0)
         overview.addWidget(self._status_card("CPU", self.cpu_value), 0, 1)
         overview.addWidget(self._status_card("GPU", self.gpu_value), 0, 2)
         overview.addWidget(self._status_card("风扇", self.fan_value), 1, 0)
         overview.addWidget(self._status_card("灯效", self.lighting_value), 1, 1)
         overview.addWidget(self._status_card("联力无线", self.lianli_value), 1, 2)
+        overview.addWidget(self._status_card("权限", self.permission_value), 2, 0, 1, 3)
         layout.addLayout(overview)
         layout.addWidget(
             self._command_panel(
@@ -104,7 +106,7 @@ class ControlCenterPage(QWidget):
 
     def _set_mode(self, mode: str, action: Callable[[], None] | None = None) -> None:
         self.set_mode_indicator(mode)
-        self.add_event(f"切换到 {mode} 模式")
+        self.add_event(f"切换到{mode}模式")
         if action is not None:
             action()
 
@@ -166,7 +168,7 @@ class ControlCenterPage(QWidget):
         title.setObjectName("SectionLabel")
         layout.addWidget(title)
         self.event_labels = []
-        for _index in range(4):
+        for _index in range(6):
             label = QLabel("等待操作")
             label.setObjectName("ChecklistItem")
             label.setWordWrap(True)
@@ -176,7 +178,7 @@ class ControlCenterPage(QWidget):
 
     def add_event(self, message: str) -> None:
         self._events.insert(0, message)
-        self._events = self._events[:4]
+        self._events = self._events[:6]
         if not hasattr(self, "event_labels"):
             return
         for index, label in enumerate(self.event_labels):
@@ -210,6 +212,12 @@ class ControlCenterPage(QWidget):
 
     def update_lianli_status(self, text: str) -> None:
         self.lianli_value.setText(text or "未连接")
+
+    def update_permission_status(self, text: str) -> None:
+        self.permission_value.setText(text or "权限未检查")
+
+    def recent_events(self) -> list[str]:
+        return list(self._events)
 
     def _status_card(self, title: str, value: QLabel) -> QFrame:
         card = QFrame()

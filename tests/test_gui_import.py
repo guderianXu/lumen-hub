@@ -289,7 +289,7 @@ def test_gui_app_replaces_ibus_input_context(monkeypatch):
 
 
 def test_gui_debug_logging_writes_log_file(tmp_path: Path):
-    from usb9_lcd.gui.debug import configure_debug_logging, log_event
+    from usb9_lcd.gui.debug import configure_debug_logging, log_event, recent_log_lines
 
     log_path = tmp_path / "gui.log"
 
@@ -301,6 +301,26 @@ def test_gui_debug_logging_writes_log_file(tmp_path: Path):
     assert "gui_debug_logging_configured" in text
     assert "test_debug_event" in text
     assert "value=7" in text
+    assert any("test_debug_event" in line for line in recent_log_lines(log_path, limit=2))
+    assert recent_log_lines(log_path, limit=0) == []
+
+
+def test_system_status_report_includes_permission_and_component_state():
+    from usb9_lcd.gui.system_status import StatusItem, SystemStatusSnapshot, render_system_status_report
+
+    snapshot = SystemStatusSnapshot(
+        components=[StatusItem("CPU", "ok", "温度/负载可读"), StatusItem("OpenRGB", "warn", "未连接")],
+        permissions=[StatusItem("CPU 功耗", "warn", "/sys/class/powercap/.../energy_uj 需授权")],
+        recent_events=["CPU 功耗权限已授权"],
+    )
+
+    report = render_system_status_report(snapshot)
+
+    assert "系统状态" in report
+    assert "CPU" in report
+    assert "OpenRGB" in report
+    assert "CPU 功耗" in report
+    assert "CPU 功耗权限已授权" in report
 
 
 def test_main_window_constructs_with_dark_dashboard_pages():
@@ -337,6 +357,7 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     assert "54°C" in window.home_page.cpu_value.text()
     assert "功耗 86W" in window.home_page.cpu_value.text()
     assert "61°C" in window.home_page.gpu_value.text()
+    assert window.home_page.permission_value.text() != "权限未检查"
     assert window.home_page.mode_value.text() == "日常"
     assert window.home_page.fan_value.text() in {"未加载", "未扫描"}
     assert window.home_page.lighting_value.text() == "默认关闭"
@@ -349,6 +370,25 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     assert window.device_summary_label.text() == "未发现设备"
 
     window.close()
+    app.quit()
+
+
+def test_home_page_shows_permission_status_and_operation_feedback():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.home import ControlCenterPage
+
+    app = QApplication.instance() or QApplication([])
+    page = ControlCenterPage(lambda _page: None, lambda: None, lambda: None, lambda: None, lambda: None)
+
+    page.update_permission_status("CPU 功耗: 已授权\nPWM: 可写")
+    page.add_event("OpenRGB 应用成功：3 个目标")
+
+    assert "CPU 功耗" in page.permission_value.text()
+    assert page.event_labels[0].text() == "OpenRGB 应用成功：3 个目标"
+    assert page.recent_events()[0] == "OpenRGB 应用成功：3 个目标"
+
+    page.close()
     app.quit()
 
 
@@ -2384,7 +2424,10 @@ def test_main_window_opens_platform_diagnostics_window():
     button.click()
 
     assert window._platform_diagnostics_dialog is not None
-    assert "平台诊断" in window._platform_diagnostics_dialog.report_text.toPlainText()
+    report = window._platform_diagnostics_dialog.report_text.toPlainText()
+    assert "平台诊断" in report
+    assert "系统状态" in report
+    assert "权限" in report
 
     window.close()
     app.quit()

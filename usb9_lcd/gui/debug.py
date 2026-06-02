@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover
 
 
 _LOG_FILE = None
+_LOG_PATH: Path | None = None
 _LOGGER = logging.getLogger("usb9_lcd.gui")
 _QT_HANDLER_INSTALLED = False
 
@@ -30,7 +31,8 @@ def configure_debug_logging(log_path: str | Path | None = None) -> Path:
     path = Path(log_path or os.environ.get("USB9_LCD_LOG", current_platform().gui_log_path()))
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    global _LOG_FILE
+    global _LOG_FILE, _LOG_PATH
+    _LOG_PATH = path
     if _LOG_FILE is not None:
         try:
             _LOG_FILE.close()
@@ -94,6 +96,19 @@ def log_event(event: str, **fields: Any) -> None:
 def log_exception(event: str, error: BaseException, **fields: Any) -> None:
     details = " ".join(f"{key}={value!r}" for key, value in sorted(fields.items()))
     _LOGGER.exception("%s %s error=%r", event, details, error)
+
+
+def recent_log_lines(log_path: str | Path | None = None, *, limit: int = 6) -> list[str]:
+    if limit <= 0:
+        return []
+    path = Path(log_path) if log_path is not None else _LOG_PATH
+    if path is None or not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    return [line for line in lines if line.strip()][-limit:]
 
 
 def _log_uncaught_exception(exc_type, exc_value, exc_traceback) -> None:  # noqa: ANN001
