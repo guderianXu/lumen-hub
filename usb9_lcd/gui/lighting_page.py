@@ -30,7 +30,12 @@ from PySide6.QtWidgets import (
 
 from usb9_lcd.gui.debug import log_event, log_exception
 from usb9_lcd.gui.operation_queue import HardwareOperation, HardwareOperationQueue
-from usb9_lcd.gui.settings import GuiSettings, LightingUiSettings, save_settings as _save_settings_impl
+from usb9_lcd.gui.settings import (
+    DEFAULT_SETTINGS_PATH,
+    GuiSettings,
+    LightingUiSettings,
+    save_settings as _save_settings_impl,
+)
 from usb9_lcd.lighting import LightingSettings, LightingTarget, OpenRgbLightingController, OpenRgbServerManager
 from usb9_lcd.lighting.effects import LIGHTING_EFFECTS, LIGHTING_EFFECT_MAP, effect_label
 from usb9_lcd.lighting.profiles import openrgb_device_profile_payload
@@ -354,6 +359,9 @@ class LightingPage(QWidget):
         self.openrgb_status_label.setObjectName("FieldHint")
 
         self.openrgb_status_label.setWordWrap(True)
+        self.lighting_save_status_label = QLabel(f"保存状态：配置文件 {DEFAULT_SETTINGS_PATH}")
+        self.lighting_save_status_label.setObjectName("FieldHint")
+        self.lighting_save_status_label.setWordWrap(True)
 
         layout.addWidget(title, 0, 0)
 
@@ -373,6 +381,7 @@ class LightingPage(QWidget):
         layout.addWidget(self.openrgb_test_button, 0, 8)
 
         layout.addWidget(self.openrgb_status_label, 1, 0, 1, 9)
+        layout.addWidget(self.lighting_save_status_label, 2, 0, 1, 9)
 
         return panel
 
@@ -1015,6 +1024,7 @@ class LightingPage(QWidget):
         self.settings.openrgb.port = self.controller.port
 
         save_settings(self.settings)
+        self._show_lighting_saved_feedback("OpenRGB 连接设置已保存")
 
         self._run_lighting_operation(
 
@@ -1110,6 +1120,7 @@ class LightingPage(QWidget):
         self._remember_lighting_settings(target_id)
 
         self.openrgb_status_label.setText("区域配置已保存")
+        self._show_lighting_saved_feedback("区域配置已保存")
 
 
 
@@ -1168,6 +1179,7 @@ class LightingPage(QWidget):
         self._selected_scene_name = name
 
         save_settings(self.settings)
+        self._show_lighting_saved_feedback(f"场景已保存：{name}")
 
         self._refresh_scene_names(name)
 
@@ -1234,6 +1246,7 @@ class LightingPage(QWidget):
         self._selected_scene_name = new_name
 
         save_settings(self.settings)
+        self._show_lighting_saved_feedback(f"场景已重命名：{new_name}")
 
         self._refresh_scene_names(new_name)
 
@@ -1264,6 +1277,7 @@ class LightingPage(QWidget):
         self._selected_scene_name = next_name
 
         save_settings(self.settings)
+        self._show_lighting_saved_feedback(f"场景已删除：{name}")
 
         self._refresh_scene_names(next_name)
 
@@ -2141,6 +2155,10 @@ class LightingPage(QWidget):
 
             self._set_targets(self.targets)
 
+        if message.startswith(("灯效已应用", "已连接并应用灯效")):
+
+            self._show_lighting_saved_feedback("灯效设置已保存")
+
         if self._openrgb_test_dialog is not None and self._openrgb_test_dialog.isVisible():
 
             self._openrgb_test_dialog.refresh_targets()
@@ -2170,6 +2188,13 @@ class LightingPage(QWidget):
             self._start_lighting_operation(next_operation)
 
         self.status_changed.emit(self.home_status_text())
+
+
+    def _show_lighting_saved_feedback(self, message: str) -> None:
+
+        if hasattr(self, "lighting_save_status_label"):
+
+            self.lighting_save_status_label.setText(f"{message}（{time.strftime('%H:%M:%S')}）")
 
 
     def _queued_busy_message(self, message: str) -> str:
@@ -2493,6 +2518,7 @@ class LightingPage(QWidget):
         self._update_lighting_swatches()
 
         save_settings(self.settings)
+        self._show_lighting_saved_feedback(f"灯效调色板已保存：{self.settings.lighting.palette}")
 
 
 
@@ -3116,6 +3142,7 @@ class LightingPage(QWidget):
             self.settings.lighting.target_aliases.pop(target_id, None)
 
         save_settings(self.settings)
+        self._show_lighting_saved_feedback("区域备注已保存")
 
         current = self.lighting_target_combo.currentIndex()
 

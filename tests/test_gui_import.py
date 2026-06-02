@@ -392,6 +392,34 @@ def test_home_page_shows_permission_status_and_operation_feedback():
     app.quit()
 
 
+def test_main_window_settings_page_shows_saved_feedback(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.main_window as main_window
+    from usb9_lcd.gui.main_window import MainWindow
+    from usb9_lcd.gui.settings import GuiSettings
+
+    saved = []
+    monkeypatch.setattr(main_window, "save_settings", lambda settings: saved.append(settings))
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+        settings=GuiSettings(),
+    )
+
+    window.save_settings_page()
+
+    assert saved
+    assert "设置已保存" in window.settings_save_status_label.text()
+    assert "设置已保存" in window.statusBar().currentMessage()
+    assert window.home_page.event_labels[0].text() == "设置已保存"
+
+    window.close()
+    app.quit()
+
+
 def test_control_center_navigation_buttons_change_pages():
     from PySide6.QtWidgets import QApplication, QPushButton
 
@@ -4430,6 +4458,31 @@ def test_lighting_page_updates_apply_preview_from_controls():
     assert "#00e5ff" in preview
     assert "亮度 60%" in preview
     assert "速度 70%" in preview
+
+    page.close()
+    app.quit()
+
+
+def test_lighting_page_shows_saved_feedback_after_target_profile(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.pages as pages
+    from usb9_lcd.gui.pages import LightingPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    saved = []
+    monkeypatch.setattr(pages, "save_settings", lambda settings: saved.append(settings))
+    app = QApplication.instance() or QApplication([])
+    controller = FakeLightingController()
+    page = LightingPage(controller=controller, settings=GuiSettings())
+
+    page.connect_openrgb()
+    assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
+    page.save_current_target_profile()
+
+    assert saved
+    assert "区域配置已保存" in page.lighting_save_status_label.text()
+    assert page.openrgb_status_label.text() == "区域配置已保存"
 
     page.close()
     app.quit()

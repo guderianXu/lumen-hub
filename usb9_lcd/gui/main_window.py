@@ -766,6 +766,10 @@ class MainWindow(QMainWindow):
         save_button.setObjectName("PrimaryButton")
         save_button.clicked.connect(self.save_settings_page)
         layout.addWidget(save_button)
+        self.settings_save_status_label = QLabel(f"配置文件：{DEFAULT_SETTINGS_PATH}")
+        self.settings_save_status_label.setObjectName("FieldHint")
+        self.settings_save_status_label.setWordWrap(True)
+        layout.addWidget(self.settings_save_status_label)
         maintenance_row = QHBoxLayout()
         clear_cache_button = QPushButton("清理 GIF 缓存")
         clear_cache_button.clicked.connect(self.clear_gif_cache)
@@ -780,6 +784,13 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         return page
 
+    def _show_config_saved_feedback(self, message: str) -> None:
+        stamped = f"{message}（{time.strftime('%H:%M:%S')}）"
+        if hasattr(self, "settings_save_status_label"):
+            self.settings_save_status_label.setText(stamped)
+        self.statusBar().showMessage(message)
+        self.home_page.add_event(message)
+
     def save_settings_page(self) -> None:
         self.settings.openrgb.app_path = self.settings_openrgb_path.text().strip()
         self.settings.openrgb.port = self.settings_openrgb_port.value()
@@ -789,8 +800,7 @@ class MainWindow(QMainWindow):
         self.lighting_page.argb_zone_size.setValue(self.settings.lighting.argb_zone_size)
         self.lighting_page.openrgb_port_input.setValue(self.settings.openrgb.port)
         save_settings(self.settings)
-        self.statusBar().showMessage("设置已保存")
-        self.home_page.add_event("设置已保存")
+        self._show_config_saved_feedback("设置已保存")
 
     def clear_gif_cache(self) -> None:
         cache = self.platform_adapter.gif_preview_cache_dir()
@@ -828,8 +838,7 @@ class MainWindow(QMainWindow):
             pass
         self.settings = GuiSettings()
         save_settings(self.settings)
-        self.statusBar().showMessage("配置已重置，重启 GUI 后完全生效")
-        self.home_page.add_event("配置已重置")
+        self._show_config_saved_feedback("配置已重置，重启 GUI 后完全生效")
 
     def refresh_telemetry(self) -> None:
         try:
@@ -953,10 +962,12 @@ class MainWindow(QMainWindow):
         interval = int(self.monitor_interval_combo.currentData() or 1)
         self.settings.monitor.live_interval_seconds = interval
         save_settings(self.settings)
+        self._show_config_saved_feedback(f"监控间隔已保存：{interval}s")
 
     def _monitor_palette_changed(self) -> None:
         self.settings.monitor.palette = str(self.monitor_page.monitor_palette_combo.currentData() or "neon")
         save_settings(self.settings)
+        self._show_config_saved_feedback(f"监控调色板已保存：{self.settings.monitor.palette}")
         self.update_monitor_preview()
 
     def save_monitor_profile(self) -> None:
@@ -978,7 +989,7 @@ class MainWindow(QMainWindow):
         self.settings.monitor.active_profile = name
         save_settings(self.settings)
         self.monitor_page.set_profile_names(sorted(self.settings.monitor.profiles), name)
-        self.statusBar().showMessage(f"监控配置已保存：{name}")
+        self._show_config_saved_feedback(f"监控配置已保存：{name}")
 
     def load_monitor_profile(self) -> None:
         name = self.monitor_page.monitor_profile_combo.currentText().strip()
@@ -1011,7 +1022,7 @@ class MainWindow(QMainWindow):
         self.settings.monitor.palette = str(self.monitor_page.monitor_palette_combo.currentData() or "neon")
         save_settings(self.settings)
         self.update_monitor_preview()
-        self.statusBar().showMessage(f"监控配置已加载：{name}")
+        self._show_config_saved_feedback(f"监控配置已加载：{name}")
 
     def lighting_sync_color(self, mode_index: int) -> str | None:
         if mode_index == 1 and self.latest_telemetry is not None:
