@@ -534,6 +534,8 @@ def test_main_window_sleep_all_off_blanks_lcds_and_turns_off_openrgb():
     )
     controller = FakeLightingController()
     window.lighting_page.controller = controller
+    lianli_calls = []
+    window.lianli_page.turn_off_all_lighting = lambda: lianli_calls.append("off")
 
     window.refresh_devices()
     driver.uploads.clear()
@@ -552,8 +554,10 @@ def test_main_window_sleep_all_off_blanks_lcds_and_turns_off_openrgb():
     assert controller.applied[0].target_id == "device:0"
     assert controller.applied[0].effect == "off"
     assert controller.applied[0].brightness_percent == 0
+    assert lianli_calls == ["off"]
     assert window.home_page.mode_value.text() == "睡眠"
     assert "睡眠全关已执行" in window.statusBar().currentMessage()
+    assert "联力" in window.statusBar().currentMessage()
 
     window.close()
     app.quit()
@@ -1069,6 +1073,68 @@ def test_lianli_wireless_page_runs_safe_rgb_experiment(tmp_path: Path):
     assert payload["likely_effective"] is False
     assert payload["visual_confirmation_required"] is True
     assert payload["summary"]["operation_stats"]["live-rgb"]["unchanged_count"] == 1
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_sleep_off_bypasses_write_gate(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.lianli_wireless_page as lianli_page_module
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import LianLiWirelessTargetSettings
+
+    class FakeSender:
+        def __init__(self, vid, pid):
+            self.vid = vid
+            self.pid = pid
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class FakeLianLiBackend:
+        def __init__(self, *, sender):
+            self.sender = sender
+
+        def send_static_rgb(self, target, color, **kwargs):
+            sent.append((target.mac, color, kwargs, self.sender.vid, self.sender.pid))
+            return 8
+
+    sent = []
+    monkeypatch.setattr(lianli_page_module, "PyUsbEndpointTransport", FakeSender)
+    monkeypatch.setattr(lianli_page_module, "LianLiWirelessBackend", FakeLianLiBackend)
+    monkeypatch.setattr(lianli_page_module, "save_settings", lambda _settings: None)
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: None)
+    page.settings.lianli_wireless.active_target_mac = "aa:bb:cc:dd:ee:ff"
+    page.settings.lianli_wireless.targets["aa:bb:cc:dd:ee:ff"] = LianLiWirelessTargetSettings(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=26,
+    )
+    page.lianli_direct_led_count.setValue(26)
+    page._write_unlocked = lambda: False
+
+    page.turn_off_all_lighting()
+
+    assert _process_events_until(app, lambda: bool(sent))
+    assert sent == [
+        (
+            "aa:bb:cc:dd:ee:ff",
+            (0, 0, 0),
+            {"led_count": 26},
+            lianli_page_module.RF_SENDER_VID,
+            lianli_page_module.RF_SENDER_PID,
+        )
+    ]
+    assert page.settings.lianli_wireless.effect == "off"
 
     page.close()
     app.quit()

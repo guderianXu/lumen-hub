@@ -3466,6 +3466,52 @@ class LianLiWirelessPage(QWidget):
         self._append_lianli_lighting_log("loop-stop requested")
 
 
+    def turn_off_all_lighting(self) -> None:
+
+        self._lianli_loop_effect = None
+
+        self._pending_lianli_effect = None
+
+        self.stop_lianli_lighting_loop()
+
+        self._run_lianli_operation(
+
+            "正在关闭联力无线灯光...",
+
+            self._send_lianli_sleep_off,
+
+        )
+
+
+    def _send_lianli_sleep_off(self) -> dict[str, object]:
+
+        target = self._selected_lianli_wireless_target()
+
+        sender = PyUsbEndpointTransport(RF_SENDER_VID, RF_SENDER_PID)
+
+        try:
+
+            backend = LianLiWirelessBackend(sender=sender)
+
+            packets_written = self._send_lianli_effect_with_backend(backend, target, "off")
+
+        finally:
+
+            sender.close()
+
+        self._append_lianli_lighting_log(f"sleep-off packets={packets_written}")
+
+        self._remember_lianli_effect_settings("off")
+
+        return {
+
+            **self._lighting_result_payload("off", target, packets_written),
+
+            "sleep_off": True,
+
+        }
+
+
 
     def _send_lianli_lighting_effect(self, effect: str) -> dict[str, object]:
 

@@ -597,7 +597,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.device_summary_label)
         self.sleep_all_off_button = QPushButton("睡眠全关")
         self.sleep_all_off_button.setObjectName("DangerButton")
-        self.sleep_all_off_button.setToolTip("关闭屏幕并尝试关闭灯光（需要 OpenRGB 可用）")
+        self.sleep_all_off_button.setToolTip("关闭屏幕并尝试关闭 OpenRGB 和联力无线灯光")
         self.sleep_all_off_button.clicked.connect(self.sleep_all_off)
         layout.addWidget(self.sleep_all_off_button)
         platform_diagnostics_button = QPushButton("平台诊断")
@@ -1328,6 +1328,7 @@ class MainWindow(QMainWindow):
                 errors.append(f"{device.display_name}: {self._friendly_error(error)}")
 
         self.lighting_page.turn_off_all_lighting()
+        self.lianli_page.turn_off_all_lighting()
         if errors:
             self.home_page.add_event(f"睡眠全关部分失败：{errors[0]}")
             self.statusBar().showMessage(
@@ -1335,7 +1336,9 @@ class MainWindow(QMainWindow):
             )
             return
         self.home_page.add_event("睡眠全关已执行")
-        self.statusBar().showMessage(f"睡眠全关已执行：屏幕 {screen_count}/{len(devices)} 个已黑屏，灯光正在关闭")
+        self.statusBar().showMessage(
+            f"睡眠全关已执行：屏幕 {screen_count}/{len(devices)} 个已黑屏，OpenRGB/联力灯光正在关闭"
+        )
 
     def _sleep_mode_devices(self) -> list[DisplayDevice]:
         if self.devices:
