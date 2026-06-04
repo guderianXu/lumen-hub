@@ -58,6 +58,7 @@ class GenericFanChannel:
     pwm_path: Path | None = None
     pwm_enable_path: Path | None = None
     windows_control_id: str = ""
+    role: str = ""
     control_available: bool = False
     control_reason: str = ""
 
@@ -84,6 +85,21 @@ _LINUX_FAN_PROBE_MODULES = (
     ("nct6775", ""),
     ("asus_ec_sensors", ""),
     ("it87", ""),
+)
+_FAN_ROLE_LABELS = {
+    "cpu": "CPU 风扇",
+    "pump": "水泵/AIO",
+    "case": "机箱风扇",
+    "gpu": "GPU 风扇",
+    "unknown": "未标定",
+}
+_FAN_ROLE_CHOICES = (
+    ("自动识别", ""),
+    ("CPU 风扇", "cpu"),
+    ("水泵/AIO", "pump"),
+    ("机箱风扇", "case"),
+    ("GPU 风扇", "gpu"),
+    ("未标定", "unknown"),
 )
 
 
@@ -123,9 +139,69 @@ def _fan_label(hwmon: Path, index: str) -> str:
     return f"{chip} fan{index}"
 
 
+def _normalize_fan_role(role: object) -> str:
+    value = str(role or "").strip().lower()
+    aliases = {
+        "cpu": "cpu",
+        "cpu fan": "cpu",
+        "pump": "pump",
+        "aio": "pump",
+        "aio pump": "pump",
+        "water": "pump",
+        "case": "case",
+        "chassis": "case",
+        "sys": "case",
+        "system": "case",
+        "gpu": "gpu",
+        "nvidia": "gpu",
+        "radeon": "gpu",
+        "unknown": "unknown",
+    }
+    return aliases.get(value, value if value in _FAN_ROLE_LABELS else "")
+
+
+def _infer_fan_role(name: str) -> str:
+    text = name.lower()
+    if any(marker in text for marker in ("gpu", "nvidia", "geforce", "radeon", "arc")):
+        return "gpu"
+    if any(marker in text for marker in ("pump", "aio", "w_pump", "water")):
+        return "pump"
+    if any(marker in text for marker in ("cpu", "processor")):
+        return "cpu"
+    if any(marker in text for marker in ("chassis", "cha_fan", "case", "sys_fan", "system fan")):
+        return "case"
+    return ""
+
+
+def _mainboard_fan_index(name: str) -> str:
+    match = re.search(r"\bfan\s*#?(\d+)\b", name, flags=re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def _fan_channel_identity(channel: GenericFanChannel) -> str:
+    if channel.windows_control_id:
+        return channel.windows_control_id
+    if channel.pwm_path is not None:
+        return str(channel.pwm_path)
+    return channel.name
+
+
+def _fan_display_name(channel: GenericFanChannel) -> str:
+    role = _normalize_fan_role(channel.role) or _infer_fan_role(channel.name)
+    if role and role != "unknown":
+        return f"{_FAN_ROLE_LABELS[role]} · {channel.name}"
+    fan_index = _mainboard_fan_index(channel.name)
+    if fan_index:
+        return f"主板 Fan{fan_index}（未标定） · {channel.name}"
+    if role == "unknown":
+        return f"未标定 · {channel.name}"
+    return channel.name
+
+
 def _linux_pwm_channel(hwmon: Path, index: str, rpm: int | None = None) -> GenericFanChannel:
     pwm_path = hwmon / f"pwm{index}"
     pwm_enable_path = hwmon / f"pwm{index}_enable"
+    label = _fan_label(hwmon, index)
     raw_pwm = _read_int(pwm_path) if pwm_path.exists() else None
     percent = None if raw_pwm is None else max(0.0, min(100.0, raw_pwm * 100.0 / 255.0))
     pwm_writable = pwm_path.exists() and os.access(pwm_path, os.W_OK)
@@ -140,11 +216,12 @@ def _linux_pwm_channel(hwmon: Path, index: str, rpm: int | None = None) -> Gener
     else:
         reason = "No matching PWM output exposed for this fan input"
     return GenericFanChannel(
-        name=_fan_label(hwmon, index),
+        name=label,
         rpm=rpm,
         percent=percent,
         pwm_path=pwm_path if pwm_path.exists() else None,
         pwm_enable_path=pwm_enable_path if pwm_enable_path.exists() else None,
+        role=_infer_fan_role(label),
         control_available=writable,
         control_reason=reason,
     )
@@ -329,6 +406,7 @@ def _channels_from_telemetry(fans: list[FanTelemetry]) -> list[GenericFanChannel
             name=fan.name,
             rpm=fan.rpm,
             percent=fan.percent,
+            role=_infer_fan_role(fan.name),
             control_available=False,
             control_reason=fan.error or "Read-only sensor; no ordinary Windows fan-control backend is configured",
         )
@@ -396,6 +474,7 @@ def _channels_from_windows_backend() -> list[GenericFanChannel]:
             rpm=channel.rpm,
             percent=channel.percent,
             windows_control_id=channel.control_id,
+            role=_infer_fan_role(channel.name),
             control_available=channel.control_available,
             control_reason=channel.control_reason,
         )
@@ -404,7 +483,7 @@ def _channels_from_windows_backend() -> list[GenericFanChannel]:
 
 
 def _format_channel(channel: GenericFanChannel) -> str:
-    parts = [channel.name]
+    parts = [_fan_display_name(channel)]
     if channel.rpm is not None:
         parts.append(f"{channel.rpm} RPM")
     if channel.percent is not None:
@@ -483,7 +562,7 @@ def _fan_live_lines(snapshot: GenericFanSnapshot, *, limit: int = 12) -> list[st
     for index, channel in enumerate(snapshot.channels[:limit], start=1):
         state = "可控" if channel.control_available else "只读"
         lines.append(
-            f"{index:02d}. {channel.name}: "
+            f"{index:02d}. {_fan_display_name(channel)}: "
             f"{_format_rpm(channel.rpm)} · {_format_pwm_percent(channel.percent)} · {state}"
         )
     remaining = len(snapshot.channels) - limit
@@ -619,6 +698,26 @@ class FanControlHostPage(QWidget):
         control_layout.addWidget(self.enable_manual)
         control_layout.addWidget(self.apply_button)
         layout.addWidget(control_card)
+
+        role_card = QFrame()
+        role_card.setObjectName("MetricCard")
+        role_layout = QGridLayout(role_card)
+        role_title = QLabel("通道角色标定")
+        role_title.setObjectName("SectionLabel")
+        self.role_channel_combo = QComboBox()
+        self.role_channel_combo.currentIndexChanged.connect(self._selected_role_channel_changed)
+        self.role_combo = QComboBox()
+        for label, role in _FAN_ROLE_CHOICES:
+            self.role_combo.addItem(label, role)
+        self.role_save_button = QPushButton("保存角色")
+        self.role_save_button.clicked.connect(self._save_selected_channel_role)
+        role_layout.addWidget(role_title, 0, 0, 1, 4)
+        role_layout.addWidget(QLabel("通道"), 1, 0)
+        role_layout.addWidget(self.role_channel_combo, 1, 1)
+        role_layout.addWidget(QLabel("角色"), 1, 2)
+        role_layout.addWidget(self.role_combo, 1, 3)
+        role_layout.addWidget(self.role_save_button, 2, 3)
+        layout.addWidget(role_card)
 
         curve_card = QFrame()
         curve_card.setObjectName("MetricCard")
@@ -997,13 +1096,15 @@ class FanControlHostPage(QWidget):
     def _render_snapshot(self) -> None:
         if self._snapshot is None:
             return
-        snapshot = self._snapshot
+        snapshot = self._snapshot_with_saved_roles(self._snapshot)
+        self._snapshot = snapshot
         self.cpu_value.setText(_cpu_temperature_label(snapshot))
         self.cpu_value.setStyleSheet(f"color: {_cpu_temperature_color(snapshot)};")
         self.sensor_value.setText("\n".join(_fan_live_lines(snapshot)))
 
         self.control_value.setText(snapshot.control_reason)
         self.apply_button.setEnabled(snapshot.control_available)
+        self._populate_role_controls(snapshot)
         self._sync_permission_controls()
         self._sync_curve_controls()
         self._update_live_status(snapshot)
@@ -1013,6 +1114,68 @@ class FanControlHostPage(QWidget):
         self._apply_curve_after_scan = False
         if should_apply_curve and self.curve_enable.isChecked() and snapshot.control_available and not self._curve_applying:
             self._apply_curve_to_snapshot(snapshot, source="曲线自动")
+
+    def _snapshot_with_saved_roles(self, snapshot: GenericFanSnapshot) -> GenericFanSnapshot:
+        roles = self.settings.host_fan.channel_roles
+        channels: list[GenericFanChannel] = []
+        changed = False
+        for channel in snapshot.channels:
+            role = _normalize_fan_role(roles.get(_fan_channel_identity(channel), "")) or _infer_fan_role(channel.name)
+            if role and role != channel.role:
+                channels.append(replace(channel, role=role))
+                changed = True
+            elif not role and channel.role:
+                channels.append(replace(channel, role=""))
+                changed = True
+            else:
+                channels.append(channel)
+        return replace(snapshot, channels=channels) if changed else snapshot
+
+    def _populate_role_controls(self, snapshot: GenericFanSnapshot) -> None:
+        blocked = self.role_channel_combo.blockSignals(True)
+        try:
+            current_identity = str(self.role_channel_combo.currentData() or "")
+            self.role_channel_combo.clear()
+            for channel in snapshot.channels:
+                identity = _fan_channel_identity(channel)
+                self.role_channel_combo.addItem(_fan_display_name(channel), identity)
+            if current_identity:
+                index = self.role_channel_combo.findData(current_identity)
+                if index >= 0:
+                    self.role_channel_combo.setCurrentIndex(index)
+        finally:
+            self.role_channel_combo.blockSignals(blocked)
+        has_channels = bool(snapshot.channels)
+        self.role_channel_combo.setEnabled(has_channels)
+        self.role_combo.setEnabled(has_channels)
+        self.role_save_button.setEnabled(has_channels)
+        self._selected_role_channel_changed()
+
+    def _selected_role_channel_changed(self) -> None:
+        identity = str(self.role_channel_combo.currentData() or "")
+        role = _normalize_fan_role(self.settings.host_fan.channel_roles.get(identity, ""))
+        index = self.role_combo.findData(role)
+        if index < 0:
+            index = self.role_combo.findData("")
+        if index >= 0:
+            self.role_combo.setCurrentIndex(index)
+
+    def _save_selected_channel_role(self) -> None:
+        identity = str(self.role_channel_combo.currentData() or "")
+        if not identity:
+            return
+        role = _normalize_fan_role(self.role_combo.currentData())
+        if role:
+            self.settings.host_fan.channel_roles[identity] = role
+        else:
+            self.settings.host_fan.channel_roles.pop(identity, None)
+        if self._save_host_fan_settings():
+            self._set_status("风扇通道角色已保存")
+        if self._snapshot is not None:
+            self._snapshot = self._snapshot_with_saved_roles(self._snapshot)
+            self.sensor_value.setText("\n".join(_fan_live_lines(self._snapshot)))
+            self.details.setPlainText(_snapshot_details(self._snapshot))
+            self._populate_role_controls(self._snapshot)
 
     def _apply_pwm(self) -> None:
         if self._snapshot is None or not self._snapshot.control_available:

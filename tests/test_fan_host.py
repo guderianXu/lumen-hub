@@ -129,6 +129,34 @@ def test_scan_linux_hwmon_includes_pwm_only_channel(tmp_path):
     assert channels[0].pwm_path == hwmon0 / "pwm1"
 
 
+def test_fan_host_infers_readable_roles_from_hwmon_labels(tmp_path):
+    import usb9_lcd.gui.fan_host as fan_host
+
+    hwmon_root = tmp_path / "hwmon"
+    hwmon0 = hwmon_root / "hwmon0"
+    hwmon0.mkdir(parents=True)
+    (hwmon0 / "name").write_text("nct6799\n", encoding="utf-8")
+    for index, label in (
+        (1, "CPU Fan"),
+        (2, "AIO Pump"),
+        (3, "Chassis Fan 1"),
+    ):
+        (hwmon0 / f"fan{index}_input").write_text(str(900 + index), encoding="utf-8")
+        (hwmon0 / f"fan{index}_label").write_text(label, encoding="utf-8")
+        (hwmon0 / f"pwm{index}").write_text("128\n", encoding="utf-8")
+    (hwmon0 / "fan4_input").write_text("0\n", encoding="utf-8")
+    (hwmon0 / "pwm4").write_text("128\n", encoding="utf-8")
+
+    channels = fan_host._scan_linux_hwmon_channels(hwmon_root)
+
+    assert [fan_host._fan_display_name(channel) for channel in channels] == [
+        "CPU 风扇 · CPU Fan",
+        "水泵/AIO · AIO Pump",
+        "机箱风扇 · Chassis Fan 1",
+        "主板 Fan4（未标定） · nct6799 fan4",
+    ]
+
+
 def test_fan_curve_helpers_sanitize_and_interpolate():
     from usb9_lcd.gui.fan_curve_model import (
         apply_fan_curve_policy,
@@ -753,6 +781,64 @@ def test_fan_host_renders_realtime_cpu_and_all_fan_channels():
     assert "nct6799 fan4" in page.sensor_value.text()
     assert "更新 12:00:00" in page.live_value.text()
     assert "只读显示" in page.live_value.text()
+
+    page.release()
+    page.close()
+    app.quit()
+
+
+def test_fan_host_saves_manual_channel_role_and_updates_display(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+
+    pwm_path = tmp_path / "pwm1"
+    pwm_path.write_text("128\n", encoding="utf-8")
+    settings = GuiSettings()
+    saved: list[GuiSettings] = []
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="nct6799 fan1",
+                rpm=987,
+                percent=80,
+                pwm_path=pwm_path,
+                control_available=True,
+                control_reason="PWM writable",
+            )
+        ],
+        control_available=True,
+        control_reason="1 writable PWM channel(s) detected",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=saved.append,
+        snapshot_collector=lambda: snapshot,
+    )
+    page._snapshot = snapshot
+    page._render_snapshot()
+
+    assert "主板 Fan1（未标定） · nct6799 fan1" in page.sensor_value.text()
+
+    page.role_channel_combo.setCurrentIndex(0)
+    page.role_combo.setCurrentIndex(page.role_combo.findData("cpu"))
+    page._save_selected_channel_role()
+
+    assert saved
+    assert saved[-1].host_fan.channel_roles[str(pwm_path)] == "cpu"
+    assert "CPU 风扇 · nct6799 fan1" in page.sensor_value.text()
+
+    page.role_combo.setCurrentIndex(page.role_combo.findData(""))
+    page._save_selected_channel_role()
+
+    assert str(pwm_path) not in saved[-1].host_fan.channel_roles
+    assert "主板 Fan1（未标定） · nct6799 fan1" in page.sensor_value.text()
 
     page.release()
     page.close()

@@ -65,6 +65,7 @@ class HostFanUiSettings:
     curve_hysteresis_c: int = 2
     curve_minimum_percent: int = 20
     curve_fallback_percent: int = 100
+    channel_roles: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -228,6 +229,7 @@ def _host_fan_from_dict(value: Any) -> HostFanUiSettings:
             100,
             defaults.curve_fallback_percent,
         ),
+        channel_roles=_fan_channel_roles_from_dict(value.get("channel_roles")),
     )
 
 
@@ -324,6 +326,18 @@ def _clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, parsed))
+
+
+def _fan_channel_roles_from_dict(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    allowed = {"cpu", "pump", "case", "gpu", "unknown"}
+    roles: dict[str, str] = {}
+    for key, role in value.items():
+        normalized = str(role).strip().lower()
+        if normalized in allowed:
+            roles[str(key)] = normalized
+    return roles
 
 
 def _lianli_fan_mode_for_rpm(rpm: int) -> str:

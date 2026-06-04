@@ -248,6 +248,7 @@ def test_settings_persist_lighting_and_lianli_physical_layout(tmp_path):
         direction="reverse",
         port_label="rear",
     )
+    settings.host_fan.channel_roles["/sys/class/hwmon/hwmon0/pwm1"] = "cpu"
     path = tmp_path / "settings.json"
 
     save_settings(settings, path)
@@ -263,3 +264,4 @@ def test_settings_persist_lighting_and_lianli_physical_layout(tmp_path):
     assert target.layout_order == 3
     assert target.direction == "reverse"
     assert target.port_label == "rear"
+    assert loaded.host_fan.channel_roles["/sys/class/hwmon/hwmon0/pwm1"] == "cpu"
