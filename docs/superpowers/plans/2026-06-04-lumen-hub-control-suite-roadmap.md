@@ -124,21 +124,23 @@ QT_QPA_PLATFORM=offscreen python -m pytest tests/test_fan_host.py -q
 - Modify: `usb9_lcd/lighting/profiles.py`
 - Test: `tests/test_gui_import.py`, `tests/test_lighting.py`
 
-- [ ] **Step 1: Add layout model tests**
+- [x] **Step 1: Add layout model tests**
 
 Cover device order, LED count, direction, and named port/fan positions.
 
-- [ ] **Step 2: Add layout calibration UI**
+- [x] **Step 2: Add layout calibration UI**
 
 Add an explicit calibration panel that can light one device/fan/zone at a time and save order/direction.
 
-- [ ] **Step 3: Feed layouts into effects**
+- [x] **Step 3: Feed layouts into effects**
 
 Make chase, meteor, scan, matrix, and gradient effects consume saved physical layout instead of assuming raw target order.
 
-- [ ] **Step 4: Verify without hardware writes**
+- [x] **Step 4: Verify without hardware writes**
 
 Use fake OpenRGB and fake LIAN LI backends to validate target selection and generated packet/effect order.
+
+Implemented `usb9_lcd/lighting/layout.py`, OpenRGB physical layout settings, a lighting-page physical layout editor for order/LED count/direction/port labels, layout-aware software frames for chase/meteor/comet/scan/visor/matrix/gradient, and LIAN LI cached target layout usage for `led_count` and direction before TLV/static writes.
 
 ### Task 4: Permission Helper Foundation
 

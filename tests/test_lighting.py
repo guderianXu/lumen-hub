@@ -420,6 +420,16 @@ def test_expanded_software_effects_are_color_aware():
         assert effect_uses_color(effect) is True
 
 
+def test_chase_has_software_frame_path_for_physical_layouts():
+    first = render_software_effect_frame("chase", led_count=12, frame_index=0, base_color=(255, 64, 16))
+    second = render_software_effect_frame("chase", led_count=12, frame_index=4, base_color=(255, 64, 16))
+
+    assert "chase" in SOFTWARE_LIGHTING_EFFECTS
+    assert len(first) == 12
+    assert first != second
+    assert any(sum(color) > 120 for color in first + second)
+
+
 def test_meteor_effect_has_no_long_black_gap():
     frames = [
         render_software_effect_frame("meteor", led_count=30, frame_index=index, base_color=(255, 0, 0))
@@ -447,6 +457,104 @@ def test_software_effects_keep_segmented_zones_visible():
 
             assert all(any(color != (0, 0, 0) for color in frame) for frame in frames), effect
             assert max(_frame_brightness(frame) for frame in frames) > 80, effect
+
+
+def test_physical_layout_orders_reverses_and_overrides_led_count():
+    from usb9_lcd.lighting.layout import (
+        LightingPhysicalLayout,
+        LightingTargetLayout,
+        apply_layout_direction,
+        layout_led_count,
+        ordered_layout_entries,
+    )
+
+    layout = LightingPhysicalLayout(
+        targets=(
+            LightingTargetLayout(target_id="device:0:zone:0", order=2, led_count=7, direction="reverse", port_label="bottom"),
+            LightingTargetLayout(target_id="device:0:zone:1", order=1, led_count=5, direction="forward", port_label="top"),
+        )
+    )
+
+    ordered = ordered_layout_entries(layout, ["device:0:zone:0", "device:0:zone:1", "device:0:zone:2"])
+
+    assert [entry.target_id for entry in ordered] == ["device:0:zone:1", "device:0:zone:0", "device:0:zone:2"]
+    assert layout_led_count(layout, "device:0:zone:0", fallback=12) == 7
+    assert layout_led_count(layout, "device:0:zone:2", fallback=12) == 12
+    assert apply_layout_direction([(1, 0, 0), (2, 0, 0), (3, 0, 0)], ordered[1]) == [
+        (3, 0, 0),
+        (2, 0, 0),
+        (1, 0, 0),
+    ]
+
+
+def test_openrgb_software_effect_uses_physical_layout_order_and_direction():
+    from usb9_lcd.lighting.layout import LightingPhysicalLayout, LightingTargetLayout
+
+    controller = OpenRgbLightingController()
+    controller.client = FakeClient()
+    zone_a = FakeZone()
+    zone_b = FakeZone()
+    controller.client.devices[0].modes = [FakeMode("Direct"), FakeMode("Off")]
+    controller.client.devices[0].zones = [zone_a, zone_b]
+    controller.targets = [
+        LightingTarget(
+            id="device:0",
+            name="ARGB Controller / 全部",
+            device_index=0,
+            zone_index=None,
+            modes=("Direct", "Off"),
+        )
+    ]
+    controller.refresh = lambda: list(controller.targets)
+
+    layout = LightingPhysicalLayout(
+        targets=(
+            LightingTargetLayout(target_id="device:0:zone:1", order=1, led_count=3, direction="forward"),
+            LightingTargetLayout(target_id="device:0:zone:0", order=2, led_count=3, direction="reverse"),
+        )
+    )
+    controller.apply(
+        LightingSettings(
+            target_id="device:0",
+            effect="gradient",
+            color="#ff0000",
+            brightness_percent=100,
+            speed_percent=50,
+            zone_size=3,
+            physical_layout=layout,
+        )
+    )
+
+    try:
+        zone_b_colors = _rgb_tuples(zone_b.color_frames[0][0])
+        zone_a_colors = _rgb_tuples(zone_a.color_frames[0][0])
+        expected_first = render_software_effect_frame(
+            "gradient",
+            led_count=3,
+            frame_index=0,
+            base_color=(255, 0, 0),
+            global_offset=0,
+            total_leds=6,
+        )
+        expected_second = list(
+            reversed(
+                render_software_effect_frame(
+                    "gradient",
+                    led_count=3,
+                    frame_index=0,
+                    base_color=(255, 0, 0),
+                    global_offset=3,
+                    total_leds=6,
+                )
+            )
+        )
+
+        assert zone_b.resized_to == 3
+        assert zone_a.resized_to == 3
+        assert zone_b_colors == expected_first
+        assert zone_a_colors == expected_second
+    finally:
+        controller._stop_software_effect()
 
 
 def test_openrgb_missing_expanded_effect_starts_software_animation_on_zone():
@@ -520,3 +628,7 @@ def test_openrgb_native_expanded_effect_is_not_overwritten_by_static_color():
 
 def _frame_brightness(frame):
     return max((sum(color) for color in frame), default=0)
+
+
+def _rgb_tuples(colors):
+    return [(color.red, color.green, color.blue) for color in colors]

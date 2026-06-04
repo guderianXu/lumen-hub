@@ -38,6 +38,7 @@ from usb9_lcd.gui.settings import (
 )
 from usb9_lcd.lighting import LightingSettings, LightingTarget, OpenRgbLightingController, OpenRgbServerManager
 from usb9_lcd.lighting.effects import LIGHTING_EFFECTS, LIGHTING_EFFECT_MAP, effect_label
+from usb9_lcd.lighting.layout import LightingPhysicalLayout
 from usb9_lcd.lighting.profiles import openrgb_device_profile_payload
 
 
@@ -685,6 +686,25 @@ class LightingPage(QWidget):
 
         self.target_alias_input.editingFinished.connect(self._save_current_target_alias)
 
+        self.layout_order_spin = QSpinBox()
+        self.layout_order_spin.setRange(0, 255)
+        self.layout_order_spin.setToolTip("物理串联顺序；0 表示使用 OpenRGB 原始顺序。")
+
+        self.layout_led_count_spin = QSpinBox()
+        self.layout_led_count_spin.setRange(0, 500)
+        self.layout_led_count_spin.setSuffix(" 灯")
+        self.layout_led_count_spin.setToolTip("0 表示使用 OpenRGB 回报的 LED 数或默认灯珠数量。")
+
+        self.layout_direction_combo = QComboBox()
+        self.layout_direction_combo.addItem("正向", "forward")
+        self.layout_direction_combo.addItem("反向", "reverse")
+
+        self.layout_port_input = QLineEdit()
+        self.layout_port_input.setPlaceholderText("端口/位置，例如：顶部、底部、后置")
+
+        self.save_lighting_layout_button = QPushButton("保存物理布局")
+        self.save_lighting_layout_button.clicked.connect(self.save_lighting_layout)
+
         target_button_row = QHBoxLayout()
 
         self.save_target_profile_button = QPushButton("保存区域配置")
@@ -729,13 +749,31 @@ class LightingPage(QWidget):
 
         layout.addWidget(self.target_alias_input, 1, 2, 1, 3)
 
-        layout.addLayout(target_button_row, 2, 0, 1, 5)
+        layout.addWidget(QLabel("顺序"), 2, 0)
 
-        layout.addWidget(self.openrgb_modes_text, 0, 5, 3, 1)
+        layout.addWidget(self.layout_order_spin, 2, 1)
+
+        layout.addWidget(QLabel("灯数"), 2, 2)
+
+        layout.addWidget(self.layout_led_count_spin, 2, 3)
+
+        layout.addWidget(QLabel("方向"), 2, 4)
+
+        layout.addWidget(self.layout_direction_combo, 2, 5)
+
+        layout.addWidget(QLabel("端口/位置"), 3, 0)
+
+        layout.addWidget(self.layout_port_input, 3, 1, 1, 3)
+
+        layout.addWidget(self.save_lighting_layout_button, 3, 4, 1, 2)
+
+        layout.addLayout(target_button_row, 4, 0, 1, 5)
+
+        layout.addWidget(self.openrgb_modes_text, 0, 6, 5, 1)
 
         layout.setColumnStretch(2, 2)
 
-        layout.setColumnStretch(5, 1)
+        layout.setColumnStretch(6, 1)
 
         return panel
 
@@ -1597,6 +1635,8 @@ class LightingPage(QWidget):
             zone_size=settings.zone_size,
 
             save=settings.save,
+
+            physical_layout=settings.physical_layout,
 
         )
 
@@ -2493,6 +2533,8 @@ class LightingPage(QWidget):
 
             save=self.save_mode_checkbox.isChecked(),
 
+            physical_layout=self._current_physical_layout(),
+
         )
 
 
@@ -2637,6 +2679,8 @@ class LightingPage(QWidget):
             zone_size=int(profile.get("argb_zone_size", self.settings.lighting.argb_zone_size)),
 
             save=bool(profile.get("save_mode", self.settings.lighting.save_mode)),
+
+            physical_layout=self._current_physical_layout(),
 
         )
 
@@ -2980,11 +3024,15 @@ class LightingPage(QWidget):
             self.openrgb_modes_text.setPlainText(render_lighting_target_partition_summary(self.targets))
 
             self.target_alias_input.setText("")
+
+            self._restore_layout_controls("")
             self._update_lighting_apply_preview()
 
             return
 
         self.target_alias_input.setText(self.settings.lighting.target_aliases.get(target.id, ""))
+
+        self._restore_layout_controls(target.id)
 
         profile = self.settings.lighting.device_profiles.get(f"device:{target.device_index}")
 
@@ -3013,6 +3061,56 @@ class LightingPage(QWidget):
             render_lighting_target_partition_summary(self.targets),
         ]
         self.openrgb_modes_text.setPlainText("\n".join(lines))
+        self._update_lighting_apply_preview()
+
+
+    def _current_physical_layout(self) -> LightingPhysicalLayout:
+
+        return LightingPhysicalLayout.from_mapping(self.settings.lighting.physical_layout)
+
+
+    def _restore_layout_controls(self, target_id: str) -> None:
+
+        payload = self.settings.lighting.physical_layout.get(target_id, {}) if target_id else {}
+
+        if not isinstance(payload, dict):
+
+            payload = {}
+
+        self.layout_order_spin.setValue(int(payload.get("order", 0) or 0))
+
+        self.layout_led_count_spin.setValue(int(payload.get("led_count", 0) or 0))
+
+        direction = str(payload.get("direction", "forward"))
+
+        self.layout_direction_combo.setCurrentIndex(max(0, self.layout_direction_combo.findData(direction)))
+
+        self.layout_port_input.setText(str(payload.get("port_label", "")))
+
+
+    def save_lighting_layout(self) -> None:
+
+        target_id = str(self.lighting_target_combo.currentData() or "")
+
+        if not target_id:
+
+            self.openrgb_status_label.setText("请先选择灯光目标")
+
+            return
+
+        self.settings.lighting.physical_layout[target_id] = {
+            "order": self.layout_order_spin.value(),
+            "led_count": self.layout_led_count_spin.value(),
+            "direction": str(self.layout_direction_combo.currentData() or "forward"),
+            "port_label": self.layout_port_input.text().strip(),
+        }
+
+        save_settings(self.settings)
+
+        self.lighting_save_status_label.setText(f"物理布局已保存：{target_id}")
+
+        self.openrgb_status_label.setText("物理布局已保存")
+
         self._update_lighting_apply_preview()
 
 

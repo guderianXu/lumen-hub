@@ -4,7 +4,7 @@ import colorsys
 import math
 
 
-SOFTWARE_LIGHTING_EFFECTS = frozenset({"star", "meteor", "comet", "scan", "visor", "matrix", "gradient"})
+SOFTWARE_LIGHTING_EFFECTS = frozenset({"chase", "star", "meteor", "comet", "scan", "visor", "matrix", "gradient"})
 
 Rgb = tuple[int, int, int]
 
@@ -33,6 +33,8 @@ def render_software_effect_frame(
         return []
     if effect == "star":
         return _star_frame(count, frame_index, base_color, global_offset)
+    if effect == "chase":
+        return _chase_frame(count, frame_index, base_color, global_offset, total)
     if effect == "meteor":
         return _tail_frame(count, frame_index, base_color, global_offset, total, tail_ratio=0.18, white_head=False)
     if effect == "comet":
@@ -61,6 +63,22 @@ def _star_frame(count: int, frame_index: int, base: Rgb, offset: int) -> list[Rg
         else:
             intensity = 0.08 if _noise(index + offset, 0, 97) > 210 else 0.05
         frame.append(_max_rgb(ambient, _scale(base, intensity)))
+    return frame
+
+
+def _chase_frame(count: int, frame_index: int, base: Rgb, offset: int, total: int) -> list[Rgb]:
+    position = (frame_index * 2) % max(1, total)
+    width = max(2, total // 10)
+    ambient = _scale(base, 0.05)
+    frame: list[Rgb] = []
+    for index in range(count):
+        global_index = index + offset
+        distance = (global_index - position) % max(1, total)
+        if distance <= width:
+            intensity = (1 - distance / max(1, width)) ** 1.2
+            frame.append(_max_rgb(ambient, _scale(base, intensity)))
+        else:
+            frame.append(ambient)
     return frame
 
 

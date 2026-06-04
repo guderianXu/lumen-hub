@@ -16,7 +16,7 @@ from usb9_lcd.platforms import current_platform
 _PLATFORM = current_platform()
 DEFAULT_SETTINGS_PATH = _PLATFORM.settings_path()
 DEFAULT_OPENRGB_PATH = _PLATFORM.default_openrgb_path()
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 
 @dataclass
@@ -25,6 +25,7 @@ class LightingUiSettings:
     target_aliases: dict[str, str] = field(default_factory=dict)
     target_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
     device_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
+    physical_layout: dict[str, dict[str, Any]] = field(default_factory=dict)
     active_scene: str = ""
     scenes: dict[str, dict[str, Any]] = field(default_factory=dict)
     palette: str = "neon"
@@ -75,6 +76,9 @@ class LianLiWirelessTargetSettings:
     device_type: int = 0
     fan_count: int = 4
     led_count: int = 26
+    layout_order: int = 0
+    direction: str = "forward"
+    port_label: str = ""
     label: str = ""
 
 
@@ -138,12 +142,14 @@ def _lighting_from_dict(value: Any) -> LightingUiSettings:
     aliases = value.get("target_aliases")
     profiles = value.get("target_profiles")
     device_profiles = value.get("device_profiles")
+    physical_layout = value.get("physical_layout")
     scenes = value.get("scenes")
     return LightingUiSettings(
         target_id=str(value.get("target_id", defaults.target_id)),
         target_aliases={str(key): str(label) for key, label in aliases.items()} if isinstance(aliases, dict) else {},
         target_profiles=profiles if isinstance(profiles, dict) else {},
         device_profiles=device_profiles if isinstance(device_profiles, dict) else {},
+        physical_layout=_lighting_physical_layout_from_dict(physical_layout),
         active_scene=str(value.get("active_scene", defaults.active_scene)),
         scenes=scenes if isinstance(scenes, dict) else {},
         palette=str(value.get("palette", defaults.palette)),
@@ -168,6 +174,8 @@ def _migrate_settings_payload(payload: dict[str, Any]) -> dict[str, Any]:
         lighting = dict(lighting)
     if version < 2:
         lighting.setdefault("device_profiles", {})
+    if version < 3:
+        lighting.setdefault("physical_layout", {})
     migrated["lighting"] = lighting
     migrated["config_version"] = CONFIG_VERSION
     return migrated
@@ -283,8 +291,31 @@ def _lianli_wireless_target_from_dict(value: Any) -> LianLiWirelessTargetSetting
         device_type=_clamp_int(value.get("device_type"), 0, 255, defaults.device_type),
         fan_count=_clamp_int(value.get("fan_count"), 0, 16, defaults.fan_count),
         led_count=_clamp_int(value.get("led_count"), 1, 255, defaults.led_count),
+        layout_order=_clamp_int(value.get("layout_order"), 0, 255, defaults.layout_order),
+        direction=_normalize_layout_direction(str(value.get("direction", defaults.direction))),
+        port_label=str(value.get("port_label", defaults.port_label)),
         label=str(value.get("label", defaults.label)),
     )
+
+
+def _lighting_physical_layout_from_dict(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    layout: dict[str, dict[str, Any]] = {}
+    for target_id, payload in value.items():
+        if not isinstance(payload, dict):
+            continue
+        layout[str(target_id)] = {
+            "order": _clamp_int(payload.get("order"), 0, 255, 0),
+            "led_count": _clamp_int(payload.get("led_count"), 0, 500, 0),
+            "direction": _normalize_layout_direction(str(payload.get("direction", "forward"))),
+            "port_label": str(payload.get("port_label", "")),
+        }
+    return layout
+
+
+def _normalize_layout_direction(value: str) -> str:
+    return "reverse" if value.strip().lower() in {"reverse", "reversed", "backward", "rtl", "反向"} else "forward"
 
 
 def _clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:

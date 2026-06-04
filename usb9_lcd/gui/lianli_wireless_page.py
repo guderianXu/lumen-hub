@@ -3631,7 +3631,27 @@ class LianLiWirelessPage(QWidget):
 
     ) -> int:
 
+        cached_layout = self.settings.lianli_wireless.targets.get(target.mac)
+
         led_count = self.lianli_direct_led_count.value()
+
+        direction_override = ""
+
+        if cached_layout is not None:
+
+            led_count = max(1, min(255, int(cached_layout.led_count or led_count)))
+
+            self.lianli_direct_led_count.setValue(led_count)
+
+            direction_override = str(cached_layout.direction or "")
+
+            if direction_override in {"left", "right"}:
+
+                index = self.lianli_direction_combo.findData(direction_override)
+
+                if index >= 0:
+
+                    self.lianli_direction_combo.setCurrentIndex(index)
 
         if effect == "static":
 
@@ -3707,7 +3727,7 @@ class LianLiWirelessPage(QWidget):
 
                     accent_color = palette[1]
 
-            direction = str(self.lianli_direction_combo.currentData() or "left")
+            direction = direction_override if direction_override in {"left", "right"} else str(self.lianli_direction_combo.currentData() or "left")
 
             effect_index = tlv2_color_effect_index(
 

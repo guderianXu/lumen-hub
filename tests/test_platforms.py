@@ -229,3 +229,37 @@ def test_permission_request_models_cover_safe_operations(tmp_path, monkeypatch):
     assert status.backend == "direct-shell-fallback"
     assert items[0].label == "权限 Helper"
     assert "direct-shell-fallback" in items[0].detail
+
+
+def test_settings_persist_lighting_and_lianli_physical_layout(tmp_path):
+    from usb9_lcd.gui.settings import GuiSettings, LianLiWirelessTargetSettings, load_settings, save_settings
+
+    settings = GuiSettings()
+    settings.lighting.physical_layout["device:0:zone:1"] = {
+        "order": 2,
+        "led_count": 26,
+        "direction": "reverse",
+        "port_label": "top",
+    }
+    settings.lianli_wireless.targets["aa:bb:cc:dd:ee:ff"] = LianLiWirelessTargetSettings(
+        mac="aa:bb:cc:dd:ee:ff",
+        led_count=26,
+        layout_order=3,
+        direction="reverse",
+        port_label="rear",
+    )
+    path = tmp_path / "settings.json"
+
+    save_settings(settings, path)
+    loaded = load_settings(path)
+
+    assert loaded.lighting.physical_layout["device:0:zone:1"] == {
+        "order": 2,
+        "led_count": 26,
+        "direction": "reverse",
+        "port_label": "top",
+    }
+    target = loaded.lianli_wireless.targets["aa:bb:cc:dd:ee:ff"]
+    assert target.layout_order == 3
+    assert target.direction == "reverse"
+    assert target.port_label == "rear"

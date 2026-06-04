@@ -8,6 +8,14 @@ from typing import Any
 
 from .effects import effect_aliases, effect_uses_color
 from .engine import build_lighting_apply_plan
+from .layout import (
+    LightingPhysicalLayout,
+    LightingTargetLayout,
+    apply_layout_direction,
+    layout_entry_for_target,
+    layout_led_count,
+    ordered_layout_entries,
+)
 from .software_effects import render_software_effect_frame, software_effect_interval_seconds
 
 
@@ -38,6 +46,15 @@ class LightingSettings:
     speed_percent: int
     zone_size: int | None = None
     save: bool = False
+    physical_layout: LightingPhysicalLayout | None = None
+
+
+@dataclass(frozen=True)
+class _SoftwareFrameTarget:
+    writer: Any
+    led_count: int
+    target_id: str
+    layout: LightingTargetLayout
 
 
 class OpenRgbLightingController:
@@ -144,11 +161,28 @@ class OpenRgbLightingController:
         zone_size: int | None,
     ) -> None:
         self._prepare_software_frame_mode(device, settings.save)
-        self._write_software_effect_frame(device, target, settings.effect, color, zone_size, frame_index=0)
+        self._write_software_effect_frame(
+            device,
+            target,
+            settings.effect,
+            color,
+            zone_size,
+            frame_index=0,
+            physical_layout=settings.physical_layout,
+        )
         stop_event = threading.Event()
         thread = threading.Thread(
             target=self._run_software_effect_loop,
-            args=(stop_event, device, target, settings.effect, color, settings.speed_percent, zone_size),
+            args=(
+                stop_event,
+                device,
+                target,
+                settings.effect,
+                color,
+                settings.speed_percent,
+                zone_size,
+                settings.physical_layout,
+            ),
             name=f"openrgb-software-{settings.effect}",
             daemon=True,
         )
@@ -165,12 +199,21 @@ class OpenRgbLightingController:
         color: Any,
         speed_percent: int,
         zone_size: int | None,
+        physical_layout: LightingPhysicalLayout | None,
     ) -> None:
         interval = software_effect_interval_seconds(speed_percent)
         frame_index = 1
         while not stop_event.wait(interval):
             try:
-                self._write_software_effect_frame(device, target, effect, color, zone_size, frame_index=frame_index)
+                self._write_software_effect_frame(
+                    device,
+                    target,
+                    effect,
+                    color,
+                    zone_size,
+                    frame_index=frame_index,
+                    physical_layout=physical_layout,
+                )
             except Exception:
                 _LOGGER.exception("openrgb software effect frame failed: %s", effect)
                 return
@@ -205,43 +248,65 @@ class OpenRgbLightingController:
         zone_size: int | None,
         *,
         frame_index: int,
+        physical_layout: LightingPhysicalLayout | None = None,
     ) -> None:
-        targets = self._software_frame_targets(device, target, zone_size)
-        total_leds = sum(count for _writer, count in targets)
+        targets = self._software_frame_targets(device, target, zone_size, physical_layout)
+        total_leds = sum(item.led_count for item in targets)
         if total_leds <= 0:
             self._set_target_color(device, target, color, zone_size)
             return
         base_color = _rgb_tuple(color)
         offset = 0
         with self._write_lock:
-            for writer, led_count in targets:
+            for frame_target in targets:
                 frame = render_software_effect_frame(
                     effect,
-                    led_count=led_count,
+                    led_count=frame_target.led_count,
                     frame_index=frame_index,
                     base_color=base_color,
                     global_offset=offset,
                     total_leds=total_leds,
                 )
-                self._write_color_frame(writer, [_rgb_color_from_tuple(color, item) for item in frame])
-                offset += led_count
+                frame = apply_layout_direction(frame, frame_target.layout)
+                self._write_color_frame(frame_target.writer, [_rgb_color_from_tuple(color, item) for item in frame])
+                offset += frame_target.led_count
 
-    def _software_frame_targets(self, device: Any, target: LightingTarget, zone_size: int | None) -> list[tuple[Any, int]]:
+    def _software_frame_targets(
+        self,
+        device: Any,
+        target: LightingTarget,
+        zone_size: int | None,
+        physical_layout: LightingPhysicalLayout | None = None,
+    ) -> list[_SoftwareFrameTarget]:
         if target.zone_index is not None:
             zone = device.zones[target.zone_index]
-            self._resize_zone_object_if_needed(zone, zone_size)
-            return [(zone, _object_led_count(zone, zone_size))]
+            entry = layout_entry_for_target(physical_layout, target.id)
+            target_zone_size = entry.led_count if entry.led_count > 0 else zone_size
+            self._resize_zone_object_if_needed(zone, target_zone_size)
+            led_count = layout_led_count(physical_layout, target.id, fallback=_object_led_count(zone, zone_size))
+            return [_SoftwareFrameTarget(zone, led_count, target.id, entry)]
 
         zones = list(getattr(device, "zones", []))
-        frame_targets: list[tuple[Any, int]] = []
-        for zone in zones:
-            self._resize_zone_object_if_needed(zone, zone_size)
-            led_count = _object_led_count(zone, zone_size)
+        raw_zone_targets: dict[str, tuple[Any, int]] = {}
+        raw_zone_ids: list[str] = []
+        for zone_index, zone in enumerate(zones):
+            zone_target_id = f"device:{target.device_index}:zone:{zone_index}"
+            entry = layout_entry_for_target(physical_layout, zone_target_id)
+            target_zone_size = entry.led_count if entry.led_count > 0 else zone_size
+            self._resize_zone_object_if_needed(zone, target_zone_size)
+            led_count = layout_led_count(physical_layout, zone_target_id, fallback=_object_led_count(zone, zone_size))
             if led_count > 0:
-                frame_targets.append((zone, led_count))
+                raw_zone_ids.append(zone_target_id)
+                raw_zone_targets[zone_target_id] = (zone, led_count)
+        frame_targets: list[_SoftwareFrameTarget] = []
+        for entry in ordered_layout_entries(physical_layout, raw_zone_ids):
+            writer, led_count = raw_zone_targets[entry.target_id]
+            frame_targets.append(_SoftwareFrameTarget(writer, led_count, entry.target_id, entry))
         if frame_targets:
             return frame_targets
-        return [(device, _object_led_count(device, zone_size))]
+        entry = layout_entry_for_target(physical_layout, target.id)
+        led_count = layout_led_count(physical_layout, target.id, fallback=_object_led_count(device, zone_size))
+        return [_SoftwareFrameTarget(device, led_count, target.id, entry)]
 
     def _write_color_frame(self, target: Any, colors: list[Any]) -> None:
         set_colors = getattr(target, "set_colors", None)

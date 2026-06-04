@@ -1727,6 +1727,60 @@ def test_lianli_wireless_page_static_effect_uses_backend_default_color_slot():
     app.quit()
 
 
+def test_lianli_wireless_page_uses_cached_physical_layout_for_effects():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import LianLiWirelessTargetSettings
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.calls: list[dict[str, object]] = []
+
+        def send_tlv2_effect(self, target, effect, *, led_count, brightness, **kwargs):
+            self.calls.append({"effect": effect, "led_count": led_count, "brightness": brightness, **kwargs})
+            return 20
+
+    target = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend)
+    page.settings.lianli_wireless.targets[target.mac] = LianLiWirelessTargetSettings(
+        mac=target.mac,
+        master_mac=target.master_mac,
+        led_count=52,
+        direction="right",
+        layout_order=2,
+        port_label="rear",
+    )
+    page.settings.lianli_wireless.active_target_mac = target.mac
+    page.lianli_direct_led_count.setValue(26)
+    page.lianli_direction_combo.setCurrentIndex(page.lianli_direction_combo.findData("left"))
+
+    packets = page._send_lianli_effect_with_backend(backend, target, "runway")
+
+    assert packets == 20
+    assert backend.calls[-1]["led_count"] == 52
+    assert backend.calls[-1]["direction"] == "right"
+    assert page.lianli_direct_led_count.value() == 52
+    assert page.lianli_direction_combo.currentData() == "right"
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_runs_safe_sync_experiment(tmp_path: Path):
     from PySide6.QtWidgets import QApplication
 
@@ -4625,6 +4679,45 @@ def test_lighting_page_shows_saved_feedback_after_target_profile(monkeypatch):
     assert saved
     assert "区域配置已保存" in page.lighting_save_status_label.text()
     assert page.openrgb_status_label.text() == "区域配置已保存"
+
+    page.close()
+    app.quit()
+
+
+def test_lighting_page_saves_physical_layout_for_current_target(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.pages as pages
+    from usb9_lcd.gui.pages import LightingPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    saved = []
+    monkeypatch.setattr(pages, "save_settings", lambda settings: saved.append(settings))
+    app = QApplication.instance() or QApplication([])
+    settings = GuiSettings()
+    page = LightingPage(controller=FakeLightingController(), settings=settings)
+
+    page.connect_openrgb()
+    assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
+    page.lighting_target_combo.setCurrentIndex(1)
+    page.layout_order_spin.setValue(2)
+    page.layout_led_count_spin.setValue(26)
+    page.layout_direction_combo.setCurrentIndex(page.layout_direction_combo.findData("reverse"))
+    page.layout_port_input.setText("top")
+
+    page.save_lighting_layout()
+
+    assert saved
+    assert settings.lighting.physical_layout["device:0:zone:1"] == {
+        "order": 2,
+        "led_count": 26,
+        "direction": "reverse",
+        "port_label": "top",
+    }
+    settings_for_apply = page._current_lighting_settings("device:0:zone:1")
+    assert settings_for_apply.physical_layout is not None
+    assert settings_for_apply.physical_layout.targets[0].target_id == "device:0:zone:1"
+    assert "物理布局已保存" in page.lighting_save_status_label.text()
 
     page.close()
     app.quit()
