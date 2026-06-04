@@ -50,13 +50,15 @@ class ControlCenterPage(QWidget):
         self.lighting_value = QLabel("默认关闭")
         self.lianli_value = QLabel("未连接")
         self.permission_value = QLabel("权限未检查")
+        self.device_tree_value = QLabel("设备树未生成")
         overview.addWidget(self._status_card("LCD 设备", self.device_value), 0, 0)
         overview.addWidget(self._status_card("CPU", self.cpu_value), 0, 1)
         overview.addWidget(self._status_card("GPU", self.gpu_value), 0, 2)
         overview.addWidget(self._status_card("风扇", self.fan_value), 1, 0)
         overview.addWidget(self._status_card("灯效", self.lighting_value), 1, 1)
         overview.addWidget(self._status_card("联力无线", self.lianli_value), 1, 2)
-        overview.addWidget(self._status_card("权限", self.permission_value), 2, 0, 1, 3)
+        overview.addWidget(self._status_card("设备树", self.device_tree_value), 2, 0)
+        overview.addWidget(self._status_card("权限", self.permission_value), 2, 1, 1, 2)
         layout.addLayout(overview)
         layout.addWidget(
             self._command_panel(
@@ -271,6 +273,9 @@ class ControlCenterPage(QWidget):
 
     def update_permission_status(self, text: str) -> None:
         self.permission_value.setText(text or "权限未检查")
+
+    def update_device_tree_status(self, text: str) -> None:
+        self.device_tree_value.setText(text or "设备树未生成")
 
     def recent_events(self) -> list[str]:
         return list(self._events)

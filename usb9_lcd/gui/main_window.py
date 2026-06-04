@@ -84,6 +84,7 @@ except Exception as fan_host_import_error:  # noqa: BLE001 - keep the GUI usable
             return None
 from usb9_lcd.gui.home import ControlCenterPage
 from usb9_lcd.gui.asset_page import AssetLibraryPage
+from usb9_lcd.gui.device_inventory import build_device_tree_snapshot, summarize_device_tree
 from usb9_lcd.gui.monitor_page import MonitorPage
 from usb9_lcd.gui.lianli_wireless_page import LianLiWirelessPage
 from usb9_lcd.gui.lighting_page import LightingPage
@@ -474,7 +475,9 @@ class MainWindow(QMainWindow):
     def _refresh_home_permission_status(self) -> None:
         if not hasattr(self, "home_page"):
             return
-        self.home_page.update_permission_status(summarize_permission_status(self._system_status_snapshot()))
+        snapshot = self._system_status_snapshot()
+        self.home_page.update_permission_status(summarize_permission_status(snapshot))
+        self.home_page.update_device_tree_status(summarize_device_tree(snapshot.device_tree))
 
     def _system_status_snapshot(self) -> SystemStatusSnapshot:
         events = self.home_page.recent_events() if hasattr(self, "home_page") else []
@@ -483,6 +486,13 @@ class MainWindow(QMainWindow):
         return SystemStatusSnapshot(
             components=self._system_component_status_items(log_lines),
             permissions=self._permission_status_items(),
+            device_tree=build_device_tree_snapshot(
+                lcd_devices=list(self.devices),
+                telemetry=self.latest_telemetry,
+                fan_status=self.fan_page.home_status_text(),
+                lighting_status=self.lighting_page.home_status_text(),
+                lianli_status=self.lianli_page.home_status_text(),
+            ),
             recent_events=recent_events[:6],
         )
 

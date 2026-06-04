@@ -311,11 +311,20 @@ def test_gui_debug_logging_writes_log_file(tmp_path: Path):
 
 
 def test_system_status_report_includes_permission_and_component_state():
+    from usb9_lcd.gui.device_inventory import build_device_tree_snapshot
     from usb9_lcd.gui.system_status import StatusItem, SystemStatusSnapshot, render_system_status_report
 
+    device_tree = build_device_tree_snapshot(
+        lcd_devices=[_fake_device(display_name="ASUS LCD")],
+        telemetry=_fake_telemetry(),
+        fan_status="2 个传感器 / 1 可控",
+        lighting_status="已连接 4 个目标",
+        lianli_status="接收器 1 个",
+    )
     snapshot = SystemStatusSnapshot(
         components=[StatusItem("CPU", "ok", "温度/负载可读"), StatusItem("OpenRGB", "warn", "未连接")],
         permissions=[StatusItem("CPU 功耗", "warn", "/sys/class/powercap/.../energy_uj 需授权")],
+        device_tree=device_tree,
         recent_events=["CPU 功耗权限已授权"],
     )
 
@@ -325,6 +334,10 @@ def test_system_status_report_includes_permission_and_component_state():
     assert "CPU" in report
     assert "OpenRGB" in report
     assert "CPU 功耗" in report
+    assert "设备树" in report
+    assert "ASUS LCD" in report
+    assert "GPU Fan" in report
+    assert "联力无线" in report
     assert "CPU 功耗权限已授权" in report
 
 
@@ -546,6 +559,34 @@ def test_home_dashboard_tracks_subsystem_status_signals():
     assert window.home_page.fan_value.text() == "2 通道\n1 有转速 · 只读监控"
     assert window.home_page.lighting_value.text() == "已连接 3\n关闭"
     assert window.home_page.lianli_value.text() == "接收器 1 个"
+
+    window.close()
+    app.quit()
+
+
+def test_main_window_system_status_snapshot_includes_device_tree():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.main_window import MainWindow
+    from usb9_lcd.gui.system_status import render_system_status_report
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+
+    window.refresh_devices()
+    window.refresh_telemetry()
+    report = render_system_status_report(window._system_status_snapshot())
+
+    assert "设备树" in report
+    assert "ASUS Test LCD" in report
+    assert "GPU Fan" in report
+    assert "灯效" in report
+    assert "联力无线" in report
+    assert "正常" in window.home_page.device_tree_value.text()
 
     window.close()
     app.quit()

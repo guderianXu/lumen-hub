@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from usb9_lcd.gui.device_inventory import DeviceTreeSnapshot, render_device_tree_report
+
 
 @dataclass(frozen=True)
 class StatusItem:
@@ -14,6 +16,7 @@ class StatusItem:
 class SystemStatusSnapshot:
     components: list[StatusItem] = field(default_factory=list)
     permissions: list[StatusItem] = field(default_factory=list)
+    device_tree: DeviceTreeSnapshot | None = None
     recent_events: list[str] = field(default_factory=list)
 
 
@@ -21,6 +24,7 @@ def render_system_status_report(snapshot: SystemStatusSnapshot) -> str:
     lines = ["系统状态"]
     _append_section(lines, "组件", snapshot.components)
     _append_section(lines, "权限", snapshot.permissions)
+    lines.extend(["", render_device_tree_report(snapshot.device_tree)])
     lines.extend(["", "最近事件"])
     lines.extend(snapshot.recent_events or ["--  无"])
     return "\n".join(lines)
