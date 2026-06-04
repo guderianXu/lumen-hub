@@ -9,6 +9,26 @@ from PIL import Image, UnidentifiedImageError
 
 SUPPORTED_MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
+ASSET_CATEGORIES = {
+    "monitoring": "监控仪表盘",
+    "cpu-theme": "CPU 主题",
+    "gpu-theme": "GPU 主题",
+    "lianli-status": "联力状态",
+    "animation": "动图/GIF",
+    "static": "静态图片",
+    "test-pattern": "测试图案",
+}
+
+ASSET_CATEGORY_ORDER = (
+    "monitoring",
+    "cpu-theme",
+    "gpu-theme",
+    "lianli-status",
+    "animation",
+    "static",
+    "test-pattern",
+)
+
 DEFAULT_LINKS = [
     {
         "title": "ROG official GIPHY",
@@ -47,6 +67,9 @@ class MediaAsset:
     height: int
     frame_count: int
     animated: bool
+    category: str = "static"
+    category_label: str = ASSET_CATEGORIES["static"]
+    template: bool = False
 
 
 class AssetLibrary:
@@ -54,12 +77,22 @@ class AssetLibrary:
         self.root = Path(root)
         self.presets_dir = self.root / "presets"
         self.user_dir = self.root / "user"
+        self.monitor_backgrounds_dir = self.root / "monitor_backgrounds"
+        self.cpu_themes_dir = self.root / "cpu_themes"
+        self.gpu_themes_dir = self.root / "gpu_themes"
+        self.lianli_status_themes_dir = self.root / "lianli_status_themes"
+        self.test_patterns_dir = self.root / "test_patterns"
         self.links_path = self.root / "links.json"
         self.ensure()
 
     def ensure(self) -> None:
         self.presets_dir.mkdir(parents=True, exist_ok=True)
         self.user_dir.mkdir(parents=True, exist_ok=True)
+        self.monitor_backgrounds_dir.mkdir(parents=True, exist_ok=True)
+        self.cpu_themes_dir.mkdir(parents=True, exist_ok=True)
+        self.gpu_themes_dir.mkdir(parents=True, exist_ok=True)
+        self.lianli_status_themes_dir.mkdir(parents=True, exist_ok=True)
+        self.test_patterns_dir.mkdir(parents=True, exist_ok=True)
         from usb9_lcd.presets import DEFAULT_PRESET_SPECS, generate_default_presets
 
         if any(not (self.presets_dir / spec.name).exists() for spec in DEFAULT_PRESET_SPECS):
@@ -101,17 +134,25 @@ class AssetLibrary:
         ]
         self.links_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    def list_media(self) -> list[MediaAsset]:
+    def list_media(self, category: str | None = None) -> list[MediaAsset]:
         self.ensure()
         assets: list[MediaAsset] = []
-        for directory in (self.presets_dir, self.user_dir):
+        for directory, fixed_category, is_template in self._media_sources():
             for path in sorted(directory.iterdir()):
                 if not path.is_file() or path.suffix.lower() not in SUPPORTED_MEDIA_EXTENSIONS:
                     continue
-                asset = _read_media_asset(path)
+                asset = _read_media_asset(path, fixed_category=fixed_category, template=is_template)
                 if asset is not None:
                     assets.append(asset)
+        if category:
+            return [asset for asset in assets if asset.category == category]
         return assets
+
+    def category_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for asset in self.list_media():
+            counts[asset.category] = counts.get(asset.category, 0) + 1
+        return {category: counts[category] for category in ASSET_CATEGORY_ORDER if category in counts}
 
     def import_file(self, source: Path | str) -> Path:
         self.ensure()
@@ -128,6 +169,17 @@ class AssetLibrary:
         copy2(source_path, destination)
         return destination
 
+    def _media_sources(self) -> tuple[tuple[Path, str | None, bool], ...]:
+        return (
+            (self.monitor_backgrounds_dir, "monitoring", True),
+            (self.cpu_themes_dir, "cpu-theme", True),
+            (self.gpu_themes_dir, "gpu-theme", True),
+            (self.lianli_status_themes_dir, "lianli-status", True),
+            (self.presets_dir, None, True),
+            (self.user_dir, None, False),
+            (self.test_patterns_dir, "test-pattern", True),
+        )
+
 
 def _default_asset_links() -> list[AssetLink]:
     return [
@@ -141,17 +193,22 @@ def _default_asset_links() -> list[AssetLink]:
     ]
 
 
-def _read_media_asset(path: Path) -> MediaAsset | None:
+def _read_media_asset(path: Path, *, fixed_category: str | None = None, template: bool = False) -> MediaAsset | None:
     try:
         with Image.open(path) as image:
             frame_count = int(getattr(image, "n_frames", 1))
+            animated = frame_count > 1
+            category = fixed_category or ("animation" if animated else "static")
             return MediaAsset(
                 path=path,
                 kind=path.suffix.lower().removeprefix("."),
                 width=image.width,
                 height=image.height,
                 frame_count=frame_count,
-                animated=frame_count > 1,
+                animated=animated,
+                category=category,
+                category_label=ASSET_CATEGORIES.get(category, category),
+                template=template,
             )
     except (OSError, UnidentifiedImageError):
         return None

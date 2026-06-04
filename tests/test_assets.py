@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from usb9_lcd.assets import AssetLibrary, AssetLink
+from usb9_lcd.assets import ASSET_CATEGORIES, AssetLibrary, AssetLink
 from usb9_lcd.presets import generate_default_presets
 
 
@@ -42,6 +42,51 @@ def test_asset_library_indexes_static_and_animated_files(tmp_path: Path):
     assert by_name["red.png"].frame_count == 1
     assert by_name["blink.gif"].animated is True
     assert by_name["blink.gif"].frame_count == 2
+
+
+def test_asset_library_indexes_template_categories_and_filters(tmp_path: Path):
+    library = AssetLibrary(tmp_path)
+    monitor_dir = tmp_path / "monitor_backgrounds"
+    test_pattern_dir = tmp_path / "test_patterns"
+    monitor_dir.mkdir(exist_ok=True)
+    test_pattern_dir.mkdir(exist_ok=True)
+    Image.new("RGB", (4, 4), (0, 0, 255)).save(monitor_dir / "neon_meter.png")
+    Image.new("RGB", (4, 4), (255, 255, 255)).save(test_pattern_dir / "lcd_test.png")
+    Image.new("RGB", (2, 2), (255, 0, 0)).save(tmp_path / "user" / "red.png")
+    Image.new("RGB", (2, 2), (0, 0, 0)).save(
+        tmp_path / "user" / "blink.gif",
+        save_all=True,
+        append_images=[Image.new("RGB", (2, 2), (255, 255, 255))],
+        duration=100,
+        loop=0,
+    )
+
+    assets = library.list_media()
+
+    by_name = {asset.path.name: asset for asset in assets}
+    assert by_name["neon_meter.png"].category == "monitoring"
+    assert by_name["neon_meter.png"].category_label == "监控仪表盘"
+    assert by_name["neon_meter.png"].template is True
+    assert by_name["lcd_test.png"].category == "test-pattern"
+    assert by_name["lcd_test.png"].template is True
+    assert by_name["red.png"].category == "static"
+    assert by_name["red.png"].template is False
+    assert by_name["blink.gif"].category == "animation"
+    assert by_name["blink.gif"].template is False
+    assert [asset.path.name for asset in library.list_media(category="monitoring")] == ["neon_meter.png"]
+    assert library.category_counts() == {
+        "animation": 1,
+        "monitoring": 1,
+        "static": 1,
+        "test-pattern": 1,
+    }
+
+
+def test_asset_library_exposes_product_template_categories():
+    assert ASSET_CATEGORIES["monitoring"] == "监控仪表盘"
+    assert ASSET_CATEGORIES["cpu-theme"] == "CPU 主题"
+    assert ASSET_CATEGORIES["gpu-theme"] == "GPU 主题"
+    assert ASSET_CATEGORIES["lianli-status"] == "联力状态"
 
 
 def test_asset_library_does_not_generate_builtin_presets(tmp_path: Path):

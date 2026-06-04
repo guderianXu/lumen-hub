@@ -6145,6 +6145,44 @@ def test_asset_page_refresh_assets_populates_clickable_media_list(tmp_path: Path
     app.quit()
 
 
+def test_asset_page_filters_media_by_category(tmp_path: Path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.assets import AssetLibrary
+    from usb9_lcd.gui.pages import AssetLibraryPage
+
+    app = QApplication.instance() or QApplication([])
+    library = AssetLibrary(tmp_path / "assets")
+    Image.new("RGB", (4, 4), (0, 0, 255)).save(library.monitor_backgrounds_dir / "neon_meter.png")
+    gif_path = tmp_path / "blink.gif"
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(
+        gif_path,
+        save_all=True,
+        append_images=[Image.new("RGB", (1, 1), (0, 255, 0))],
+        duration=100,
+        loop=0,
+    )
+    library.import_file(gif_path)
+    page = AssetLibraryPage(library)
+
+    page.refresh_assets()
+    assert "neon_meter.png" in page.asset_list_text.toPlainText()
+    assert "blink.gif" in page.asset_list_text.toPlainText()
+
+    index = page.asset_category_combo.findData("monitoring")
+    assert index >= 0
+    page.asset_category_combo.setCurrentIndex(index)
+    page.refresh_assets()
+
+    assert page.asset_list.count() == 1
+    assert "neon_meter.png" in page.asset_list_text.toPlainText()
+    assert "blink.gif" not in page.asset_list_text.toPlainText()
+    assert "监控仪表盘" in page.asset_list_text.toPlainText()
+
+    page.close()
+    app.quit()
+
+
 def test_asset_page_clicking_media_updates_preview(tmp_path: Path):
     from PySide6.QtWidgets import QApplication
 

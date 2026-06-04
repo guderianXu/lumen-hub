@@ -219,17 +219,19 @@ Add a PowerShell script that creates a Startup shortcut or scheduled task for `l
 - Create/modify: `assets/templates/` metadata files
 - Test: `tests/test_assets.py`, `tests/test_gui_import.py`
 
-- [ ] **Step 1: Add template metadata tests**
+- [x] **Step 1: Add template metadata tests**
 
 Cover category, device size, preview label, and source path/link.
 
-- [ ] **Step 2: Add template categories**
+- [x] **Step 2: Add template categories**
 
 Add built-in groups for monitoring dashboards, GIF/animation, static backgrounds, CPU/GPU themes, and LIAN LI status themes.
 
-- [ ] **Step 3: Add GUI filters**
+- [x] **Step 3: Add GUI filters**
 
 Expose template category filters and a clear selected-template action.
+
+Implemented asset categories for monitoring dashboards, CPU themes, GPU themes, LIAN LI status themes, GIF/animation, static images, and test patterns. `AssetLibraryPage` now exposes a category filter and shows template/user source metadata in the media list.
 
 ---
 

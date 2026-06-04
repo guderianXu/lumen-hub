@@ -13,12 +13,13 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QComboBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from usb9_lcd.assets import AssetLibrary, MediaAsset
+from usb9_lcd.assets import ASSET_CATEGORIES, ASSET_CATEGORY_ORDER, AssetLibrary, MediaAsset
 from usb9_lcd.gui.debug import log_event, log_exception
 from usb9_lcd.gui.gif_preview import decode_gif_preview_frames
 
@@ -148,6 +149,17 @@ class AssetLibraryPage(QWidget):
 
         layout.addWidget(asset_label)
 
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("分类"))
+        self.asset_category_combo = QComboBox()
+        self.asset_category_combo.addItem("全部素材", "")
+        for category in ASSET_CATEGORY_ORDER:
+            self.asset_category_combo.addItem(ASSET_CATEGORIES[category], category)
+        self.asset_category_combo.currentIndexChanged.connect(self.refresh_assets)
+        filter_row.addWidget(self.asset_category_combo)
+        filter_row.addStretch(1)
+        layout.addLayout(filter_row)
+
 
 
         browser_row = QHBoxLayout()
@@ -230,11 +242,12 @@ class AssetLibraryPage(QWidget):
 
         try:
 
-            self._media_assets = self.asset_library.list_media()
+            self._media_assets = self.asset_library.list_media(category=self._selected_asset_category())
 
             media_lines = [
 
-                f"{asset.path.name} | {asset.width}x{asset.height} | {asset.kind} | "
+                f"{asset.path.name} | {asset.category_label} | {'模板' if asset.template else '用户'} | "
+                f"{asset.width}x{asset.height} | {asset.kind} | "
 
                 f"{'动图' if asset.animated else '静态'} | {asset.frame_count} 帧"
 
@@ -270,7 +283,7 @@ class AssetLibraryPage(QWidget):
 
             item = QListWidgetItem(
 
-                f"{asset.path.name}\n{asset.width}x{asset.height} | "
+                f"{asset.path.name}\n{asset.category_label} | {asset.width}x{asset.height} | "
 
                 f"{'动图' if asset.animated else '静态'} | {asset.frame_count} 帧"
 
@@ -293,6 +306,12 @@ class AssetLibraryPage(QWidget):
         if self.asset_list.count() > 0 and self.asset_list.currentRow() < 0:
 
             self.asset_list.setCurrentRow(0)
+
+    def _selected_asset_category(self) -> str | None:
+
+        category = self.asset_category_combo.currentData()
+
+        return str(category) if category else None
 
 
 
