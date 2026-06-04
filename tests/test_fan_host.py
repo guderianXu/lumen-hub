@@ -131,6 +131,7 @@ def test_scan_linux_hwmon_includes_pwm_only_channel(tmp_path):
 
 def test_fan_curve_helpers_sanitize_and_interpolate():
     from usb9_lcd.gui.fan_curve_model import (
+        apply_fan_curve_policy,
         fan_curve_preset_points,
         interpolate_fan_curve_percent,
         sanitize_fan_curve_points,
@@ -144,6 +145,49 @@ def test_fan_curve_helpers_sanitize_and_interpolate():
     assert interpolate_fan_curve_percent(points, 90) == 100
     assert fan_curve_preset_points("quiet") == [[30, 18], [50, 25], [65, 38], [80, 62], [92, 100]]
     assert fan_curve_preset_points("full") == [[0, 100], [100, 100]]
+
+    mixed = apply_fan_curve_policy(
+        [[40, 20], [80, 100]],
+        cpu_temperature_c=52,
+        gpu_temperature_c=71,
+        sensor_source="max",
+        fallback_percent=100,
+        minimum_percent=20,
+    )
+    assert mixed.percent == 82
+    assert mixed.temperature_c == 71
+    assert mixed.sensor_label == "GPU"
+
+    held = apply_fan_curve_policy(
+        [[40, 20], [80, 100]],
+        cpu_temperature_c=53,
+        gpu_temperature_c=None,
+        sensor_source="cpu",
+        previous_temperature_c=52,
+        previous_percent=44,
+        hysteresis_c=2,
+    )
+    assert held.percent == 44
+    assert held.held_by_hysteresis is True
+
+    minimum = apply_fan_curve_policy(
+        [[30, 5], [80, 40]],
+        cpu_temperature_c=30,
+        gpu_temperature_c=None,
+        sensor_source="cpu",
+        minimum_percent=20,
+    )
+    assert minimum.percent == 20
+
+    fallback = apply_fan_curve_policy(
+        [[40, 20], [80, 100]],
+        cpu_temperature_c=None,
+        gpu_temperature_c=None,
+        sensor_source="max",
+        fallback_percent=88,
+    )
+    assert fallback.percent == 88
+    assert fallback.reason == "sensor-missing"
 
 
 def test_host_fan_settings_load_defaults_and_curve_points(tmp_path):
@@ -160,6 +204,10 @@ def test_host_fan_settings_load_defaults_and_curve_points(tmp_path):
                     "curve_interval_seconds": 99,
                     "curve_preset": "full",
                     "curve_points": [[90, 120], [20, -1]],
+                    "curve_sensor_source": "max",
+                    "curve_hysteresis_c": 7,
+                    "curve_minimum_percent": 12,
+                    "curve_fallback_percent": 91,
                 }
             }
         ),
@@ -172,6 +220,10 @@ def test_host_fan_settings_load_defaults_and_curve_points(tmp_path):
     assert settings.host_fan.curve_interval_seconds == 60
     assert settings.host_fan.curve_preset == "full"
     assert settings.host_fan.curve_points == [[20, 0], [90, 100]]
+    assert settings.host_fan.curve_sensor_source == "max"
+    assert settings.host_fan.curve_hysteresis_c == 7
+    assert settings.host_fan.curve_minimum_percent == 12
+    assert settings.host_fan.curve_fallback_percent == 91
 
 
 def test_linux_driver_probe_shell_loads_candidate_modules():
@@ -265,6 +317,62 @@ def test_fan_host_applies_curve_pwm_from_cpu_temperature(tmp_path):
     assert pwm_enable_path.read_text(encoding="utf-8") == "1\n"
     assert pwm_path.read_text(encoding="utf-8") == "112\n"
     assert "CPU 52C -> PWM 44%" in page.details.toPlainText()
+
+    page.close()
+    app.quit()
+
+
+def test_fan_host_applies_curve_pwm_from_mixed_cpu_gpu_temperature(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+    from usb9_lcd.monitoring.models import CpuTelemetry, GpuTelemetry, SystemTelemetry
+
+    pwm_path = tmp_path / "pwm1"
+    pwm_enable_path = tmp_path / "pwm1_enable"
+    pwm_path.write_text("0\n", encoding="utf-8")
+    pwm_enable_path.write_text("2\n", encoding="utf-8")
+    settings = GuiSettings()
+    settings.host_fan.curve_points = [[40, 20], [80, 100]]
+    settings.host_fan.curve_sensor_source = "max"
+    settings.host_fan.curve_hysteresis_c = 3
+    settings.host_fan.curve_minimum_percent = 20
+    settings.host_fan.curve_fallback_percent = 100
+    telemetry = SystemTelemetry(
+        cpu=CpuTelemetry(package_temperature_c=52.0, available=True),
+        gpu=GpuTelemetry(name="RTX", temperature_c=71, available=True),
+        captured_at=datetime(2026, 5, 30, 12, 0, 0),
+    )
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=telemetry,
+        channels=[
+            GenericFanChannel(
+                name="CPU Fan",
+                rpm=900,
+                pwm_path=pwm_path,
+                pwm_enable_path=pwm_enable_path,
+                control_available=True,
+                control_reason="PWM writable",
+            )
+        ],
+        control_available=True,
+        control_reason="1 writable PWM channel(s) detected",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=lambda _settings: None,
+        snapshot_collector=lambda: snapshot,
+    )
+    page._snapshot = snapshot
+    page._apply_curve_to_snapshot(snapshot, source="test")
+
+    assert pwm_path.read_text(encoding="utf-8") == "209\n"
+    assert "GPU 71C -> PWM 82%" in page.details.toPlainText()
 
     page.close()
     app.quit()

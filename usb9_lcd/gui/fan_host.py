@@ -33,9 +33,11 @@ from usb9_lcd.gui.fan_curve import FanCurveEditor
 from usb9_lcd.gui.fan_curve_model import (
     FAN_CURVE_CUSTOM_PRESET,
     FAN_CURVE_PRESETS,
+    FAN_CURVE_SENSOR_SOURCES,
+    apply_fan_curve_policy,
     fan_curve_preset_points,
-    interpolate_fan_curve_percent,
     normalize_fan_curve_preset,
+    normalize_fan_curve_sensor_source,
     sanitize_fan_curve_points,
 )
 from usb9_lcd.gui.settings import GuiSettings, save_settings
@@ -544,6 +546,8 @@ class FanControlHostPage(QWidget):
         self._loaded = False
         self._scan_active = False
         self._curve_applying = False
+        self._last_curve_temperature_c: float | None = None
+        self._last_curve_percent: int | None = None
         self._updating_curve_preset = False
         self._auto_grant_pwm_permissions = auto_grant_pwm_permissions
         self._auto_enable_pwm_control = auto_enable_pwm_control
@@ -639,6 +643,26 @@ class FanControlHostPage(QWidget):
         self.curve_interval.setSuffix(" s")
         self.curve_interval.setValue(self.settings.host_fan.curve_interval_seconds)
         self.curve_interval.valueChanged.connect(self._curve_interval_changed)
+        self.curve_sensor_combo = QComboBox()
+        for source, label in FAN_CURVE_SENSOR_SOURCES.items():
+            self.curve_sensor_combo.addItem(label, source)
+        self._set_curve_sensor_combo(self.settings.host_fan.curve_sensor_source)
+        self.curve_sensor_combo.currentIndexChanged.connect(self._curve_policy_changed)
+        self.curve_hysteresis = QSpinBox()
+        self.curve_hysteresis.setRange(0, 20)
+        self.curve_hysteresis.setSuffix(" °C")
+        self.curve_hysteresis.setValue(self.settings.host_fan.curve_hysteresis_c)
+        self.curve_hysteresis.valueChanged.connect(self._curve_policy_changed)
+        self.curve_minimum = QSpinBox()
+        self.curve_minimum.setRange(0, 100)
+        self.curve_minimum.setSuffix("%")
+        self.curve_minimum.setValue(self.settings.host_fan.curve_minimum_percent)
+        self.curve_minimum.valueChanged.connect(self._curve_policy_changed)
+        self.curve_fallback = QSpinBox()
+        self.curve_fallback.setRange(0, 100)
+        self.curve_fallback.setSuffix("%")
+        self.curve_fallback.setValue(self.settings.host_fan.curve_fallback_percent)
+        self.curve_fallback.valueChanged.connect(self._curve_policy_changed)
         self.curve_apply_button = QPushButton("按曲线写入一次")
         self.curve_apply_button.setEnabled(False)
         self.curve_apply_button.clicked.connect(self._apply_curve_now)
@@ -656,6 +680,17 @@ class FanControlHostPage(QWidget):
         curve_layout.addWidget(curve_hint)
         curve_layout.addWidget(self.curve_editor)
         curve_layout.addWidget(self.curve_summary)
+        curve_policy_options = QHBoxLayout()
+        curve_policy_options.addWidget(QLabel("传感器"))
+        curve_policy_options.addWidget(self.curve_sensor_combo)
+        curve_policy_options.addWidget(QLabel("迟滞"))
+        curve_policy_options.addWidget(self.curve_hysteresis)
+        curve_policy_options.addWidget(QLabel("最低"))
+        curve_policy_options.addWidget(self.curve_minimum)
+        curve_policy_options.addWidget(QLabel("丢失回退"))
+        curve_policy_options.addWidget(self.curve_fallback)
+        curve_policy_options.addStretch(1)
+        curve_layout.addLayout(curve_policy_options)
         curve_layout.addLayout(curve_options)
         layout.addWidget(curve_card)
         self._update_curve_summary()
@@ -1009,6 +1044,7 @@ class FanControlHostPage(QWidget):
 
     def _curve_changed(self, points: object | None = None) -> None:
         curve_points = sanitize_fan_curve_points(points if points is not None else self.curve_editor.points())
+        self._reset_curve_policy_memory()
         self.settings.host_fan.curve_points = curve_points
         self.settings.host_fan.curve_preset = FAN_CURVE_CUSTOM_PRESET
         self._set_curve_preset_combo(FAN_CURVE_CUSTOM_PRESET)
@@ -1035,12 +1071,20 @@ class FanControlHostPage(QWidget):
         finally:
             self._updating_curve_preset = False
 
+    def _set_curve_sensor_combo(self, sensor_source: object) -> None:
+        if not hasattr(self, "curve_sensor_combo"):
+            return
+        source = normalize_fan_curve_sensor_source(sensor_source)
+        index = self.curve_sensor_combo.findData(source)
+        self.curve_sensor_combo.setCurrentIndex(max(0, index))
+
     def _curve_preset_changed(self) -> None:
         if self._updating_curve_preset:
             return
         preset = normalize_fan_curve_preset(self.curve_preset_combo.currentData())
         self.settings.host_fan.curve_preset = preset
         if preset != FAN_CURVE_CUSTOM_PRESET:
+            self._reset_curve_policy_memory()
             points = fan_curve_preset_points(preset)
             self.settings.host_fan.curve_points = points
             self.curve_editor.set_points(points)
@@ -1057,6 +1101,24 @@ class FanControlHostPage(QWidget):
         self.settings.host_fan.curve_interval_seconds = max(1, min(60, int(value)))
         self._save_host_fan_settings()
         self._sync_curve_timer()
+
+    def _curve_policy_changed(self) -> None:
+        if not hasattr(self, "curve_sensor_combo"):
+            return
+        self._reset_curve_policy_memory()
+        self.settings.host_fan.curve_sensor_source = normalize_fan_curve_sensor_source(
+            self.curve_sensor_combo.currentData()
+        )
+        self.settings.host_fan.curve_hysteresis_c = max(0, min(20, int(self.curve_hysteresis.value())))
+        self.settings.host_fan.curve_minimum_percent = max(0, min(100, int(self.curve_minimum.value())))
+        self.settings.host_fan.curve_fallback_percent = max(0, min(100, int(self.curve_fallback.value())))
+        self._save_host_fan_settings()
+        self._update_curve_summary()
+        self._set_status("风扇曲线策略已保存")
+
+    def _reset_curve_policy_memory(self) -> None:
+        self._last_curve_temperature_c = None
+        self._last_curve_percent = None
 
     def _curve_enabled_changed(self, enabled: bool) -> None:
         self.settings.host_fan.curve_enabled = bool(enabled)
@@ -1096,7 +1158,13 @@ class FanControlHostPage(QWidget):
         points = sanitize_fan_curve_points(self.curve_editor.points())
         summary = "，".join(f"{temp}°C→{percent}%" for temp, percent in points)
         preset = self.curve_preset_combo.currentText() if hasattr(self, "curve_preset_combo") else "当前"
-        self.curve_summary.setText(f"{preset}曲线：{summary}")
+        sensor = self.curve_sensor_combo.currentText() if hasattr(self, "curve_sensor_combo") else "CPU"
+        hysteresis = self.curve_hysteresis.value() if hasattr(self, "curve_hysteresis") else 0
+        minimum = self.curve_minimum.value() if hasattr(self, "curve_minimum") else 0
+        fallback = self.curve_fallback.value() if hasattr(self, "curve_fallback") else 100
+        self.curve_summary.setText(
+            f"{preset}曲线：{summary}\n策略：传感器 {sensor}，迟滞 {hysteresis}°C，最低 {minimum}%，丢失回退 {fallback}%"
+        )
 
     def _sync_curve_controls(self) -> None:
         has_control = bool(self._snapshot and self._snapshot.control_available)
@@ -1168,12 +1236,18 @@ class FanControlHostPage(QWidget):
         self._apply_curve_to_snapshot(self._snapshot, source="曲线手动")
 
     def _apply_curve_to_snapshot(self, snapshot: GenericFanSnapshot, *, source: str) -> None:
-        temp = snapshot.telemetry.cpu.package_temperature_c
-        percent = interpolate_fan_curve_percent(self.curve_editor.points(), temp)
-        if percent is None:
-            self.details.append("\n风扇曲线跳过：CPU 温度不可用")
-            self._set_status("风扇曲线跳过：CPU 温度不可用")
-            return
+        policy = apply_fan_curve_policy(
+            self.curve_editor.points(),
+            cpu_temperature_c=snapshot.telemetry.cpu.package_temperature_c,
+            gpu_temperature_c=snapshot.telemetry.gpu.temperature_c,
+            sensor_source=self.settings.host_fan.curve_sensor_source,
+            previous_temperature_c=self._last_curve_temperature_c,
+            previous_percent=self._last_curve_percent,
+            hysteresis_c=self.settings.host_fan.curve_hysteresis_c,
+            fallback_percent=self.settings.host_fan.curve_fallback_percent,
+            minimum_percent=self.settings.host_fan.curve_minimum_percent,
+        )
+        percent = policy.percent
         previous_snapshot = self._snapshot
         self._snapshot = snapshot
         self._curve_applying = True
@@ -1182,12 +1256,22 @@ class FanControlHostPage(QWidget):
         finally:
             self._curve_applying = False
             self._snapshot = previous_snapshot if previous_snapshot is not None else snapshot
-        temp_text = f"{float(temp):.0f}C"
+        temp_text = "--" if policy.temperature_c is None else f"{policy.temperature_c:.0f}C"
+        reason_suffix = "（迟滞保持）" if policy.held_by_hysteresis else ""
+        if policy.reason == "sensor-missing":
+            reason_suffix = "（传感器丢失安全回退）"
         if errors:
-            self.details.append(f"\n{source}写入失败：CPU {temp_text} -> PWM {percent}%\n" + "\n".join(errors))
+            self.details.append(
+                f"\n{source}写入失败：{policy.sensor_label} {temp_text} -> PWM {percent}%{reason_suffix}\n"
+                + "\n".join(errors)
+            )
             self._set_status("风扇曲线 PWM 写入失败")
             return
-        self.details.append(f"\n{source}：CPU {temp_text} -> PWM {percent}%: " + ", ".join(written))
+        self._last_curve_temperature_c = policy.temperature_c
+        self._last_curve_percent = percent
+        self.details.append(
+            f"\n{source}：{policy.sensor_label} {temp_text} -> PWM {percent}%{reason_suffix}: " + ", ".join(written)
+        )
         self._set_status(f"风扇曲线已写入 PWM {percent}%")
 
     def _write_linux_pwm(self, channel: GenericFanChannel, percent_value: int) -> None:

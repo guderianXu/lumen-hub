@@ -8,6 +8,7 @@ from typing import Any
 from usb9_lcd.gui.fan_curve_model import (
     DEFAULT_FAN_CURVE_POINTS,
     normalize_fan_curve_preset,
+    normalize_fan_curve_sensor_source,
     sanitize_fan_curve_points,
 )
 from usb9_lcd.platforms import current_platform
@@ -59,6 +60,10 @@ class HostFanUiSettings:
     curve_interval_seconds: int = 3
     curve_preset: str = "normal"
     curve_points: list[list[int]] = field(default_factory=lambda: [list(point) for point in DEFAULT_FAN_CURVE_POINTS])
+    curve_sensor_source: str = "cpu"
+    curve_hysteresis_c: int = 2
+    curve_minimum_percent: int = 20
+    curve_fallback_percent: int = 100
 
 
 @dataclass
@@ -199,6 +204,22 @@ def _host_fan_from_dict(value: Any) -> HostFanUiSettings:
         ),
         curve_preset=normalize_fan_curve_preset(value.get("curve_preset", defaults.curve_preset)),
         curve_points=sanitize_fan_curve_points(value.get("curve_points"), defaults.curve_points),
+        curve_sensor_source=normalize_fan_curve_sensor_source(
+            value.get("curve_sensor_source", defaults.curve_sensor_source)
+        ),
+        curve_hysteresis_c=_clamp_int(value.get("curve_hysteresis_c"), 0, 20, defaults.curve_hysteresis_c),
+        curve_minimum_percent=_clamp_int(
+            value.get("curve_minimum_percent"),
+            0,
+            100,
+            defaults.curve_minimum_percent,
+        ),
+        curve_fallback_percent=_clamp_int(
+            value.get("curve_fallback_percent"),
+            0,
+            100,
+            defaults.curve_fallback_percent,
+        ),
     )
 
 

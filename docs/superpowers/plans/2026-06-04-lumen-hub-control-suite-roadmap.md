@@ -85,31 +85,31 @@ Expected after implementation: `2 passed`.
 - Modify: `usb9_lcd/gui/settings.py`
 - Test: `tests/test_fan_host.py`
 
-- [ ] **Step 1: Add fan-control model tests**
+- [x] **Step 1: Add fan-control model tests**
 
 Add tests for hysteresis, mixed-sensor max selection, sensor-loss fallback, and minimum start PWM.
 
 Run:
 
 ```bash
-QT_QPA_PLATFORM=offscreen python -m pytest tests/test_fan_host.py::test_fan_curve_hysteresis_holds_small_temperature_changes tests/test_fan_host.py::test_fan_curve_uses_maximum_mixed_sensor_temperature tests/test_fan_host.py::test_fan_curve_falls_back_to_safe_pwm_when_sensor_missing -q
+QT_QPA_PLATFORM=offscreen python -m pytest tests/test_fan_host.py::test_fan_curve_helpers_sanitize_and_interpolate tests/test_fan_host.py::test_host_fan_settings_load_defaults_and_curve_points tests/test_fan_host.py::test_fan_host_applies_curve_pwm_from_mixed_cpu_gpu_temperature -q
 ```
 
 Expected before implementation: fails because the helpers and settings fields do not exist.
 
-- [ ] **Step 2: Implement pure fan policy helpers**
+- [x] **Step 2: Implement pure fan policy helpers**
 
 Add helpers that accept CPU/GPU temperatures, curve points, hysteresis degrees, minimum start percent, and missing-sensor fallback percent, returning a safe PWM percent or `None`.
 
-- [ ] **Step 3: Expose GUI controls**
+- [x] **Step 3: Expose GUI controls**
 
 Add controls for sensor source (`CPU`, `GPU`, `CPU/GPU 最大值`), hysteresis, minimum start PWM, and fallback PWM.
 
-- [ ] **Step 4: Persist settings**
+- [x] **Step 4: Persist settings**
 
 Extend `HostFanUiSettings` and settings migration/loading/saving for the new fields.
 
-- [ ] **Step 5: Run fan tests**
+- [x] **Step 5: Run fan tests**
 
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest tests/test_fan_host.py -q
