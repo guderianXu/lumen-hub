@@ -208,6 +208,7 @@ def _fake_telemetry() -> SystemTelemetry:
             memory_used_mb=8000,
             memory_total_mb=24000,
             graphics_clock_mhz=2700,
+            fan_speed_percent=48,
             available=True,
         ),
         captured_at=datetime(2026, 5, 20, 12, 0, 0),
@@ -362,6 +363,7 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     assert "功耗 86W" in window.home_page.cpu_value.text()
     assert "61°C" in window.home_page.gpu_value.text()
     assert "功耗 216W" in window.home_page.gpu_value.text()
+    assert "风扇 1530 RPM" in window.home_page.gpu_value.text()
     assert "GPU Fan 1530 RPM" in window.home_page.fan_value.text()
     assert window.home_page.permission_value.text() != "权限未检查"
     assert window.home_page.mode_value.text() == "日常"
@@ -376,6 +378,33 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     assert window.device_summary_label.text() == "未发现设备"
 
     window.close()
+    app.quit()
+
+
+def test_home_dashboard_shows_nvidia_gpu_fan_speed_percent_when_rpm_is_unavailable():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.home import ControlCenterPage
+
+    app = QApplication.instance() or QApplication([])
+    page = ControlCenterPage(
+        navigate=lambda _page: None,
+        upload_monitor=lambda: None,
+        load_fan_control=lambda: None,
+        connect_lighting=lambda: None,
+        sleep_all_off=lambda: None,
+    )
+    telemetry = SystemTelemetry(
+        cpu=CpuTelemetry(package_temperature_c=54.0, available=True),
+        gpu=GpuTelemetry(name="RTX", temperature_c=61, power_w=216, fan_speed_percent=48, available=True),
+        captured_at=datetime(2026, 5, 20, 12, 0, 0),
+    )
+
+    page.update_telemetry(telemetry)
+
+    assert "风扇 48%" in page.gpu_value.text()
+
+    page.close()
     app.quit()
 
 

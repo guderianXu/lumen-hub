@@ -18,7 +18,7 @@ from usb9_lcd.monitoring.windows import collect_windows_fan_channels, set_window
 
 
 def test_parse_nvidia_smi_csv_parses_first_gpu():
-    output = "NVIDIA GeForce RTX 4090, 61, 42, 216.50, 8123, 24564, 2745\n"
+    output = "NVIDIA GeForce RTX 4090, 61, 42, 216.50, 8123, 24564, 2745, 48\n"
 
     telemetry = parse_nvidia_smi_csv(output)
 
@@ -30,11 +30,12 @@ def test_parse_nvidia_smi_csv_parses_first_gpu():
     assert telemetry.memory_used_mb == 8123
     assert telemetry.memory_total_mb == 24564
     assert telemetry.graphics_clock_mhz == 2745
+    assert telemetry.fan_speed_percent == 48
     assert telemetry.error == ""
 
 
 def test_parse_nvidia_smi_csv_handles_quoted_gpu_name_with_comma():
-    output = '"NVIDIA, RTX 4090", 61, 42, 216.50, 8123, 24564, 2745\n'
+    output = '"NVIDIA, RTX 4090", 61, 42, 216.50, 8123, 24564, 2745, 48\n'
 
     telemetry = parse_nvidia_smi_csv(output)
 
@@ -44,7 +45,7 @@ def test_parse_nvidia_smi_csv_handles_quoted_gpu_name_with_comma():
 
 
 def test_parse_nvidia_smi_csv_rejects_extra_columns():
-    output = "NVIDIA GPU, 61, 42, 216.50, 8123, 24564, 2745, extra\n"
+    output = "NVIDIA GPU, 61, 42, 216.50, 8123, 24564, 2745, 48, extra\n"
 
     telemetry = parse_nvidia_smi_csv(output)
 
@@ -53,7 +54,7 @@ def test_parse_nvidia_smi_csv_rejects_extra_columns():
 
 
 def test_parse_nvidia_smi_csv_handles_not_available_fields():
-    output = "NVIDIA GPU, N/A, [Not Supported], N/A, 100, 200, N/A\n"
+    output = "NVIDIA GPU, N/A, [Not Supported], N/A, 100, 200, N/A, [Not Supported]\n"
 
     telemetry = parse_nvidia_smi_csv(output)
 
@@ -64,6 +65,7 @@ def test_parse_nvidia_smi_csv_handles_not_available_fields():
     assert telemetry.memory_used_mb == 100
     assert telemetry.memory_total_mb == 200
     assert telemetry.graphics_clock_mhz is None
+    assert telemetry.fan_speed_percent is None
 
 
 def test_collect_nvidia_gpu_returns_unavailable_when_command_missing():

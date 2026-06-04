@@ -13,6 +13,7 @@ class GpuTelemetry:
     memory_used_mb: int | None = None
     memory_total_mb: int | None = None
     graphics_clock_mhz: int | None = None
+    fan_speed_percent: float | None = None
     available: bool = False
     error: str = ""
 

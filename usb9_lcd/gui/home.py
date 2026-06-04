@@ -5,7 +5,7 @@ from collections.abc import Callable
 from PySide6.QtWidgets import QButtonGroup, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from usb9_lcd.drivers.base import DisplayDevice
-from usb9_lcd.monitoring.models import SystemTelemetry
+from usb9_lcd.monitoring.models import FanTelemetry, SystemTelemetry
 
 
 class ControlCenterPage(QWidget):
@@ -206,8 +206,9 @@ class ControlCenterPage(QWidget):
         gpu = "--" if telemetry.gpu.temperature_c is None else f"{telemetry.gpu.temperature_c:.0f}°C"
         gpu_load = "--" if telemetry.gpu.utilization_percent is None else f"{telemetry.gpu.utilization_percent:.0f}%"
         gpu_power = "--" if telemetry.gpu.power_w is None else f"{telemetry.gpu.power_w:.0f}W"
+        gpu_fan = self._gpu_fan_summary(telemetry)
         self.cpu_value.setText(f"温度 {cpu}\n负载 {cpu_load}\n功耗 {cpu_power}")
-        self.gpu_value.setText(f"温度 {gpu}\n负载 {gpu_load}\n功耗 {gpu_power}")
+        self.gpu_value.setText(f"温度 {gpu}\n负载 {gpu_load}\n功耗 {gpu_power}\n风扇 {gpu_fan}")
         self._fan_rpm_text = self._fan_rpm_summary(telemetry)
         self._refresh_fan_value()
 
@@ -232,6 +233,35 @@ class ControlCenterPage(QWidget):
         if len(fans) > 4:
             parts.append(f"+{len(fans) - 4} 个")
         return "转速 " + " · ".join(parts)
+
+    def _gpu_fan_summary(self, telemetry: SystemTelemetry) -> str:
+        gpu_fan = next(
+            (
+                fan
+                for fan in telemetry.fans
+                if self._has_gpu_fan_speed(fan)
+            ),
+            None,
+        )
+        if gpu_fan is not None:
+            if gpu_fan.rpm is not None:
+                return f"{gpu_fan.rpm} RPM"
+            if gpu_fan.percent is not None:
+                return f"{gpu_fan.percent:.0f}%"
+        if telemetry.gpu.fan_speed_percent is not None:
+            return f"{telemetry.gpu.fan_speed_percent:.0f}%"
+        return "--"
+
+    def _is_gpu_fan_name(self, name: str) -> bool:
+        text = name.lower()
+        return any(marker in text for marker in ("gpu", "nvidia", "geforce", "rtx", "radeon", "arc"))
+
+    def _has_gpu_fan_speed(self, fan: FanTelemetry) -> bool:
+        return (
+            fan.available
+            and self._is_gpu_fan_name(fan.name)
+            and (fan.rpm is not None or fan.percent is not None)
+        )
 
     def update_lighting_status(self, text: str) -> None:
         self.lighting_value.setText(text or "默认关闭")

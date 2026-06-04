@@ -8,7 +8,7 @@ from .models import GpuTelemetry
 
 NVIDIA_SMI_QUERY = (
     "name,temperature.gpu,utilization.gpu,power.draw,"
-    "memory.used,memory.total,clocks.current.graphics"
+    "memory.used,memory.total,clocks.current.graphics,fan.speed"
 )
 
 
@@ -39,7 +39,7 @@ def parse_nvidia_smi_csv(output: str) -> GpuTelemetry:
         return GpuTelemetry(error="nvidia-smi returned no GPU rows")
 
     parts = [part.strip() for part in first_row]
-    if len(parts) != 7:
+    if len(parts) != 8:
         return GpuTelemetry(error=f"unexpected nvidia-smi output: {', '.join(first_row)}")
 
     return GpuTelemetry(
@@ -50,6 +50,7 @@ def parse_nvidia_smi_csv(output: str) -> GpuTelemetry:
         memory_used_mb=_parse_int(parts[4]),
         memory_total_mb=_parse_int(parts[5]),
         graphics_clock_mhz=_parse_int(parts[6]),
+        fan_speed_percent=_parse_float(parts[7]),
         available=True,
     )
 
