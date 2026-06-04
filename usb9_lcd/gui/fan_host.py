@@ -3,7 +3,6 @@
 from datetime import datetime
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -44,6 +43,11 @@ from usb9_lcd.gui.settings import GuiSettings, save_settings
 from usb9_lcd.monitoring.models import FanTelemetry, SystemTelemetry
 from usb9_lcd.monitoring.service import collect_system_telemetry
 from usb9_lcd.monitoring.windows import WindowsFanChannel, collect_windows_fan_channels, set_windows_fan_control_percent
+from usb9_lcd.service.permissions import (
+    PermissionRequest,
+    build_pwm_write_request,
+    grant_permission_request,
+)
 
 
 @dataclass(frozen=True)
@@ -535,12 +539,14 @@ class FanControlHostPage(QWidget):
         settings: GuiSettings | None = None,
         settings_saver: Callable[[GuiSettings], None] = save_settings,
         snapshot_collector: Callable[[], GenericFanSnapshot] = collect_generic_fan_snapshot,
+        permission_helper: object | None = None,
         **_ignored: object,
     ) -> None:
         super().__init__()
         self.settings = settings or GuiSettings()
         self._settings_saver = settings_saver
         self._snapshot_collector = snapshot_collector
+        self.permission_helper = permission_helper
         self._snapshot: GenericFanSnapshot | None = None
         self.monitor = None
         self._loaded = False
@@ -847,31 +853,35 @@ class FanControlHostPage(QWidget):
         return paths
 
     def _pwm_permission_shell(self, paths: list[Path]) -> str:
-        uid = os.getuid() if hasattr(os, "getuid") else 0
-        gid = os.getgid() if hasattr(os, "getgid") else 0
-        quoted_paths = " ".join(shlex.quote(str(path)) for path in paths)
-        return "\n".join(
-            [
-                "set -e",
-                f"chown {uid}:{gid} -- {quoted_paths}",
-                f"chmod u+rw,g+rw -- {quoted_paths}",
-                f"echo 'pwm-permissions=ok files={len(paths)}'",
-            ]
-        )
+        return build_pwm_write_request(paths).shell_command
 
     def _grant_pwm_permissions(self, snapshot: GenericFanSnapshot, *, interactive: bool = False) -> tuple[bool, str]:
         paths = self._pwm_permission_paths(snapshot)
         if not paths:
             return False, "没有找到需要授权的 pwm* 或 pwm*_enable 文件。"
-        ok, output = self._run_privileged_shell_compat(
-            self._pwm_permission_shell(paths),
+        result = self._run_permission_request(
+            build_pwm_write_request(paths),
             timeout=30,
             interactive=interactive,
-            action_label="授权 PWM 权限",
         )
-        if ok:
-            return True, output or f"已授权 {len(paths)} 个 PWM 文件。"
-        return False, output
+        if result.ok:
+            return True, result.message or f"已授权 {len(paths)} 个 PWM 文件。"
+        return False, result.message
+
+    def _run_permission_request(
+        self,
+        request: PermissionRequest,
+        *,
+        timeout: int,
+        interactive: bool,
+    ):
+        return grant_permission_request(
+            request,
+            helper=self.permission_helper,
+            fallback_runner=self._run_privileged_shell_compat,
+            timeout=timeout,
+            interactive=interactive,
+        )
 
     def request_pwm_permission_grant(self) -> None:
         self.reload_fan_control(interactive_driver_probe=True)

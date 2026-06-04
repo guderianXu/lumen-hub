@@ -106,6 +106,11 @@ from usb9_lcd.monitoring.render import render_monitoring_frame, render_monitorin
 from usb9_lcd.monitoring.service import collect_system_telemetry
 from usb9_lcd.platforms import current_platform
 from usb9_lcd.render import ImageRenderSettings, render_static_image
+from usb9_lcd.service.permissions import (
+    build_powercap_read_request,
+    detect_permission_helper_status,
+    permission_helper_status_items,
+)
 
 
 def _mix_color(start: tuple[int, int, int], end: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
@@ -266,6 +271,7 @@ class MainWindow(QMainWindow):
         asset_library: AssetLibrary | None = None,
         auto_refresh: bool = True,
         settings: GuiSettings | None = None,
+        permission_helper: object | None = None,
     ) -> None:
         super().__init__()
         log_event("main_window_init", auto_refresh=auto_refresh)
@@ -273,6 +279,7 @@ class MainWindow(QMainWindow):
         self.telemetry_provider = telemetry_provider
         self.asset_library = asset_library or AssetLibrary()
         self.settings = settings or load_settings()
+        self.permission_helper = permission_helper
         self.platform_adapter = current_platform()
         self._lcd_output_lock = threading.Lock()
         self.devices: list[DisplayDevice] = []
@@ -372,6 +379,7 @@ class MainWindow(QMainWindow):
             auto_enable_pwm_control=False,
             auto_probe_hwmon_drivers=True,
             settings=self.settings,
+            permission_helper=self.permission_helper,
         )
         self.lianli_page = LianLiWirelessPage(settings=self.settings)
         self.page_indexes = {
@@ -492,6 +500,7 @@ class MainWindow(QMainWindow):
                 fan_status=self.fan_page.home_status_text(),
                 lighting_status=self.lighting_page.home_status_text(),
                 lianli_status=self.lianli_page.home_status_text(),
+                permission_helper_status=detect_permission_helper_status(self.permission_helper),
             ),
             recent_events=recent_events[:6],
         )
@@ -581,6 +590,8 @@ class MainWindow(QMainWindow):
             items.append(StatusItem("PWM 写权限", "ok", fan_status))
         else:
             items.append(StatusItem("PWM 写权限", "info", "未发现需要授权的 PWM 文件"))
+        for item in permission_helper_status_items(detect_permission_helper_status(self.permission_helper)):
+            items.append(StatusItem(item.label, item.state, item.detail))
         return items
 
     def _apply_theme(self) -> None:
@@ -875,23 +886,23 @@ class MainWindow(QMainWindow):
         paths = cpu_power_permission_paths()
         if not paths:
             return
-        run_privileged_shell = getattr(self.fan_page, "_run_privileged_shell_compat", None)
-        if not callable(run_privileged_shell):
+        request = build_powercap_read_request(paths, shell_command=cpu_power_permission_shell(paths))
+        run_permission_request = getattr(self.fan_page, "_run_permission_request", None)
+        if not callable(run_permission_request):
             self.home_page.add_event("CPU 功耗权限授权不可用")
             self._refresh_home_permission_status()
             return
-        ok, output = run_privileged_shell(
-            cpu_power_permission_shell(paths),
+        result = run_permission_request(
+            request,
             timeout=30,
             interactive=interactive,
-            action_label="授权 CPU 功耗权限",
         )
-        if ok:
+        if result.ok:
             self.statusBar().showMessage(f"CPU 功耗权限已授权：{len(paths)} 个文件")
             self.home_page.add_event("CPU 功耗权限已授权")
             self._refresh_home_permission_status()
             return
-        message = output or "CPU 功耗权限授权失败"
+        message = result.message or "CPU 功耗权限授权失败"
         self.statusBar().showMessage(message)
         self.home_page.add_event(message)
         self._refresh_home_permission_status()

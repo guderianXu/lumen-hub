@@ -149,17 +149,19 @@ Use fake OpenRGB and fake LIAN LI backends to validate target selection and gene
 - Modify: `usb9_lcd/gui/main_window.py`
 - Test: `tests/test_platforms.py`, `tests/test_fan_host.py`
 
-- [ ] **Step 1: Define safe permission request objects**
+- [x] **Step 1: Define safe permission request objects**
 
 Model permitted operations for powercap read, PWM write, hidraw write, and OpenRGB path checks.
 
-- [ ] **Step 2: Route GUI permission actions through the helper interface**
+- [x] **Step 2: Route GUI permission actions through the helper interface**
 
 Keep existing direct shell fallback, but make the GUI call the helper interface first.
 
-- [ ] **Step 3: Add reportable helper status**
+- [x] **Step 3: Add reportable helper status**
 
 Expose helper availability in the diagnostics center and device tree.
+
+Implemented `usb9_lcd/service/permissions.py` with safe request objects for PWM write, CPU powercap read, hidraw write, and OpenRGB path checks. PWM and CPU power permission grants now route through an injected helper before falling back to existing pkexec/sudo shell execution, and helper status is included in permission diagnostics and the device tree.
 
 ### Task 5: Diagnostics Center Upgrade
 

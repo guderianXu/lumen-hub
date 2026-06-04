@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from usb9_lcd.drivers.base import DisplayDevice
 from usb9_lcd.monitoring.models import SystemTelemetry
+from usb9_lcd.service.permissions import PermissionHelperStatus
 
 
 @dataclass(frozen=True)
@@ -27,16 +28,18 @@ def build_device_tree_snapshot(
     fan_status: str,
     lighting_status: str,
     lianli_status: str,
+    permission_helper_status: PermissionHelperStatus | None = None,
 ) -> DeviceTreeSnapshot:
-    return DeviceTreeSnapshot(
-        roots=[
-            _lcd_root(lcd_devices),
-            _telemetry_root(telemetry),
-            _subsystem_root("普通风扇", "fan", fan_status),
-            _subsystem_root("灯效", "lighting", lighting_status),
-            _subsystem_root("联力无线", "lianli", lianli_status),
-        ]
-    )
+    roots = [
+        _lcd_root(lcd_devices),
+        _telemetry_root(telemetry),
+        _subsystem_root("普通风扇", "fan", fan_status),
+        _subsystem_root("灯效", "lighting", lighting_status),
+        _subsystem_root("联力无线", "lianli", lianli_status),
+    ]
+    if permission_helper_status is not None:
+        roots.append(_permission_helper_root(permission_helper_status))
+    return DeviceTreeSnapshot(roots=roots)
 
 
 def render_device_tree_report(snapshot: DeviceTreeSnapshot | None) -> str:
@@ -97,6 +100,16 @@ def _telemetry_root(telemetry: SystemTelemetry | None) -> DeviceTreeItem:
 
 def _subsystem_root(name: str, kind: str, status: str) -> DeviceTreeItem:
     return DeviceTreeItem(name, kind, _state_from_text(status), status or "未加载")
+
+
+def _permission_helper_root(status: PermissionHelperStatus) -> DeviceTreeItem:
+    operations = ", ".join(status.supported_operations) if status.supported_operations else "none"
+    return DeviceTreeItem(
+        "权限 Helper",
+        "permission-helper",
+        "ok" if status.available else "info",
+        f"{status.backend}: {status.detail}; operations: {operations}",
+    )
 
 
 def _fan_detail(rpm: int | None, percent: float | None, error: str) -> str:

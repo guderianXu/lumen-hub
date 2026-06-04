@@ -196,3 +196,36 @@ def test_readme_documents_install_and_autostart_artifacts():
     assert "packaging/linux/lumen-hub-tmpfiles.conf" in readme
     assert "packaging/windows/lumen-hub-autostart.ps1" in readme
     assert "lumen-hub-gui" in readme
+
+
+def test_permission_request_models_cover_safe_operations(tmp_path, monkeypatch):
+    import usb9_lcd.service.permissions as permissions
+
+    monkeypatch.setattr(permissions.os, "getuid", lambda: 1234)
+    monkeypatch.setattr(permissions.os, "getgid", lambda: 5678)
+    pwm_path = tmp_path / "pwm1"
+    power_path = tmp_path / "energy_uj"
+    hidraw_path = tmp_path / "hidraw0"
+    openrgb_path = tmp_path / "OpenRGB"
+
+    pwm = permissions.build_pwm_write_request([pwm_path])
+    powercap = permissions.build_powercap_read_request([power_path])
+    hidraw = permissions.build_hidraw_write_request([hidraw_path])
+    openrgb = permissions.build_openrgb_path_check_request(openrgb_path)
+    status = permissions.detect_permission_helper_status()
+    items = permissions.permission_helper_status_items(status)
+
+    assert pwm.operation == "pwm-write"
+    assert pwm.access == "read-write"
+    assert "chown 1234:5678" in pwm.shell_command
+    assert "chmod u+rw,g+rw" in pwm.shell_command
+    assert powercap.operation == "powercap-read"
+    assert powercap.access == "read"
+    assert "chmod u+r,g+r" in powercap.shell_command
+    assert hidraw.operation == "hidraw-write"
+    assert hidraw.access == "read-write"
+    assert openrgb.operation == "openrgb-path-check"
+    assert openrgb.shell_command == ""
+    assert status.backend == "direct-shell-fallback"
+    assert items[0].label == "权限 Helper"
+    assert "direct-shell-fallback" in items[0].detail

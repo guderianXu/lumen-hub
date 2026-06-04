@@ -5808,6 +5808,41 @@ def test_main_window_play_animation_uses_background_python_thread(tmp_path: Path
     app.quit()
 
 
+def test_main_window_reports_permission_helper_in_status_and_device_tree():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.main_window import MainWindow
+    from usb9_lcd.gui.system_status import render_system_status_report
+    from usb9_lcd.service.permissions import PermissionHelperStatus
+
+    class Helper:
+        def status(self):  # noqa: ANN001
+            return PermissionHelperStatus(
+                available=True,
+                backend="test-helper",
+                detail="test helper ready",
+                supported_operations=("pwm-write", "powercap-read"),
+            )
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+        permission_helper=Helper(),
+    )
+
+    report = render_system_status_report(window._system_status_snapshot())
+
+    assert "权限 Helper" in report
+    assert "test-helper" in report
+    assert "pwm-write" in report
+    assert "权限 Helper [permission-helper]" in report
+
+    window.close()
+    app.quit()
+
+
 def test_main_window_refresh_telemetry_updates_dashboard_labels():
     from PySide6.QtWidgets import QApplication
 

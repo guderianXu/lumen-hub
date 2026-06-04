@@ -528,6 +528,47 @@ def test_fan_host_builds_pwm_permission_command(tmp_path):
     app.quit()
 
 
+def test_fan_host_routes_pwm_permission_request_through_helper(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.service.permissions import PermissionGrantResult
+
+    monkeypatch.setattr(fan_host.os, "access", lambda _path, _mode: False)
+    pwm_path = tmp_path / "pwm1"
+    pwm_path.write_text("80\n", encoding="utf-8")
+    calls = []
+
+    class Helper:
+        def grant(self, request, *, interactive, timeout):  # noqa: ANN001
+            calls.append((request, interactive, timeout))
+            return PermissionGrantResult(True, "helper-ok")
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False, permission_helper=Helper())
+    page._run_privileged_shell_compat = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fallback shell should not run"))
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[GenericFanChannel(name="CPU Fan", pwm_path=pwm_path, control_available=False)],
+        control_available=False,
+        control_reason="permission denied",
+    )
+
+    ok, output = page._grant_pwm_permissions(snapshot, interactive=True)
+
+    assert ok is True
+    assert output == "helper-ok"
+    assert calls[0][0].operation == "pwm-write"
+    assert calls[0][0].paths == (pwm_path,)
+    assert calls[0][1] is True
+    assert calls[0][2] == 30
+
+    page.close()
+    app.quit()
+
+
 def test_fan_host_auto_grants_pwm_permissions_and_rescans(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
