@@ -84,6 +84,35 @@ lumen-hub-gui
 
 The desktop GUI supports a dark monitoring dashboard, local asset library, static image upload, animated asset playback for the detected ASUS LCD, OpenRGB lighting, PWM fan control, and an experimental LIAN LI wireless page. The display model and preview geometry are device-aware, so future screens can provide different sizes, shapes, pixel styles, and protocols through separate drivers.
 
+## 安装与自启动
+
+Linux 桌面入口和权限样例放在 `packaging/linux/`：
+
+```bash
+sudo install -Dm644 packaging/linux/lumen-hub.desktop /usr/share/applications/lumen-hub.desktop
+mkdir -p ~/.config/autostart
+cp packaging/linux/lumen-hub.desktop ~/.config/autostart/lumen-hub.desktop
+
+sudo install -Dm644 packaging/linux/lumen-hub-udev.rules /etc/udev/rules.d/60-lumen-hub.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+sudo install -Dm644 packaging/linux/lumen-hub-tmpfiles.conf /etc/tmpfiles.d/lumen-hub-pwm.conf
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/lumen-hub-pwm.conf
+```
+
+`packaging/linux/lumen-hub.desktop` 调用安装后的 `lumen-hub-gui` 入口；`packaging/linux/lumen-hub-udev.rules` 覆盖 ASUS LCD、OpenRGB i2c 访问和联力无线 USB 权限；`packaging/linux/lumen-hub-tmpfiles.conf` 用于让普通用户组写入 Linux hwmon `pwm*` 风扇控制节点。修改 udev/tmpfiles 后建议重新插拔相关 USB 设备并重新打开软件。
+
+Windows 自启动脚本放在 `packaging/windows/lumen-hub-autostart.ps1`：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/lumen-hub-autostart.ps1
+powershell -ExecutionPolicy Bypass -File packaging/windows/lumen-hub-autostart.ps1 -Mode ScheduledTask
+powershell -ExecutionPolicy Bypass -File packaging/windows/lumen-hub-autostart.ps1 -Uninstall
+```
+
+默认模式会在当前用户 Startup 文件夹创建 `Lumen Hub.lnk`，计划任务模式会注册登录时启动的 `Lumen Hub` 任务。两种模式默认执行 `lumen-hub-gui`。
+
 The `灯效` page controls motherboard, RAM, fan, and ARGB lighting through the OpenRGB SDK Server. Start OpenRGB with its SDK server enabled before connecting from the GUI. The default endpoint is `127.0.0.1:6742`.
 
 The `监控` page reads NVIDIA GPU telemetry through `nvidia-smi` and CPU temperature from Linux hwmon sensors. Timed telemetry refresh runs in the background so slow sensor commands do not block the GUI timer path; manual monitoring upload can still wait for telemetry collection or device writes to finish. If a sensor is unavailable, the GUI shows `不可用` and keeps running.

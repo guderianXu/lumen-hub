@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Lumen Hub
+Comment=Hardware control center for LCD screens, RGB lighting, fans, and LIAN LI wireless devices
+Exec=lumen-hub-gui
+Icon=lumen-hub
+Terminal=false
+Categories=Utility;System;
+StartupNotify=true
+StartupWMClass=lumen-hub

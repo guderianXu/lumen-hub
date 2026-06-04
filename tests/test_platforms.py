@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from usb9_lcd.gui.platform_diagnostics import PlatformDiagnosticsDialog, render_support_report
 from usb9_lcd.gui.settings import GuiSettings
@@ -152,3 +153,46 @@ def test_openrgb_server_uses_installed_candidate_when_configured_path_is_missing
             return [missing, installed]
 
     assert resolve_openrgb_app_path(missing, Adapter()) == installed
+
+
+def test_linux_install_artifacts_define_gui_entrypoint_and_permissions():
+    desktop = Path("packaging/linux/lumen-hub.desktop").read_text(encoding="utf-8")
+    udev = Path("packaging/linux/lumen-hub-udev.rules").read_text(encoding="utf-8")
+    tmpfiles = Path("packaging/linux/lumen-hub-tmpfiles.conf").read_text(encoding="utf-8")
+
+    assert "[Desktop Entry]" in desktop
+    assert "Name=Lumen Hub" in desktop
+    assert "Exec=lumen-hub-gui" in desktop
+    assert "Type=Application" in desktop
+    assert "Categories=Utility;System;" in desktop
+    assert "0b05" in udev and "1c7b" in udev
+    assert "0416" in udev and "8040" in udev and "8041" in udev and "7372" in udev
+    assert "04fc" in udev and "7393" in udev
+    assert "1cbe" in udev and "0006" in udev
+    assert 'GROUP="plugdev"' in udev
+    assert 'TAG+="uaccess"' in udev
+    assert "OpenRGB" in udev and "i2c-dev" in udev
+    assert "pwm*" in tmpfiles
+    assert "pwm*_enable" in tmpfiles
+    assert "plugdev" in tmpfiles
+
+
+def test_windows_autostart_script_registers_lumen_hub_gui():
+    script = Path("packaging/windows/lumen-hub-autostart.ps1").read_text(encoding="utf-8")
+
+    assert "lumen-hub-gui" in script
+    assert "Lumen Hub" in script
+    assert "WScript.Shell" in script
+    assert "Startup" in script
+    assert "ScheduledTask" in script
+    assert "Uninstall" in script
+
+
+def test_readme_documents_install_and_autostart_artifacts():
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "packaging/linux/lumen-hub.desktop" in readme
+    assert "packaging/linux/lumen-hub-udev.rules" in readme
+    assert "packaging/linux/lumen-hub-tmpfiles.conf" in readme
+    assert "packaging/windows/lumen-hub-autostart.ps1" in readme
+    assert "lumen-hub-gui" in readme

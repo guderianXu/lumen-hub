@@ -199,17 +199,19 @@ Expected after implementation: `3 passed`.
 - Modify: `README.md`
 - Test: `tests/test_platforms.py`
 
-- [ ] **Step 1: Add package artifact tests**
+- [x] **Step 1: Add package artifact tests**
 
 Validate that generated/installable files contain the GUI entrypoint and required permission rules.
 
-- [ ] **Step 2: Add Linux artifacts**
+- [x] **Step 2: Add Linux artifacts**
 
 Add desktop entry, udev rules, tmpfiles sample, and README install commands.
 
-- [ ] **Step 3: Add Windows autostart helper**
+- [x] **Step 3: Add Windows autostart helper**
 
 Add a PowerShell script that creates a Startup shortcut or scheduled task for `lumen-hub-gui`.
+
+Implemented `packaging/linux/lumen-hub.desktop`, `packaging/linux/lumen-hub-udev.rules`, `packaging/linux/lumen-hub-tmpfiles.conf`, `packaging/windows/lumen-hub-autostart.ps1`, and README install/autostart commands.
 
 ### Task 7: Asset Library Templates
 

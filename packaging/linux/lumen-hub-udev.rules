@@ -1,0 +1,16 @@
+# Lumen Hub hardware access rules.
+# Install as /etc/udev/rules.d/60-lumen-hub.rules, then reload udev and replug devices.
+
+# ASUS TUF GAMING LC III 360 ARGB LCD hidraw interface.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1c7b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# LIAN LI L-Wireless sender, receiver, TL controller, UNI FAN LCD HID, and TL LCD wireless receiver.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="8040", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="8041", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="7372", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="04fc", ATTR{idProduct}=="7393", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1cbe", ATTR{idProduct}=="0006", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# OpenRGB often needs SMBus/i2c access for motherboard and memory controllers on Linux.
+SUBSYSTEM=="i2c-dev", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+KERNEL=="i2c-[0-9]*", MODE="0660", GROUP="plugdev", TAG+="uaccess"
