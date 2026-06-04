@@ -44,7 +44,9 @@ class ControlCenterPage(QWidget):
         self.device_value = QLabel("未发现设备")
         self.cpu_value = QLabel("CPU --")
         self.gpu_value = QLabel("GPU --")
-        self.fan_value = QLabel("未加载")
+        self._fan_status_text = "未加载"
+        self._fan_rpm_text = ""
+        self.fan_value = QLabel(self._fan_status_text)
         self.lighting_value = QLabel("默认关闭")
         self.lianli_value = QLabel("未连接")
         self.permission_value = QLabel("权限未检查")
@@ -195,17 +197,41 @@ class ControlCenterPage(QWidget):
         if telemetry is None:
             self.cpu_value.setText("CPU 不可用")
             self.gpu_value.setText("GPU 不可用")
+            self._fan_rpm_text = ""
+            self._refresh_fan_value()
             return
         cpu = "--" if telemetry.cpu.package_temperature_c is None else f"{telemetry.cpu.package_temperature_c:.0f}°C"
         cpu_load = "--" if telemetry.cpu.utilization_percent is None else f"{telemetry.cpu.utilization_percent:.0f}%"
         cpu_power = "--" if telemetry.cpu.power_w is None else f"{telemetry.cpu.power_w:.0f}W"
         gpu = "--" if telemetry.gpu.temperature_c is None else f"{telemetry.gpu.temperature_c:.0f}°C"
-        gpu_load = "--" if telemetry.gpu.utilization_percent is None else f"{telemetry.gpu.utilization_percent}%"
+        gpu_load = "--" if telemetry.gpu.utilization_percent is None else f"{telemetry.gpu.utilization_percent:.0f}%"
+        gpu_power = "--" if telemetry.gpu.power_w is None else f"{telemetry.gpu.power_w:.0f}W"
         self.cpu_value.setText(f"温度 {cpu}\n负载 {cpu_load}\n功耗 {cpu_power}")
-        self.gpu_value.setText(f"{gpu}\n{gpu_load}")
+        self.gpu_value.setText(f"温度 {gpu}\n负载 {gpu_load}\n功耗 {gpu_power}")
+        self._fan_rpm_text = self._fan_rpm_summary(telemetry)
+        self._refresh_fan_value()
 
     def update_fan_status(self, text: str) -> None:
-        self.fan_value.setText(text or "未加载")
+        self._fan_status_text = text or "未加载"
+        self._refresh_fan_value()
+
+    def _refresh_fan_value(self) -> None:
+        lines = [self._fan_status_text]
+        if self._fan_rpm_text:
+            lines.append(self._fan_rpm_text)
+        self.fan_value.setText("\n".join(line for line in lines if line))
+
+    def _fan_rpm_summary(self, telemetry: SystemTelemetry) -> str:
+        fans = [fan for fan in telemetry.fans if fan.available and fan.rpm is not None]
+        if not fans:
+            return "转速 --"
+        parts: list[str] = []
+        for fan in fans[:4]:
+            percent = "" if fan.percent is None else f" / {fan.percent:.0f}%"
+            parts.append(f"{fan.name} {fan.rpm} RPM{percent}")
+        if len(fans) > 4:
+            parts.append(f"+{len(fans) - 4} 个")
+        return "转速 " + " · ".join(parts)
 
     def update_lighting_status(self, text: str) -> None:
         self.lighting_value.setText(text or "默认关闭")

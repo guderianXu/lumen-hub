@@ -21,7 +21,7 @@ from usb9_lcd.drivers.base import (
     PreviewProfile,
     PreviewShape,
 )
-from usb9_lcd.monitoring.models import CpuTelemetry, GpuTelemetry, SystemTelemetry
+from usb9_lcd.monitoring.models import CpuTelemetry, FanTelemetry, GpuTelemetry, SystemTelemetry
 from usb9_lcd.lighting import LightingTarget
 
 
@@ -211,6 +211,10 @@ def _fake_telemetry() -> SystemTelemetry:
             available=True,
         ),
         captured_at=datetime(2026, 5, 20, 12, 0, 0),
+        fans=[
+            FanTelemetry(name="CPU Fan", rpm=987, percent=82, available=True),
+            FanTelemetry(name="GPU Fan", rpm=1530, percent=48, available=True),
+        ],
     )
 
 
@@ -357,9 +361,11 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     assert "54°C" in window.home_page.cpu_value.text()
     assert "功耗 86W" in window.home_page.cpu_value.text()
     assert "61°C" in window.home_page.gpu_value.text()
+    assert "功耗 216W" in window.home_page.gpu_value.text()
+    assert "GPU Fan 1530 RPM" in window.home_page.fan_value.text()
     assert window.home_page.permission_value.text() != "权限未检查"
     assert window.home_page.mode_value.text() == "日常"
-    assert window.home_page.fan_value.text() in {"未加载", "未扫描"}
+    assert "CPU Fan 987 RPM" in window.home_page.fan_value.text()
     assert window.home_page.lighting_value.text() == "默认关闭"
     assert (
         window.home_page.lianli_value.text() in {"未连接", "正在准备自动连接..."}
