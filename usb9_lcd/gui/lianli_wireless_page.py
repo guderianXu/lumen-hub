@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -527,6 +528,8 @@ class LianLiWirelessPage(QWidget):
 
         settings: GuiSettings | None = None,
 
+        background_refresh: bool | None = None,
+
     ) -> None:
 
         super().__init__()
@@ -560,6 +563,11 @@ class LianLiWirelessPage(QWidget):
         self.require_write_gate = require_write_gate
 
         self.write_gate_report_factory = write_gate_report_factory
+
+        if background_refresh is None:
+            self.background_refresh = os.environ.get("QT_QPA_PLATFORM") != "offscreen"
+        else:
+            self.background_refresh = bool(background_refresh)
 
         self._lianli_write_gate_payload: dict[str, object] | None = None
 
@@ -641,11 +649,13 @@ class LianLiWirelessPage(QWidget):
 
         self._rpm_refresh_timer.timeout.connect(self._refresh_lianli_rpm_async)
 
-        self._rpm_refresh_timer.start()
+        if self.background_refresh:
+
+            self._rpm_refresh_timer.start()
 
 
 
-        if self.settings.lianli_wireless.auto_connect:
+        if self.background_refresh and self.settings.lianli_wireless.auto_connect:
 
             QTimer.singleShot(0, self.auto_connect_lianli)
 
@@ -799,19 +809,19 @@ class LianLiWirelessPage(QWidget):
 
         self.lianli_curve_editor.curve_changed.connect(self._lianli_curve_changed)
 
-        self.lianli_pwm_button = QPushButton("应用到当前风扇组")
+        self.lianli_daily_pwm_button = QPushButton("应用到当前风扇组")
 
-        self.lianli_pwm_button.setObjectName("PrimaryButton")
+        self.lianli_daily_pwm_button.setObjectName("PrimaryButton")
 
-        self.lianli_pwm_button.clicked.connect(self.send_live_pwm)
+        self.lianli_daily_pwm_button.clicked.connect(self.send_lianli_target_rpm)
 
         self.lianli_apply_all_fans_button = QPushButton("应用到全部风扇组")
 
-        self.lianli_apply_all_fans_button.clicked.connect(self.send_live_pwm_all)
+        self.lianli_apply_all_fans_button.clicked.connect(self.send_lianli_target_rpm_all)
 
-        self.lianli_pwm_sync_button = QPushButton("主板 PWM 同步")
+        self.lianli_daily_pwm_sync_button = QPushButton("主板 PWM 同步")
 
-        self.lianli_pwm_sync_button.clicked.connect(self.send_live_pwm_sync)
+        self.lianli_daily_pwm_sync_button.clicked.connect(self.send_live_pwm_sync)
 
         fan_layout.addWidget(fan_title, 0, 0)
 
@@ -833,11 +843,11 @@ class LianLiWirelessPage(QWidget):
 
         fan_layout.addWidget(self.lianli_curve_editor, 5, 1, 1, 3)
 
-        fan_layout.addWidget(self.lianli_pwm_button, 6, 0, 1, 2)
+        fan_layout.addWidget(self.lianli_daily_pwm_button, 6, 0, 1, 2)
 
         fan_layout.addWidget(self.lianli_apply_all_fans_button, 6, 2)
 
-        fan_layout.addWidget(self.lianli_pwm_sync_button, 6, 3)
+        fan_layout.addWidget(self.lianli_daily_pwm_sync_button, 6, 3)
 
         self._restore_lianli_fan_mode_selection()
 
@@ -1064,11 +1074,15 @@ class LianLiWirelessPage(QWidget):
 
         layout.addWidget(light_box)
 
+        layout.addWidget(self._write_panel())
+
         layout.addStretch(1)
 
         self._populate_cached_lianli_targets()
 
         self._update_daily_controls()
+
+        self._update_write_controls()
 
         return panel
 
@@ -2343,6 +2357,18 @@ class LianLiWirelessPage(QWidget):
 
             self.lianli_direct_led_count.setValue(target.led_count)
 
+            if hasattr(self, "lianli_mac_input"):
+
+                self.lianli_mac_input.setText(target.mac)
+
+            if hasattr(self, "lianli_master_mac_input"):
+
+                self.lianli_master_mac_input.setText(target.master_mac)
+
+            if hasattr(self, "lianli_rx_type_value"):
+
+                self.lianli_rx_type_value.setValue(max(1, min(15, int(target.rx_type or 3))))
+
             if hasattr(self, "lianli_fan_summary"):
 
                 self.lianli_fan_summary.setText(
@@ -2615,11 +2641,11 @@ class LianLiWirelessPage(QWidget):
 
         for name in (
 
-            "lianli_pwm_button",
+            "lianli_daily_pwm_button",
 
             "lianli_apply_all_fans_button",
 
-            "lianli_pwm_sync_button",
+            "lianli_daily_pwm_sync_button",
 
             "lianli_start_loop_button",
 
@@ -2627,7 +2653,7 @@ class LianLiWirelessPage(QWidget):
 
             if hasattr(self, name):
 
-                getattr(self, name).setEnabled(has_target and not busy)
+                getattr(self, name).setEnabled(has_target and not busy and self._write_unlocked())
 
         if hasattr(self, "lianli_apply_effect_button"):
 
@@ -2635,7 +2661,9 @@ class LianLiWirelessPage(QWidget):
 
             self.lianli_apply_effect_button.setEnabled(
 
-                has_target and (not busy or self._lianli_loop_effect is not None)
+                has_target
+                and self._write_unlocked()
+                and (not busy or self._lianli_loop_effect is not None)
 
             )
 
@@ -4621,7 +4649,13 @@ class LianLiWirelessPage(QWidget):
 
 
 
-    def send_live_pwm(self) -> None:
+    def send_lianli_target_rpm(self) -> None:
+
+        if not self._write_unlocked():
+
+            self.lianli_status_label.setText(self._write_blocked_text())
+
+            return
 
         rpm = self.lianli_rpm_value.value()
 
@@ -4643,7 +4677,13 @@ class LianLiWirelessPage(QWidget):
 
 
 
-    def send_live_pwm_all(self) -> None:
+    def send_lianli_target_rpm_all(self) -> None:
+
+        if not self._write_unlocked():
+
+            self.lianli_status_label.setText(self._write_blocked_text())
+
+            return
 
         rpm = self.lianli_rpm_value.value()
 
@@ -4660,6 +4700,26 @@ class LianLiWirelessPage(QWidget):
             f"正在应用全部联力风扇组：{rpm} RPM...",
 
             lambda: self._send_lianli_direct_pwm_all(pwm),
+
+        )
+
+
+
+    def send_live_pwm(self) -> None:
+
+        if not self._write_unlocked():
+
+            self.lianli_status_label.setText(self._write_blocked_text())
+
+            return
+
+        pwm = self.lianli_pwm_value.value() if hasattr(self, "lianli_pwm_value") else self.settings.lianli_wireless.pwm
+
+        self._run_guarded_write(
+
+            f"正在发送原始 PWM：{pwm}...",
+
+            lambda backend, target: backend.send_pwm(target, [pwm]),
 
         )
 
@@ -4710,6 +4770,12 @@ class LianLiWirelessPage(QWidget):
 
 
     def send_live_pwm_sync(self) -> None:
+
+        if not self._write_unlocked():
+
+            self.lianli_status_label.setText(self._write_blocked_text())
+
+            return
 
         self._run_lianli_operation(
 
@@ -5015,13 +5081,9 @@ class LianLiWirelessPage(QWidget):
 
     def send_live_rainbow(self) -> None:
 
-        frame_count = 24
+        frame_count = int(self.lianli_rainbow_frame_count.value())
 
-        interval_ms = self._rainbow_interval_ms()
-
-        self.lianli_rainbow_frame_count.setValue(frame_count)
-
-        self.lianli_rainbow_interval.setValue(interval_ms)
+        interval_ms = int(self.lianli_rainbow_interval.value())
 
         self._run_guarded_write(
 
@@ -5116,13 +5178,9 @@ class LianLiWirelessPage(QWidget):
 
             return
 
-        frame_count = 24
+        frame_count = int(self.lianli_rainbow_frame_count.value())
 
-        interval_ms = self._rainbow_interval_ms()
-
-        self.lianli_rainbow_frame_count.setValue(frame_count)
-
-        self.lianli_rainbow_interval.setValue(interval_ms)
+        interval_ms = int(self.lianli_rainbow_interval.value())
 
 
 
@@ -6324,7 +6382,7 @@ class LianLiWirelessPage(QWidget):
 
         if self.require_write_gate and not self._write_gate_unlocked():
 
-            return "写入门禁未过：请先点击写入门禁，完成官方抓包对比后再写入"
+            return "写入门禁未通过：请先点击写入门禁，完成官方抓包对比后再写入"
 
         return "写入未启用或确认令牌不正确"
 
@@ -6335,6 +6393,10 @@ class LianLiWirelessPage(QWidget):
         enabled = (not self._operation_active) and self._write_unlocked()
 
         for name in (
+
+            "lianli_pwm_button",
+
+            "lianli_pwm_sync_button",
 
             "lianli_safe_pwm_button",
 

@@ -908,6 +908,9 @@ class MainWindow(QMainWindow):
         self._refresh_home_permission_status()
 
     def request_telemetry_refresh(self) -> None:
+        if not self.telemetry_timer.isActive():
+            self.refresh_telemetry()
+            return
         thread = self._telemetry_thread
         if thread is not None and thread.is_alive():
             log_event("telemetry_refresh_skipped_busy")
