@@ -169,17 +169,25 @@ Expose helper availability in the diagnostics center and device tree.
 - Modify: `usb9_lcd/gui/debug.py`
 - Test: `tests/test_gui_import.py`, `tests/test_platforms.py`
 
-- [ ] **Step 1: Add exportable support report**
+- [x] **Step 1: Add exportable support report**
 
 The report must include platform paths, device tree, permissions, OpenRGB status, fan backend, LIAN LI status, telemetry, and recent logs.
 
-- [ ] **Step 2: Add copy/save buttons**
+- [x] **Step 2: Add copy/save buttons**
 
 Add `复制报告` and `保存报告` actions in the diagnostics dialog.
 
-- [ ] **Step 3: Add tests for report sections**
+- [x] **Step 3: Add tests for report sections**
 
 Assert all required section titles and key device/status lines are present.
+
+Run:
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m pytest tests/test_platforms.py::test_platform_diagnostic_report_includes_openrgb_and_paths tests/test_platforms.py::test_support_report_includes_device_tree_permissions_and_recent_events tests/test_platforms.py::test_platform_diagnostics_dialog_can_copy_and_save_report -q
+```
+
+Expected after implementation: `3 passed`.
 
 ### Task 6: Linux/Windows Install And Autostart
 

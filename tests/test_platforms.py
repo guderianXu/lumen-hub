@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 
-from usb9_lcd.gui.platform_diagnostics import render_platform_diagnostic_report
+from usb9_lcd.gui.platform_diagnostics import PlatformDiagnosticsDialog, render_support_report
 from usb9_lcd.gui.settings import GuiSettings
+from usb9_lcd.gui.device_inventory import DeviceTreeItem, DeviceTreeSnapshot
+from usb9_lcd.gui.system_status import StatusItem, SystemStatusSnapshot
 from usb9_lcd.lighting.server import resolve_openrgb_app_path
 from usb9_lcd.platforms.linux import LinuxPlatformAdapter
 from usb9_lcd.platforms.windows import WindowsPlatformAdapter
@@ -74,11 +76,69 @@ def test_platform_diagnostic_report_includes_openrgb_and_paths(tmp_path, monkeyp
     settings = GuiSettings()
     settings.openrgb.app_path = str(tmp_path / "OpenRGB")
 
-    report = render_platform_diagnostic_report(settings, LinuxPlatformAdapter())
+    report = render_support_report(settings, LinuxPlatformAdapter())
 
+    assert "Lumen Hub 支持报告" in report
     assert "平台诊断" in report
     assert "OpenRGB 路径" in report
     assert str(tmp_path / "state" / "lumen-hub" / "logs") in report
+
+
+def test_support_report_includes_device_tree_permissions_and_recent_events(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    settings = GuiSettings()
+    snapshot = SystemStatusSnapshot(
+        components=[StatusItem("OpenRGB", "ok", "已连接 4 个目标")],
+        permissions=[StatusItem("PWM 写权限", "warn", "2 个 pwm* 文件需授权")],
+        device_tree=DeviceTreeSnapshot(
+            roots=[
+                DeviceTreeItem(
+                    "灯效",
+                    "lighting",
+                    "ok",
+                    "OpenRGB",
+                    [DeviceTreeItem("ARGB Header", "zone", "ok", "30 LED")],
+                )
+            ]
+        ),
+        recent_events=["联力无线关灯完成"],
+    )
+
+    report = render_support_report(settings, LinuxPlatformAdapter(), snapshot=snapshot)
+
+    assert "Lumen Hub 支持报告" in report
+    assert "OpenRGB" in report
+    assert "PWM 写权限" in report
+    assert "设备树" in report
+    assert "ARGB Header" in report
+    assert "联力无线关灯完成" in report
+
+
+def test_platform_diagnostics_dialog_can_copy_and_save_report(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    settings = GuiSettings()
+    snapshot = SystemStatusSnapshot(
+        components=[StatusItem("CPU", "ok", "温度可读")],
+        permissions=[StatusItem("LCD 写权限", "ok", "1/1 个设备可写")],
+        recent_events=["诊断测试事件"],
+    )
+    dialog = PlatformDiagnosticsDialog(settings, status_provider=lambda: snapshot)
+
+    dialog.copy_report()
+    save_path = tmp_path / "support-report.txt"
+    assert dialog.save_report(save_path) is True
+
+    assert "复制报告" == dialog.copy_button.text()
+    assert "保存报告" == dialog.save_button.text()
+    assert "诊断测试事件" in QApplication.clipboard().text()
+    assert "诊断测试事件" in save_path.read_text(encoding="utf-8")
+
+    dialog.close()
+    app.quit()
 
 
 def test_openrgb_server_uses_installed_candidate_when_configured_path_is_missing(tmp_path):

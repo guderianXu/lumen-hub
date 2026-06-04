@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from usb9_lcd.gui.settings import GuiSettings
 from usb9_lcd.gui.system_status import SystemStatusSnapshot, render_system_status_report
@@ -34,6 +46,24 @@ def render_platform_diagnostic_report(
     if snapshot is not None:
         lines.extend(["", render_system_status_report(snapshot)])
     return "\n".join(lines)
+
+
+def render_support_report(
+    settings: GuiSettings,
+    adapter: PlatformAdapter | None = None,
+    snapshot: SystemStatusSnapshot | None = None,
+    *,
+    generated_at: datetime | None = None,
+) -> str:
+    timestamp = (generated_at or datetime.now()).isoformat(timespec="seconds")
+    return "\n".join(
+        [
+            "Lumen Hub 支持报告",
+            f"生成时间: {timestamp}",
+            "",
+            render_platform_diagnostic_report(settings, adapter, snapshot),
+        ]
+    )
 
 
 class PlatformDiagnosticsDialog(QDialog):
@@ -69,10 +99,16 @@ class PlatformDiagnosticsDialog(QDialog):
         button_row = QHBoxLayout()
         self.refresh_button = QPushButton("刷新诊断")
         self.refresh_button.clicked.connect(self.refresh_report)
+        self.copy_button = QPushButton("复制报告")
+        self.copy_button.clicked.connect(self.copy_report)
+        self.save_button = QPushButton("保存报告")
+        self.save_button.clicked.connect(self._save_report_dialog)
         self.close_button = QPushButton("关闭")
         self.close_button.clicked.connect(self.close)
         button_row.addStretch(1)
         button_row.addWidget(self.refresh_button)
+        button_row.addWidget(self.copy_button)
+        button_row.addWidget(self.save_button)
         button_row.addWidget(self.close_button)
         layout.addLayout(button_row)
 
@@ -81,4 +117,27 @@ class PlatformDiagnosticsDialog(QDialog):
 
     def refresh_report(self) -> None:
         snapshot = self.status_provider() if self.status_provider is not None else None
-        self.report_text.setPlainText(render_platform_diagnostic_report(self.settings, snapshot=snapshot))
+        self.report_text.setPlainText(render_support_report(self.settings, snapshot=snapshot))
+
+    def copy_report(self) -> bool:
+        QApplication.clipboard().setText(self.report_text.toPlainText())
+        return True
+
+    def save_report(self, path: str | Path | None = None) -> bool:
+        if path is None:
+            return self._save_report_dialog()
+        report_path = Path(path)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(self.report_text.toPlainText(), encoding="utf-8")
+        return True
+
+    def _save_report_dialog(self) -> bool:
+        selected, _filter = QFileDialog.getSaveFileName(
+            self,
+            "保存 Lumen Hub 支持报告",
+            "lumen-hub-support-report.txt",
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not selected:
+            return False
+        return self.save_report(selected)
