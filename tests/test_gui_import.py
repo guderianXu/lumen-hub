@@ -770,10 +770,14 @@ def test_lianli_wireless_page_reads_snapshot_and_unlocks_writes():
     assert _process_events_until(app, lambda: '"device_count": 1' in page.lianli_snapshot_text.toPlainText())
     assert "aa:bb:cc:dd:ee:ff" in page.lianli_snapshot_text.toPlainText()
     assert not page.lianli_pwm_button.isEnabled()
+    assert not page.lianli_daily_pwm_button.isEnabled()
+    assert "写入未启用或确认令牌不正确" in page.lianli_next_action_label.text()
 
     page.lianli_write_enable.setChecked(True)
     page.lianli_confirm_input.setText(LIANLI_WRITE_CONFIRM_TOKEN)
     assert page.lianli_pwm_button.isEnabled()
+    assert page.lianli_daily_pwm_button.isEnabled()
+    assert "可以写入" in page.lianli_next_action_label.text()
 
     page.lianli_mac_input.setText("aa:bb:cc:dd:ee:ff")
     page.lianli_pwm_value.setValue(120)

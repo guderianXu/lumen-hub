@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import importlib.util
@@ -70,6 +71,20 @@ def _write_tshark_json_capture(
         ),
         encoding="utf-8",
     )
+
+
+def test_probe_script_prefers_checkout_package_without_pythonpath():
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, "tools/lianli_wireless_probe.py", "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert "Read-only LIAN LI L-Wireless probe" in result.stdout
 
 
 def _write_linux_experiment_summary_inputs(path: Path) -> None:

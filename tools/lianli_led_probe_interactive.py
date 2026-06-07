@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 import json
 from pathlib import Path
+import sys
+
+_REPO_ROOT = Path(__file__).absolute().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from usb9_lcd.gui.settings import DEFAULT_SETTINGS_PATH, load_settings
 from usb9_lcd.lianli.wireless import create_pyusb_backend, WirelessDeviceInfo
 

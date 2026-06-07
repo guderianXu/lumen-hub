@@ -5,6 +5,11 @@ import json
 import argparse
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import sys
+
+_REPO_ROOT = Path(__file__).absolute().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from usb9_lcd.lianli import KNOWN_USB_DEVICES, UDEV_RULES, scan_known_usb_devices
 from usb9_lcd.lianli.analysis import (

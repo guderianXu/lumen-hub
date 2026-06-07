@@ -2638,6 +2638,7 @@ class LianLiWirelessPage(QWidget):
         has_target = bool(self.settings.lianli_wireless.targets)
 
         busy = self._operation_active
+        write_unlocked = self._write_unlocked()
 
         for name in (
 
@@ -2653,7 +2654,7 @@ class LianLiWirelessPage(QWidget):
 
             if hasattr(self, name):
 
-                getattr(self, name).setEnabled(has_target and not busy and self._write_unlocked())
+                getattr(self, name).setEnabled(has_target and not busy and write_unlocked)
 
         if hasattr(self, "lianli_apply_effect_button"):
 
@@ -2662,7 +2663,7 @@ class LianLiWirelessPage(QWidget):
             self.lianli_apply_effect_button.setEnabled(
 
                 has_target
-                and self._write_unlocked()
+                and write_unlocked
                 and (not busy or self._lianli_loop_effect is not None)
 
             )
@@ -2682,6 +2683,25 @@ class LianLiWirelessPage(QWidget):
         if self._lianli_test_dialog is not None:
 
             self._lianli_test_dialog.update_controls()
+        if hasattr(self, "lianli_next_action_label"):
+            self.lianli_next_action_label.setText(self._daily_lianli_next_action_text(has_target, busy, write_unlocked))
+
+
+    def _daily_lianli_next_action_text(self, has_target: bool, busy: bool, write_unlocked: bool) -> str:
+
+        if not has_target:
+
+            return "下一步：点击重新识别，读取接收器并选择已绑定风扇组"
+
+        if busy:
+
+            return "下一步：等待当前联力操作完成"
+
+        if not write_unlocked:
+
+            return f"写入锁定：{self._write_blocked_text()}；请勾选“启用联力写入”并输入 WRITE-LIANLI"
+
+        return "可以写入：选择目标转速后，点击“应用到当前风扇组”"
 
 
 
@@ -6451,6 +6471,7 @@ class LianLiWirelessPage(QWidget):
         if hasattr(self, "lianli_write_gate_label"):
 
             self.lianli_write_gate_label.setText(self._write_gate_label_text())
+        self._update_daily_controls()
 
 
 

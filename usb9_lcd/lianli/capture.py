@@ -4242,7 +4242,9 @@ def _capture_signature_matched_commands(items: list[dict[str, Any]]) -> list[str
         item_commands: list[str] = []
         observed = item.get("observed_commands")
         if isinstance(observed, dict):
-            item_commands.extend(str(command) for command in _strings_from_list(observed.get("compare_capture_commands")))
+            commands = observed.get("compare_capture_commands")
+            if isinstance(commands, list):
+                item_commands.extend(str(command) for command in commands if isinstance(command, str) and command)
         if item_commands:
             commands.extend(item_commands)
             continue
@@ -4737,7 +4739,16 @@ def _rf_payload_sha256s(frames: list[Any]) -> list[str]:
 
 
 def _tool_probe_prefix() -> list[str]:
-    repo_root = Path(__file__).resolve().parents[2]
+    roots = (Path.cwd(), Path(__file__).absolute().parents[2], Path(__file__).resolve().parents[2])
+    repo_root = next(
+        (
+            root
+            for root in roots
+            if (root / "scripts" / "lianli-wireless-probe.sh").exists()
+            or (root / "tools" / "lianli_wireless_probe.py").exists()
+        ),
+        roots[1],
+    )
     windows_probe = repo_root / "scripts" / "lianli-wireless-probe.ps1"
     linux_probe = repo_root / "scripts" / "lianli-wireless-probe.sh"
     fallback_probe = repo_root / "tools" / "lianli_wireless_probe.py"
