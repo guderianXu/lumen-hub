@@ -394,6 +394,31 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     app.quit()
 
 
+def test_main_window_uses_hardware_dashboard_shell_hooks():
+    from PySide6.QtWidgets import QApplication, QFrame, QPushButton
+
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+
+    assert window.findChild(QFrame, "AppShell") is not None
+    assert window.findChild(QFrame, "TopBar") is not None
+    assert window.findChild(QFrame, "MainContentShell") is not None
+    assert window.navigation.objectName() == "SideNav"
+    assert any(
+        button.objectName() == "SecondaryButton" and button.text() == "平台诊断"
+        for button in window.findChildren(QPushButton)
+    )
+
+    window.close()
+    app.quit()
+
+
 def test_home_dashboard_shows_nvidia_gpu_fan_speed_percent_when_rpm_is_unavailable():
     from PySide6.QtWidgets import QApplication
 

@@ -432,12 +432,14 @@ class MainWindow(QMainWindow):
         shell_layout.setSpacing(0)
         shell_layout.addWidget(self._top_bar())
 
-        content = QHBoxLayout()
+        content_shell = QFrame()
+        content_shell.setObjectName("MainContentShell")
+        content = QHBoxLayout(content_shell)
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(0)
         content.addWidget(self.navigation)
         content.addWidget(self.pages, 1)
-        shell_layout.addLayout(content, 1)
+        shell_layout.addWidget(content_shell, 1)
         self.setCentralWidget(shell)
         self.statusBar().showMessage("就绪")
 
@@ -629,6 +631,7 @@ class MainWindow(QMainWindow):
         self.sleep_all_off_button.clicked.connect(self.sleep_all_off)
         layout.addWidget(self.sleep_all_off_button)
         platform_diagnostics_button = QPushButton("平台诊断")
+        platform_diagnostics_button.setObjectName("SecondaryButton")
         platform_diagnostics_button.clicked.connect(self.open_platform_diagnostics)
         layout.addWidget(platform_diagnostics_button)
         return top_bar
