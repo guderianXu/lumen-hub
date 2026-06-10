@@ -451,6 +451,25 @@ def test_control_center_exposes_hardware_dashboard_sections():
     app.quit()
 
 
+def test_gui_screenshot_tool_imports_without_starting_qt():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path("tools/capture_gui_screenshots.py")
+    spec = importlib.util.spec_from_file_location("capture_gui_screenshots", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.PAGE_ROWS == {
+        "home": 0,
+        "screen": 1,
+        "fan": 2,
+        "lighting": 3,
+        "lianli": 5,
+    }
+
+
 def test_home_dashboard_shows_nvidia_gpu_fan_speed_percent_when_rpm_is_unavailable():
     from PySide6.QtWidgets import QApplication
 
