@@ -419,6 +419,38 @@ def test_main_window_uses_hardware_dashboard_shell_hooks():
     app.quit()
 
 
+def test_control_center_exposes_hardware_dashboard_sections():
+    from PySide6.QtWidgets import QApplication, QFrame, QPushButton
+
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+
+    required_frames = (
+        "HomeHeroPanel",
+        "HomeMetricGrid",
+        "HomeCommandDock",
+        "HomeTimelinePanel",
+    )
+    missing = [name for name in required_frames if window.home_page.findChild(QFrame, name) is None]
+    assert missing == []
+
+    groups = {
+        button.property("commandGroup")
+        for button in window.home_page.findChildren(QPushButton)
+        if button.property("commandGroup")
+    }
+    assert {"safety", "screen", "fan", "lighting", "lianli"}.issubset(groups)
+
+    window.close()
+    app.quit()
+
+
 def test_home_dashboard_shows_nvidia_gpu_fan_speed_percent_when_rpm_is_unavailable():
     from PySide6.QtWidgets import QApplication
 

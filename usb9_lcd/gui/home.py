@@ -23,43 +23,8 @@ class ControlCenterPage(QWidget):
         layout.setContentsMargins(24, 22, 24, 24)
         layout.setSpacing(16)
 
-        header_row = QHBoxLayout()
-        title_box = QVBoxLayout()
-        header = QLabel("控制中心")
-        header.setObjectName("PageTitle")
-        subtitle = QLabel("集中查看屏幕、硬件监控、风扇、灯效和联力无线状态")
-        subtitle.setObjectName("PageSubtitle")
-        title_box.addWidget(header)
-        title_box.addWidget(subtitle)
-        header_row.addLayout(title_box, 1)
-        self.mode_value = QLabel("日常")
-        self.mode_value.setObjectName("DeviceBadge")
-        header_row.addWidget(self.mode_value)
-        layout.addLayout(header_row)
-
-        layout.addWidget(self._mode_panel(sleep_all_off))
-
-        overview = QGridLayout()
-        overview.setSpacing(12)
-        self.device_value = QLabel("未发现设备")
-        self.cpu_value = QLabel("CPU --")
-        self.gpu_value = QLabel("GPU --")
-        self._fan_status_text = "未加载"
-        self._fan_rpm_text = ""
-        self.fan_value = QLabel(self._fan_status_text)
-        self.lighting_value = QLabel("默认关闭")
-        self.lianli_value = QLabel("未连接")
-        self.permission_value = QLabel("权限未检查")
-        self.device_tree_value = QLabel("设备树未生成")
-        overview.addWidget(self._status_card("LCD 设备", self.device_value), 0, 0)
-        overview.addWidget(self._status_card("CPU", self.cpu_value), 0, 1)
-        overview.addWidget(self._status_card("GPU", self.gpu_value), 0, 2)
-        overview.addWidget(self._status_card("风扇", self.fan_value), 1, 0)
-        overview.addWidget(self._status_card("灯效", self.lighting_value), 1, 1)
-        overview.addWidget(self._status_card("联力无线", self.lianli_value), 1, 2)
-        overview.addWidget(self._status_card("设备树", self.device_tree_value), 2, 0)
-        overview.addWidget(self._status_card("权限", self.permission_value), 2, 1, 1, 2)
-        layout.addLayout(overview)
+        layout.addWidget(self._hero_panel(sleep_all_off))
+        layout.addWidget(self._metric_grid())
         layout.addWidget(
             self._command_panel(
                 navigate,
@@ -73,17 +38,29 @@ class ControlCenterPage(QWidget):
         layout.addStretch(1)
         self.add_event("控制中心已就绪")
 
-    def _mode_panel(self, sleep_all_off: Callable[[], None]) -> QFrame:
+    def _hero_panel(self, sleep_all_off: Callable[[], None]) -> QFrame:
         panel = QFrame()
-        panel.setObjectName("MetricCard")
+        panel.setObjectName("HomeHeroPanel")
         layout = QGridLayout(panel)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setHorizontalSpacing(8)
-        layout.setVerticalSpacing(8)
-        title = QLabel("运行模式")
-        title.setObjectName("SectionLabel")
-        hint = QLabel("选择当前使用场景。睡眠模式会立即关闭屏幕和灯光。")
-        hint.setObjectName("FieldHint")
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setHorizontalSpacing(14)
+        layout.setVerticalSpacing(10)
+
+        title = QLabel("Lumen Hub 控制中心")
+        title.setObjectName("PageTitle")
+        subtitle = QLabel("屏幕、风扇、灯效与联力无线的实时硬件指挥台")
+        subtitle.setObjectName("PageSubtitle")
+        subtitle.setWordWrap(True)
+        self.mode_value = QLabel("日常")
+        self.mode_value.setObjectName("StatusPill")
+
+        title_box = QVBoxLayout()
+        title_box.setSpacing(4)
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        layout.addLayout(title_box, 0, 0, 1, 3)
+        layout.addWidget(self.mode_value, 0, 3)
+
         self.mode_group = QButtonGroup(self)
         modes = (
             ("日常", "屏幕监控、风扇自动、灯效默认", None),
@@ -91,8 +68,6 @@ class ControlCenterPage(QWidget):
             ("静音", "低噪声策略，降低灯光亮度", None),
             ("睡眠", "黑屏并关闭所有灯光", sleep_all_off),
         )
-        layout.addWidget(title, 0, 0)
-        layout.addWidget(hint, 0, 1, 1, len(modes) - 1)
         for index, (label, description, action) in enumerate(modes):
             button = QPushButton(label)
             button.setCheckable(True)
@@ -107,6 +82,34 @@ class ControlCenterPage(QWidget):
             self.mode_group.addButton(button, index)
             layout.addWidget(button, 1, index)
         return panel
+
+    def _metric_grid(self) -> QFrame:
+        wrapper = QFrame()
+        wrapper.setObjectName("HomeMetricGrid")
+        overview = QGridLayout(wrapper)
+        overview.setContentsMargins(0, 0, 0, 0)
+        overview.setSpacing(12)
+
+        self.device_value = QLabel("未发现设备")
+        self.cpu_value = QLabel("CPU --")
+        self.gpu_value = QLabel("GPU --")
+        self._fan_status_text = "未加载"
+        self._fan_rpm_text = ""
+        self.fan_value = QLabel(self._fan_status_text)
+        self.lighting_value = QLabel("默认关闭")
+        self.lianli_value = QLabel("未连接")
+        self.permission_value = QLabel("权限未检查")
+        self.device_tree_value = QLabel("设备树未生成")
+
+        overview.addWidget(self._status_card("LCD", self.device_value, "screen"), 0, 0, 1, 2)
+        overview.addWidget(self._status_card("CPU", self.cpu_value, "cpu"), 0, 2)
+        overview.addWidget(self._status_card("GPU", self.gpu_value, "gpu"), 0, 3)
+        overview.addWidget(self._status_card("风扇", self.fan_value, "fan"), 1, 0, 1, 2)
+        overview.addWidget(self._status_card("灯效", self.lighting_value, "lighting"), 1, 2)
+        overview.addWidget(self._status_card("联力无线", self.lianli_value, "lianli"), 1, 3)
+        overview.addWidget(self._status_card("设备树", self.device_tree_value, "device-tree"), 2, 0, 1, 2)
+        overview.addWidget(self._status_card("权限", self.permission_value, "permission"), 2, 2, 1, 2)
+        return wrapper
 
     def _set_mode(self, mode: str, action: Callable[[], None] | None = None) -> None:
         self.set_mode_indicator(mode)
@@ -130,7 +133,7 @@ class ControlCenterPage(QWidget):
         sleep_all_off: Callable[[], None],
     ) -> QFrame:
         panel = QFrame()
-        panel.setObjectName("MetricCard")
+        panel.setObjectName("HomeCommandDock")
         layout = QGridLayout(panel)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setHorizontalSpacing(8)
@@ -139,32 +142,35 @@ class ControlCenterPage(QWidget):
         title.setObjectName("SectionLabel")
         columns = 4
         layout.addWidget(title, 0, 0, 1, columns)
-        actions: tuple[tuple[str, Callable[[], None], bool], ...] = (
-            ("睡眠全关", sleep_all_off, False),
-            ("发送监控", upload_monitor, True),
-            ("打开屏幕", lambda: navigate("screen"), True),
-            ("素材库", lambda: navigate("assets"), False),
-            ("打开风扇", lambda: navigate("fan"), True),
-            ("扫描风扇", load_fan_control, False),
-            ("打开灯效", lambda: navigate("lighting"), True),
-            ("连接灯效", connect_lighting, False),
-            ("打开联力", lambda: navigate("lianli"), True),
-            ("读取联力状态", lambda: navigate("lianli"), False),
+        actions: tuple[tuple[str, str, Callable[[], None], bool], ...] = (
+            ("safety", "睡眠全关", sleep_all_off, False),
+            ("screen", "发送监控", upload_monitor, True),
+            ("screen", "打开屏幕", lambda: navigate("screen"), True),
+            ("screen", "素材库", lambda: navigate("assets"), False),
+            ("fan", "打开风扇", lambda: navigate("fan"), True),
+            ("fan", "扫描风扇", load_fan_control, False),
+            ("lighting", "打开灯效", lambda: navigate("lighting"), True),
+            ("lighting", "连接灯效", connect_lighting, False),
+            ("lianli", "打开联力", lambda: navigate("lianli"), True),
+            ("lianli", "读取联力状态", lambda: navigate("lianli"), False),
         )
-        for index, (label, action, primary) in enumerate(actions):
+        for index, (group, label, action, primary) in enumerate(actions):
             button = QPushButton(label)
             button.setProperty("moduleAction", label)
+            button.setProperty("commandGroup", group)
             if label == "睡眠全关":
                 button.setObjectName("DangerButton")
             elif primary:
                 button.setObjectName("PrimaryButton")
+            else:
+                button.setObjectName("SecondaryButton")
             button.clicked.connect(action)
             layout.addWidget(button, 1 + index // columns, index % columns)
         return panel
 
     def _event_panel(self) -> QFrame:
         panel = QFrame()
-        panel.setObjectName("MetricCard")
+        panel.setObjectName("HomeTimelinePanel")
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(6)
@@ -174,7 +180,7 @@ class ControlCenterPage(QWidget):
         self.event_labels = []
         for _index in range(6):
             label = QLabel("等待操作")
-            label.setObjectName("ChecklistItem")
+            label.setObjectName("TimelineItem")
             label.setWordWrap(True)
             self.event_labels.append(label)
             layout.addWidget(label)
@@ -280,13 +286,15 @@ class ControlCenterPage(QWidget):
     def recent_events(self) -> list[str]:
         return list(self._events)
 
-    def _status_card(self, title: str, value: QLabel) -> QFrame:
+    def _status_card(self, title: str, value: QLabel, role: str = "") -> QFrame:
         card = QFrame()
-        card.setObjectName("MetricCard")
-        card.setMinimumHeight(104)
+        card.setObjectName("HomeStatusCard")
+        if role:
+            card.setProperty("statusRole", role)
+        card.setMinimumHeight(108)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(14, 12, 14, 12)
-        card_layout.setSpacing(6)
+        card_layout.setContentsMargins(15, 13, 15, 13)
+        card_layout.setSpacing(7)
         title_label = QLabel(title)
         title_label.setObjectName("SectionLabel")
         value.setObjectName("HomeMetricValue")
