@@ -33,3 +33,27 @@ def test_hardware_dashboard_theme_uses_approved_palette_not_generic_purple():
     assert "#d76f7a" in qss or "#b85c66" in qss
     assert "#7c3aed" not in qss
     assert "#a855f7" not in qss
+
+
+def test_hardware_dashboard_theme_styles_dashboard_roles_and_complex_pages():
+    qss = gui_stylesheet()
+
+    required_selectors = (
+        'QFrame#HomeStatusCard[statusRole="screen"]',
+        'QFrame#HomeStatusCard[statusRole="device-tree"]',
+        "QFrame#FanDashboardPanel",
+        "QFrame#FanChartPanel",
+        "QFrame#FanStatusCard",
+        "QFrame#FanRoleMetricCard",
+        "QFrame#FanCurveEditorPanel",
+        "QFrame#LightingTargetPanel",
+        "QFrame#LightingPresetPanel",
+        "QFrame#LightingActionPanel",
+        "QFrame#LightingSyncPanel",
+        "QFrame#LightingScenePanel",
+        "QFrame#ScreenPreviewCard",
+        "QLabel#AssetPreview",
+        "QLabel#LcdPreview",
+    )
+    missing = [selector for selector in required_selectors if selector not in qss]
+    assert missing == []

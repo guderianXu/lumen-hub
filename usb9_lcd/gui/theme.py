@@ -138,12 +138,16 @@ def gui_stylesheet() -> str:
         border-radius: 18px;
     }
     QFrame#HomeMetricGrid { background: transparent; border: 0; }
+    QFrame#HomeStatusCard[statusRole="screen"] { border-color: #2d6f65; }
     QFrame#HomeStatusCard[statusRole="cpu"] { border-color: #274f59; }
     QFrame#HomeStatusCard[statusRole="gpu"] { border-color: #2b4d62; }
     QFrame#HomeStatusCard[statusRole="fan"] { border-color: #2f5e55; }
     QFrame#HomeStatusCard[statusRole="lighting"] { border-color: #5d5635; }
     QFrame#HomeStatusCard[statusRole="lianli"] { border-color: #365c58; }
+    QFrame#HomeStatusCard[statusRole="device-tree"] { border-color: #394b5f; }
     QFrame#HomeStatusCard[statusRole="permission"] { border-color: #5f4930; }
+    QFrame#HomeCommandDock QPushButton { min-height: 34px; }
+    QFrame#HomeTimelinePanel { min-height: 190px; }
     QLabel#TimelineItem {
         color: #9fb0b7;
         padding: 6px 0 6px 12px;
