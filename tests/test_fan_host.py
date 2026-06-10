@@ -787,6 +787,25 @@ def test_fan_host_renders_realtime_cpu_and_all_fan_channels():
     app.quit()
 
 
+def test_fan_host_summary_cards_use_compact_visual_hooks():
+    from PySide6.QtWidgets import QApplication, QFrame, QLabel
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False)
+
+    assert len(page.findChildren(QFrame, "FanStatusCard")) >= 4
+    summary_values = page.findChildren(QLabel, "FanSummaryValue")
+    assert page.cpu_value in summary_values
+    assert page.sensor_value in summary_values
+    assert page.live_value in summary_values
+    assert page.control_value in summary_values
+
+    page.close()
+    app.quit()
+
+
 def test_fan_host_saves_manual_channel_role_and_updates_display(tmp_path):
     from PySide6.QtWidgets import QApplication
 

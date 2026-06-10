@@ -140,7 +140,7 @@ class ControlCenterPage(QWidget):
         layout.setVerticalSpacing(8)
         title = QLabel("快捷操作")
         title.setObjectName("SectionLabel")
-        columns = 4
+        columns = 5
         layout.addWidget(title, 0, 0, 1, columns)
         actions: tuple[tuple[str, str, Callable[[], None], bool], ...] = (
             ("safety", "睡眠全关", sleep_all_off, False),
@@ -291,7 +291,7 @@ class ControlCenterPage(QWidget):
         card.setObjectName("HomeStatusCard")
         if role:
             card.setProperty("statusRole", role)
-        card.setMinimumHeight(108)
+        card.setMinimumHeight(96)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(15, 13, 15, 13)
         card_layout.setSpacing(7)

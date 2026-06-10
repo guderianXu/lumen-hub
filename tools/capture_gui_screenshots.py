@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from PySide6.QtWidgets import QApplication
 
@@ -16,6 +22,7 @@ from usb9_lcd.drivers.base import (
     PreviewProfile,
     PreviewShape,
 )
+from usb9_lcd.gui.fan_host import GenericFanChannel, GenericFanSnapshot
 from usb9_lcd.gui.main_window import MainWindow
 from usb9_lcd.monitoring.models import CpuTelemetry, FanTelemetry, GpuTelemetry, SystemTelemetry
 
@@ -82,10 +89,39 @@ def demo_telemetry() -> SystemTelemetry:
     )
 
 
+def demo_fan_snapshot() -> GenericFanSnapshot:
+    return GenericFanSnapshot(
+        platform_name="Demo",
+        telemetry=demo_telemetry(),
+        channels=[
+            GenericFanChannel(name="CPU Fan", rpm=987, percent=54, role="cpu", control_available=True),
+            GenericFanChannel(name="AIO Pump", rpm=2420, percent=78, role="pump", control_available=True),
+            GenericFanChannel(name="Front Case Fan", rpm=1260, percent=48, role="case", control_available=True),
+            GenericFanChannel(name="Rear Case Fan", rpm=1180, percent=46, role="case", control_available=True),
+        ],
+        control_available=True,
+        control_reason="4 demo writable PWM channels detected",
+        diagnostic_details="Demo data for GUI screenshot capture.",
+    )
+
+
+def _drain_background_gui_work(app: QApplication, window: MainWindow, *, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        app.processEvents()
+        fan_page = getattr(window, "fan_page", None)
+        if not bool(getattr(fan_page, "_scan_active", False)):
+            return
+        time.sleep(0.05)
+    app.processEvents()
+
+
 def capture_pages(output_dir: Path, *, width: int = 1440, height: int = 920) -> list[Path]:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     window = MainWindow(driver=DemoDriver(), telemetry_provider=demo_telemetry, auto_refresh=False)
+    if hasattr(window.fan_page, "_snapshot_collector"):
+        window.fan_page._snapshot_collector = demo_fan_snapshot
     window.resize(width, height)
     window.refresh_devices()
     window.refresh_telemetry()
@@ -97,10 +133,12 @@ def capture_pages(output_dir: Path, *, width: int = 1440, height: int = 920) -> 
     for name, row in PAGE_ROWS.items():
         window.navigation.setCurrentRow(row)
         app.processEvents()
+        _drain_background_gui_work(app, window)
         path = output_dir / f"lumen-hub-{name}.png"
         window.grab().save(str(path))
         paths.append(path)
 
+    _drain_background_gui_work(app, window)
     window.close()
     app.processEvents()
     return paths

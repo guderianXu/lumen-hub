@@ -23,7 +23,7 @@ def gui_stylesheet() -> str:
         border-left: 1px solid #1e2a30;
     }
 
-    QLabel#AppTitle { font-size: 18px; font-weight: 900; color: #f5fbf8; }
+    QLabel#AppTitle { font-size: 18px; font-weight: 800; color: #f5fbf8; }
     QLabel#DeviceBadge,
     QLabel#StatusPill {
         background: #102d28;
@@ -33,7 +33,7 @@ def gui_stylesheet() -> str:
         padding: 7px 12px;
         font-weight: 800;
     }
-    QLabel#PageTitle { font-size: 25px; font-weight: 900; color: #f5fbf8; }
+    QLabel#PageTitle { font-size: 24px; font-weight: 800; color: #f5fbf8; }
     QLabel#PageSubtitle { color: #92a2aa; font-size: 13px; }
     QLabel#SectionLabel { color: #dce7e3; font-weight: 900; }
     QLabel#FieldHint { color: #8c9ba2; line-height: 1.35; }
@@ -86,9 +86,9 @@ def gui_stylesheet() -> str:
         border-left: 3px solid #6ee7d8;
     }
 
-    QLabel#MetricValue { font-size: 32px; font-weight: 900; color: #f5fbf8; }
-    QLabel#HomeMetricValue { font-size: 19px; font-weight: 900; color: #f5fbf8; }
-    QLabel#FanSummaryValue { font-size: 17px; font-weight: 900; color: #f5fbf8; }
+    QLabel#MetricValue { font-size: 30px; font-weight: 800; color: #f5fbf8; }
+    QLabel#HomeMetricValue { font-size: 18px; font-weight: 800; color: #f5fbf8; }
+    QLabel#FanSummaryValue { font-size: 16px; font-weight: 800; color: #f5fbf8; }
 
     QFrame#MetricCard,
     QFrame#HomeStatusCard,
@@ -132,7 +132,7 @@ def gui_stylesheet() -> str:
         background: #151f23;
     }
     QFrame#HomeHeroPanel {
-        min-height: 132px;
+        min-height: 116px;
         background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 #10211f, stop: 0.58 #12222a, stop: 1 #0e171a);
         border: 1px solid #2d6f65;
         border-radius: 18px;
@@ -146,8 +146,8 @@ def gui_stylesheet() -> str:
     QFrame#HomeStatusCard[statusRole="lianli"] { border-color: #365c58; }
     QFrame#HomeStatusCard[statusRole="device-tree"] { border-color: #394b5f; }
     QFrame#HomeStatusCard[statusRole="permission"] { border-color: #5f4930; }
-    QFrame#HomeCommandDock QPushButton { min-height: 34px; }
-    QFrame#HomeTimelinePanel { min-height: 190px; }
+    QFrame#HomeCommandDock QPushButton { min-height: 30px; }
+    QFrame#HomeTimelinePanel { min-height: 160px; }
     QLabel#TimelineItem {
         color: #9fb0b7;
         padding: 6px 0 6px 12px;

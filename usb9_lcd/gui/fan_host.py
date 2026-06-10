@@ -1503,11 +1503,12 @@ class FanControlHostPage(QWidget):
 
     def _metric_card(self, title: str, value: QLabel) -> QFrame:
         card = QFrame()
-        card.setObjectName("MetricCard")
+        card.setObjectName("FanStatusCard")
+        card.setMinimumHeight(112)
         layout = QVBoxLayout(card)
         title_label = QLabel(title)
-        title_label.setStyleSheet("color: #a3a7aa;")
-        value.setObjectName("MetricValue")
+        title_label.setObjectName("FanCardMeta")
+        value.setObjectName("FanSummaryValue")
         value.setWordWrap(True)
         layout.addWidget(title_label)
         layout.addWidget(value)

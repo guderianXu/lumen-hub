@@ -470,6 +470,21 @@ def test_gui_screenshot_tool_imports_without_starting_qt():
     }
 
 
+def test_gui_screenshot_tool_runs_as_project_script():
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "tools/capture_gui_screenshots.py", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Capture Lumen Hub GUI screenshots" in result.stdout
+
+
 def test_home_dashboard_shows_nvidia_gpu_fan_speed_percent_when_rpm_is_unavailable():
     from PySide6.QtWidgets import QApplication
 
