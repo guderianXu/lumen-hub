@@ -4237,23 +4237,23 @@ def _normalized_capture_packets(packets: Iterable[bytes]) -> list[tuple[int, byt
 
 
 def _capture_signature_matched_commands(items: list[dict[str, Any]]) -> list[str]:
-    commands: list[str] = []
+    matched_commands: list[str] = []
     for item in items:
         item_commands: list[str] = []
         observed = item.get("observed_commands")
         if isinstance(observed, dict):
-            commands = observed.get("compare_capture_commands")
-            if isinstance(commands, list):
-                item_commands.extend(str(command) for command in commands if isinstance(command, str) and command)
+            compare_commands = observed.get("compare_capture_commands")
+            if isinstance(compare_commands, list):
+                item_commands.extend(str(command) for command in compare_commands if isinstance(command, str) and command)
         if item_commands:
-            commands.extend(item_commands)
+            matched_commands.extend(item_commands)
             continue
         static_commands = item.get("commands")
         if isinstance(static_commands, dict):
             command = static_commands.get("compare_capture")
             if isinstance(command, dict) and isinstance(command.get("command"), str):
-                commands.append(command["command"])
-    return _unique_preserve_order(commands)
+                matched_commands.append(command["command"])
+    return _unique_preserve_order(matched_commands)
 
 
 def _capture_signature_match_item(

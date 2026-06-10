@@ -43,6 +43,7 @@ from usb9_lcd.assets import AssetLibrary
 from usb9_lcd.drivers import AsusLcIiiDriver, DisplayDriver
 from usb9_lcd.drivers.base import DisplayDevice, PixelFormat
 from usb9_lcd.gui.debug import log_event, log_exception, recent_log_lines
+from usb9_lcd.gui.wheel_guard import install_wheel_guard
 try:
     from usb9_lcd.gui.fan_host import FanControlHostPage
 except Exception as fan_host_import_error:  # noqa: BLE001 - keep the GUI usable on Windows if Linux fan page is unavailable.
@@ -98,7 +99,7 @@ from usb9_lcd.gui.system_status import (
     summarize_permission_status,
 )
 from usb9_lcd.gui.theme import gui_stylesheet
-from usb9_lcd.keepalive import DEFAULT_PID_FILE, stop_existing_keepalive
+from usb9_lcd.keepalive import DEFAULT_PID_FILE, keepalive_worker_command, stop_existing_keepalive
 from usb9_lcd.image import FitMode, FrameConfig, Rotation, image_to_jpeg_bytes
 from usb9_lcd.monitoring.models import SystemTelemetry
 from usb9_lcd.monitoring.cpu import cpu_power_permission_paths, cpu_power_permission_shell
@@ -181,6 +182,7 @@ def _scrollable_page(widget: QWidget) -> QScrollArea:
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     scroll.setWidget(widget)
+    install_wheel_guard(widget)
     return scroll
 
 
@@ -272,6 +274,7 @@ class MainWindow(QMainWindow):
         auto_refresh: bool = True,
         settings: GuiSettings | None = None,
         permission_helper: object | None = None,
+        lianli_page_factory: Callable[[GuiSettings], QWidget] | None = None,
     ) -> None:
         super().__init__()
         log_event("main_window_init", auto_refresh=auto_refresh)
@@ -381,7 +384,11 @@ class MainWindow(QMainWindow):
             settings=self.settings,
             permission_helper=self.permission_helper,
         )
-        self.lianli_page = LianLiWirelessPage(settings=self.settings)
+        self.lianli_page = (
+            lianli_page_factory(self.settings)
+            if lianli_page_factory is not None
+            else LianLiWirelessPage(settings=self.settings, require_write_gate=True)
+        )
         self.page_indexes = {
             "home": 0,
             "screen": 1,
@@ -823,6 +830,36 @@ class MainWindow(QMainWindow):
         save_settings(self.settings)
         self._show_config_saved_feedback("设置已保存")
 
+    def _replace_settings(self, settings: GuiSettings) -> None:
+        self.settings = settings
+        lighting_replace = getattr(self.lighting_page, "replace_settings", None)
+        if callable(lighting_replace):
+            lighting_replace(settings)
+        else:
+            self.lighting_page.settings = settings
+        for page in (self.fan_page, self.lianli_page):
+            setattr(page, "settings", settings)
+        if self._platform_diagnostics_dialog is not None:
+            setattr(self._platform_diagnostics_dialog, "settings", settings)
+        self._refresh_settings_controls()
+
+    def _refresh_settings_controls(self) -> None:
+        if hasattr(self, "settings_openrgb_path"):
+            self.settings_openrgb_path.setText(self.settings.openrgb.app_path)
+            self.settings_openrgb_autostart.setChecked(self.settings.openrgb.auto_start_server)
+            self.settings_openrgb_port.setValue(self.settings.openrgb.port)
+            self.settings_default_argb_size.setValue(self.settings.lighting.argb_zone_size)
+            self.settings_keepalive.setChecked(self.settings.keepalive_enabled)
+        self.monitor_interval_combo.blockSignals(True)
+        self.monitor_interval_combo.setCurrentText(f"{self.settings.monitor.live_interval_seconds}s")
+        self.monitor_interval_combo.blockSignals(False)
+        self.monitor_page.monitor_palette_combo.blockSignals(True)
+        self.monitor_page.monitor_palette_combo.setCurrentIndex(
+            max(0, self.monitor_page.monitor_palette_combo.findData(self.settings.monitor.palette))
+        )
+        self.monitor_page.monitor_palette_combo.blockSignals(False)
+        self.monitor_page.set_profile_names(sorted(self.settings.monitor.profiles), self.settings.monitor.active_profile)
+
     def clear_gif_cache(self) -> None:
         cache = self.platform_adapter.gif_preview_cache_dir()
         if cache.exists():
@@ -857,9 +894,9 @@ class MainWindow(QMainWindow):
             DEFAULT_SETTINGS_PATH.unlink()
         except FileNotFoundError:
             pass
-        self.settings = GuiSettings()
+        self._replace_settings(GuiSettings())
         save_settings(self.settings)
-        self._show_config_saved_feedback("配置已重置，重启 GUI 后完全生效")
+        self._show_config_saved_feedback("配置已重置")
 
     def refresh_telemetry(self) -> None:
         try:
@@ -872,8 +909,15 @@ class MainWindow(QMainWindow):
         self.latest_telemetry = telemetry
         self.monitor_page.update_telemetry(telemetry)
         self.home_page.update_telemetry(telemetry)
+        self._forward_telemetry_to_lianli_page(telemetry)
         self._refresh_home_permission_status()
         self.update_monitor_preview()
+
+    def _forward_telemetry_to_lianli_page(self, telemetry: SystemTelemetry) -> None:
+        try:
+            self.lianli_page.update_telemetry(telemetry)
+        except Exception as error:  # pragma: no cover - keep telemetry UI alive if fan control fails.
+            log_exception("lianli_telemetry_update_failed", error)
 
     def request_cpu_power_permission_grant(self, *, interactive: bool = True) -> None:
         if self._cpu_power_permission_grant_attempted:
@@ -951,6 +995,7 @@ class MainWindow(QMainWindow):
         self.latest_telemetry = telemetry
         self.monitor_page.update_telemetry(telemetry)
         self.home_page.update_telemetry(telemetry)
+        self._forward_telemetry_to_lianli_page(telemetry)
         self._refresh_home_permission_status()
         self.update_monitor_preview()
 
@@ -1165,16 +1210,15 @@ class MainWindow(QMainWindow):
         log_event("keepalive_starting", frame=str(self._last_uploaded_frame_path))
         try:
             subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "usb9_lcd.keepalive",
-                    str(self._last_uploaded_frame_path),
-                    "--interval",
-                    "1.0",
-                    "--pid-file",
-                    str(DEFAULT_PID_FILE),
-                ],
+                keepalive_worker_command(
+                    [
+                        str(self._last_uploaded_frame_path),
+                        "--interval",
+                        "1.0",
+                        "--pid-file",
+                        str(DEFAULT_PID_FILE),
+                    ]
+                ),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

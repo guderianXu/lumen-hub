@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 
@@ -13,6 +14,13 @@ from usb9_lcd.transport import HidrawTransport
 
 
 DEFAULT_PID_FILE = current_platform().keepalive_pid_path()
+KEEPALIVE_WORKER_ARG = "--lumen-hub-keepalive-worker"
+
+
+def keepalive_worker_command(worker_args: list[str]) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, KEEPALIVE_WORKER_ARG, *worker_args]
+    return [sys.executable, "-m", "usb9_lcd.keepalive", *worker_args]
 
 
 def stop_existing_keepalive(pid_file: Path = DEFAULT_PID_FILE) -> None:

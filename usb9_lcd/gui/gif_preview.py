@@ -14,6 +14,9 @@ from usb9_lcd.gui.debug import log_event
 from usb9_lcd.platforms import current_platform
 
 
+GIF_PREVIEW_WORKER_ARG = "--lumen-hub-gif-preview-worker"
+
+
 @dataclass(frozen=True)
 class GifPreviewFrame:
     path: Path
@@ -45,10 +48,7 @@ def decode_gif_preview_frames(
 
     log_event("gif_preview_subprocess_starting", path=str(source), output_dir=str(output_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
-    command = [
-        sys.executable,
-        "-m",
-        "usb9_lcd.gui.gif_preview",
+    worker_args = [
         "--decode",
         str(source),
         str(output_dir),
@@ -59,6 +59,7 @@ def decode_gif_preview_frames(
         "--height",
         str(height),
     ]
+    command = gif_preview_worker_command(worker_args)
     completed = subprocess.run(
         command,
         check=False,
@@ -82,6 +83,12 @@ def decode_gif_preview_frames(
         raise RuntimeError("gif decode produced no preview frames")
     log_event("gif_preview_subprocess_finished", path=str(source), frame_count=len(frames))
     return frames
+
+
+def gif_preview_worker_command(worker_args: list[str]) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, GIF_PREVIEW_WORKER_ARG, *worker_args]
+    return [sys.executable, "-m", "usb9_lcd.gui.gif_preview", *worker_args]
 
 
 def _read_manifest(path: Path) -> list[GifPreviewFrame]:

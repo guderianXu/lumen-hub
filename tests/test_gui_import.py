@@ -468,6 +468,66 @@ def test_main_window_settings_page_shows_saved_feedback(monkeypatch):
     app.quit()
 
 
+def test_main_window_reset_settings_replaces_child_page_settings(monkeypatch, tmp_path: Path):
+    from PySide6.QtCore import Signal
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    import usb9_lcd.gui.main_window as main_window
+    import usb9_lcd.gui.pages as pages
+    from usb9_lcd.gui.main_window import MainWindow
+    from usb9_lcd.gui.settings import GuiSettings
+
+    class FakeLianLiPage(QWidget):
+        status_changed = Signal(str)
+
+        def __init__(self, settings: GuiSettings) -> None:
+            super().__init__()
+            self.settings = settings
+
+        def home_status_text(self) -> str:
+            return "lianli"
+
+        def turn_off_all_lighting(self) -> None:
+            return None
+
+        def update_telemetry(self, _telemetry: SystemTelemetry) -> None:
+            return None
+
+    saved: list[GuiSettings] = []
+    monkeypatch.setattr(main_window, "DEFAULT_SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(main_window, "save_settings", lambda settings: saved.append(settings))
+    monkeypatch.setattr(pages, "save_settings", lambda settings: saved.append(settings))
+    old_settings = GuiSettings()
+    old_settings.openrgb.port = 12345
+    old_settings.lighting.palette = "warm"
+    old_settings.lighting.target_profiles["device:0:zone:1"] = {"color": "#ff0000"}
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+        settings=old_settings,
+        lianli_page_factory=FakeLianLiPage,
+    )
+
+    window.reset_settings_file()
+    new_settings = window.settings
+    window.lighting_page.lighting_palette_combo.setCurrentIndex(window.lighting_page.lighting_palette_combo.findData("cool"))
+
+    assert new_settings is not old_settings
+    assert window.lighting_page.settings is new_settings
+    assert getattr(window.fan_page, "settings", None) is new_settings
+    assert window.lianli_page.settings is new_settings
+    assert window.settings_openrgb_port.value() == 6742
+    assert window.lighting_page.argb_zone_size.value() == 30
+    assert old_settings.openrgb.port == 12345
+    assert old_settings.lighting.palette == "warm"
+    assert saved[-1] is new_settings
+
+    window.close()
+    app.quit()
+
+
 def test_control_center_navigation_buttons_change_pages():
     from PySide6.QtWidgets import QApplication, QPushButton
 
@@ -730,10 +790,10 @@ def test_main_window_pages_are_scroll_wrapped():
     app.quit()
 
 
-def test_lianli_wireless_page_reads_snapshot_and_unlocks_writes():
-    from PySide6.QtWidgets import QApplication
+def test_lianli_wireless_page_reads_snapshot_and_unlocks_writes_without_manual_token():
+    from PySide6.QtWidgets import QApplication, QLabel
 
-    from usb9_lcd.gui.pages import LIANLI_WRITE_CONFIRM_TOKEN, LianLiWirelessPage
+    from usb9_lcd.gui.pages import LianLiWirelessPage
     from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
 
     class FakeLianLiBackend:
@@ -771,10 +831,11 @@ def test_lianli_wireless_page_reads_snapshot_and_unlocks_writes():
     assert "aa:bb:cc:dd:ee:ff" in page.lianli_snapshot_text.toPlainText()
     assert not page.lianli_pwm_button.isEnabled()
     assert not page.lianli_daily_pwm_button.isEnabled()
-    assert "写入未启用或确认令牌不正确" in page.lianli_next_action_label.text()
+    assert "写入未启用" in page.lianli_next_action_label.text()
+    assert page.lianli_confirm_input.isHidden()
+    assert "确认令牌" not in {label.text() for label in page.findChildren(QLabel)}
 
     page.lianli_write_enable.setChecked(True)
-    page.lianli_confirm_input.setText(LIANLI_WRITE_CONFIRM_TOKEN)
     assert page.lianli_pwm_button.isEnabled()
     assert page.lianli_daily_pwm_button.isEnabled()
     assert "可以写入" in page.lianli_next_action_label.text()
@@ -790,6 +851,300 @@ def test_lianli_wireless_page_reads_snapshot_and_unlocks_writes():
     app.quit()
 
 
+def test_lianli_wireless_page_applies_custom_curve_from_cpu_temperature():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import GuiSettings, LianLiWirelessTargetSettings
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.sent_pwm: list[tuple[WirelessDeviceInfo, list[int]]] = []
+
+        def list_devices(self):
+            return WirelessSnapshot(raw=b"snapshot", devices=[device])
+
+        def send_pwm(self, target, pwm_values):
+            self.sent_pwm.append((target, list(pwm_values)))
+            return 4
+
+    device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(0, 0, 0, 0),
+        fan_rpm=(900, 900, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    settings = GuiSettings()
+    settings.lianli_wireless.write_enabled = True
+    settings.lianli_wireless.auto_curve_enabled = True
+    settings.lianli_wireless.active_target_mac = device.mac
+    settings.lianli_wireless.fan_mode = "custom"
+    settings.lianli_wireless.fan_curve_points = [[40, 600], [80, 1800]]
+    settings.lianli_wireless.targets[device.mac] = LianLiWirelessTargetSettings(
+        mac=device.mac,
+        master_mac=device.master_mac,
+        channel=device.channel,
+        rx_type=device.rx_type,
+        device_type=device.device_type,
+        fan_count=device.fan_count,
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend, settings=settings, background_refresh=False)
+
+    telemetry = SystemTelemetry(
+        cpu=CpuTelemetry(package_temperature_c=60.0, available=True),
+        gpu=GpuTelemetry(available=False),
+        captured_at=datetime(2026, 5, 20, 12, 3, 0),
+    )
+    page.update_telemetry(telemetry)
+
+    assert _process_events_until(app, lambda: bool(backend.sent_pwm))
+    assert backend.sent_pwm[0][0].mac == device.mac
+    assert backend.sent_pwm[0][1] == [170]
+    assert page.lianli_rpm_value.value() == 1200
+    assert settings.lianli_wireless.fan_rpm == 1200
+    assert settings.lianli_wireless.pwm == 170
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_skips_duplicate_custom_curve_pwm():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import GuiSettings, LianLiWirelessTargetSettings
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.sent_pwm: list[tuple[WirelessDeviceInfo, list[int]]] = []
+
+        def list_devices(self):
+            return WirelessSnapshot(raw=b"snapshot", devices=[device])
+
+        def send_pwm(self, target, pwm_values):
+            self.sent_pwm.append((target, list(pwm_values)))
+            return 4
+
+    device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(0, 0, 0, 0),
+        fan_rpm=(900, 900, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    settings = GuiSettings()
+    settings.lianli_wireless.write_enabled = True
+    settings.lianli_wireless.auto_curve_enabled = True
+    settings.lianli_wireless.active_target_mac = device.mac
+    settings.lianli_wireless.fan_mode = "custom"
+    settings.lianli_wireless.fan_curve_points = [[40, 600], [80, 1800]]
+    settings.lianli_wireless.targets[device.mac] = LianLiWirelessTargetSettings(
+        mac=device.mac,
+        master_mac=device.master_mac,
+        channel=device.channel,
+        rx_type=device.rx_type,
+        device_type=device.device_type,
+        fan_count=device.fan_count,
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend, settings=settings, background_refresh=False)
+
+    page.update_telemetry(
+        SystemTelemetry(
+            cpu=CpuTelemetry(package_temperature_c=60.0, available=True),
+            gpu=GpuTelemetry(available=False),
+            captured_at=datetime(2026, 5, 20, 12, 3, 0),
+        )
+    )
+    assert _process_events_until(app, lambda: len(backend.sent_pwm) == 1)
+
+    page.update_telemetry(
+        SystemTelemetry(
+            cpu=CpuTelemetry(package_temperature_c=61.0, available=True),
+            gpu=GpuTelemetry(available=False),
+            captured_at=datetime(2026, 5, 20, 12, 3, 2),
+        )
+    )
+    _process_events_until(app, lambda: len(backend.sent_pwm) > 1, timeout=0.2)
+    assert len(backend.sent_pwm) == 1
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_does_not_apply_curve_without_auto_curve_enable():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import GuiSettings, LianLiWirelessTargetSettings
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.sent_pwm: list[tuple[WirelessDeviceInfo, list[int]]] = []
+
+        def list_devices(self):
+            return WirelessSnapshot(raw=b"snapshot", devices=[device])
+
+        def send_pwm(self, target, pwm_values):
+            self.sent_pwm.append((target, list(pwm_values)))
+            return 4
+
+    device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(0, 0, 0, 0),
+        fan_rpm=(900, 900, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    settings = GuiSettings()
+    settings.lianli_wireless.write_enabled = True
+    settings.lianli_wireless.auto_curve_enabled = False
+    settings.lianli_wireless.active_target_mac = device.mac
+    settings.lianli_wireless.fan_mode = "custom"
+    settings.lianli_wireless.fan_curve_points = [[40, 600], [80, 1800]]
+    settings.lianli_wireless.targets[device.mac] = LianLiWirelessTargetSettings(
+        mac=device.mac,
+        master_mac=device.master_mac,
+        channel=device.channel,
+        rx_type=device.rx_type,
+        device_type=device.device_type,
+        fan_count=device.fan_count,
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend, settings=settings, background_refresh=False)
+
+    page.update_telemetry(
+        SystemTelemetry(
+            cpu=CpuTelemetry(package_temperature_c=60.0, available=True),
+            gpu=GpuTelemetry(available=False),
+            captured_at=datetime(2026, 5, 20, 12, 3, 0),
+        )
+    )
+    _process_events_until(app, lambda: bool(backend.sent_pwm), timeout=0.2)
+
+    assert backend.sent_pwm == []
+    assert settings.lianli_wireless.fan_rpm != 1200
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_edits_curve_for_selected_preset_mode():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    settings = GuiSettings()
+    settings.lianli_wireless.fan_mode = "quiet"
+    settings.lianli_wireless.fan_curve_profiles["quiet"] = [[30, 400], [70, 900]]
+    settings.lianli_wireless.fan_curve_profiles["normal"] = [[30, 600], [70, 1300]]
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: None, settings=settings, background_refresh=False)
+
+    assert page.lianli_curve_editor.points() == [[30, 400], [70, 900]]
+
+    page.lianli_fan_mode_combo.setCurrentIndex(page.lianli_fan_mode_combo.findData("normal"))
+    assert page.lianli_curve_editor.points() == [[30, 600], [70, 1300]]
+
+    page._lianli_curve_changed([[35, 700], [75, 1500]])
+
+    assert settings.lianli_wireless.fan_mode == "normal"
+    assert settings.lianli_wireless.fan_curve_profiles["normal"] == [[35, 700], [75, 1500]]
+    assert settings.lianli_wireless.fan_curve_profiles["quiet"] == [[30, 400], [70, 900]]
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_applies_preset_curve_from_cpu_temperature():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import GuiSettings, LianLiWirelessTargetSettings
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.sent_pwm: list[tuple[WirelessDeviceInfo, list[int]]] = []
+
+        def list_devices(self):
+            return WirelessSnapshot(raw=b"snapshot", devices=[device])
+
+        def send_pwm(self, target, pwm_values):
+            self.sent_pwm.append((target, list(pwm_values)))
+            return 4
+
+    device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(0, 0, 0, 0),
+        fan_rpm=(900, 900, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    settings = GuiSettings()
+    settings.lianli_wireless.write_enabled = True
+    settings.lianli_wireless.auto_curve_enabled = True
+    settings.lianli_wireless.active_target_mac = device.mac
+    settings.lianli_wireless.fan_mode = "quiet"
+    settings.lianli_wireless.fan_curve_profiles["quiet"] = [[40, 600], [80, 1800]]
+    settings.lianli_wireless.targets[device.mac] = LianLiWirelessTargetSettings(
+        mac=device.mac,
+        master_mac=device.master_mac,
+        channel=device.channel,
+        rx_type=device.rx_type,
+        device_type=device.device_type,
+        fan_count=device.fan_count,
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend, settings=settings, background_refresh=False)
+
+    page.update_telemetry(
+        SystemTelemetry(
+            cpu=CpuTelemetry(package_temperature_c=60.0, available=True),
+            gpu=GpuTelemetry(available=False),
+            captured_at=datetime(2026, 5, 20, 12, 3, 0),
+        )
+    )
+
+    assert _process_events_until(app, lambda: bool(backend.sent_pwm))
+    assert backend.sent_pwm[0][1] == [170]
+    assert page.lianli_rpm_value.value() == 1200
+    assert settings.lianli_wireless.fan_mode == "quiet"
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_requires_write_gate_when_configured():
     from PySide6.QtWidgets import QApplication
 
@@ -797,6 +1152,8 @@ def test_lianli_wireless_page_requires_write_gate_when_configured():
 
     app = QApplication.instance() or QApplication([])
     page = LianLiWirelessPage(backend_factory=lambda: None, require_write_gate=True)
+
+    page.lianli_mac_input.setText("aa:bb:cc:dd:ee:ff")
 
     page.lianli_write_enable.setChecked(True)
     page.lianli_confirm_input.setText(LIANLI_WRITE_CONFIRM_TOKEN)
@@ -832,6 +1189,24 @@ def test_lianli_wireless_page_requires_write_gate_when_configured():
     )
     assert page.lianli_pwm_button.isEnabled()
     assert "write-enabled" in page.lianli_write_gate_label.text()
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_write_buttons_require_cached_target():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: None, background_refresh=False)
+
+    page.lianli_write_enable.setChecked(True)
+
+    assert page.lianli_pwm_button.isEnabled() is False
+    assert page.lianli_daily_pwm_button.isEnabled() is False
+    assert "未识别到风扇组" in page.lianli_write_target_label.text()
 
     page.close()
     app.quit()
@@ -1158,7 +1533,7 @@ def test_lianli_wireless_page_runs_safe_rgb_experiment(tmp_path: Path):
     app.quit()
 
 
-def test_lianli_wireless_page_sleep_off_bypasses_write_gate(monkeypatch):
+def test_lianli_wireless_page_sleep_off_requires_write_unlock(monkeypatch):
     from PySide6.QtWidgets import QApplication
 
     import usb9_lcd.gui.lianli_wireless_page as lianli_page_module
@@ -1201,6 +1576,60 @@ def test_lianli_wireless_page_sleep_off_bypasses_write_gate(monkeypatch):
     )
     page.lianli_direct_led_count.setValue(26)
     page._write_unlocked = lambda: False
+
+    page.turn_off_all_lighting()
+
+    _process_events_until(app, lambda: bool(sent), timeout=0.2)
+    assert sent == []
+    assert "写入未启用" in page.lianli_status_label.text()
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_sleep_off_writes_when_unlocked(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.lianli_wireless_page as lianli_page_module
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import LianLiWirelessTargetSettings
+
+    class FakeSender:
+        def __init__(self, vid, pid):
+            self.vid = vid
+            self.pid = pid
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class FakeLianLiBackend:
+        def __init__(self, *, sender):
+            self.sender = sender
+
+        def send_static_rgb(self, target, color, **kwargs):
+            sent.append((target.mac, color, kwargs, self.sender.vid, self.sender.pid))
+            return 8
+
+    sent = []
+    monkeypatch.setattr(lianli_page_module, "PyUsbEndpointTransport", FakeSender)
+    monkeypatch.setattr(lianli_page_module, "LianLiWirelessBackend", FakeLianLiBackend)
+    monkeypatch.setattr(lianli_page_module, "save_settings", lambda _settings: None)
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: None)
+    page.settings.lianli_wireless.active_target_mac = "aa:bb:cc:dd:ee:ff"
+    page.settings.lianli_wireless.targets["aa:bb:cc:dd:ee:ff"] = LianLiWirelessTargetSettings(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        led_count=26,
+    )
+    page.lianli_direct_led_count.setValue(26)
+    page._write_unlocked = lambda: True
 
     page.turn_off_all_lighting()
 
@@ -4602,6 +5031,89 @@ def test_lighting_page_connects_to_openrgb_and_applies_settings():
     app.quit()
 
 
+def test_lighting_page_apply_saves_on_qt_thread(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.pages as pages
+    from usb9_lcd.gui.pages import LightingPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    saved_threads: list[str] = []
+    monkeypatch.setattr(pages, "save_settings", lambda _settings: saved_threads.append(threading.current_thread().name))
+    app = QApplication.instance() or QApplication([])
+    controller = FakeLightingController()
+    page = LightingPage(controller=controller, settings=GuiSettings())
+
+    page.connect_openrgb()
+    assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
+    saved_threads.clear()
+    page.lighting_target_combo.setCurrentIndex(1)
+    page.apply_all_lighting_checkbox.setChecked(False)
+    page.set_selected_color("#00e5ff")
+    page.brightness_slider.setValue(60)
+    for button in page.effect_group.buttons():
+        if button.text() == "静态":
+            button.setChecked(True)
+            break
+
+    page.apply_lighting()
+
+    assert _process_events_until(app, lambda: page.openrgb_status_label.text() == "灯效已应用")
+    assert saved_threads
+    assert "usb9-lcd-openrgb" not in saved_threads
+
+    page.close()
+    app.quit()
+
+
+def test_lighting_page_apply_saves_snapshot_from_before_worker_start(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.pages as pages
+    from usb9_lcd.gui.pages import LightingPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    class BlockingApplyController(FakeLightingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.apply_started = threading.Event()
+            self.release_apply = threading.Event()
+
+        def apply(self, settings):  # noqa: ANN001
+            self.apply_started.set()
+            self.release_apply.wait(timeout=1)
+            super().apply(settings)
+
+    monkeypatch.setattr(pages, "save_settings", lambda _settings: None)
+    app = QApplication.instance() or QApplication([])
+    controller = BlockingApplyController()
+    settings = GuiSettings()
+    page = LightingPage(controller=controller, settings=settings)
+
+    page.connect_openrgb()
+    assert _process_events_until(app, lambda: page.lighting_target_combo.count() == 2)
+    page.lighting_target_combo.setCurrentIndex(1)
+    page.apply_all_lighting_checkbox.setChecked(False)
+    page.set_selected_color("#111111")
+    page.brightness_slider.setValue(60)
+    for button in page.effect_group.buttons():
+        if button.text() == "静态":
+            button.setChecked(True)
+            break
+
+    page.apply_lighting()
+    assert controller.apply_started.wait(timeout=1)
+    page.set_selected_color("#222222")
+    controller.release_apply.set()
+
+    assert _process_events_until(app, lambda: page.openrgb_status_label.text() == "灯效已应用")
+    assert controller.applied[-1].color == "#111111"
+    assert settings.lighting.target_profiles["device:0:zone:1"]["color"] == "#111111"
+
+    page.close()
+    app.quit()
+
+
 def test_lighting_page_reports_target_partitions_after_connect():
     from PySide6.QtWidgets import QApplication
 
@@ -5384,11 +5896,6 @@ def test_main_window_close_starts_keepalive_for_asus_last_frame(monkeypatch, tmp
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("usb9_lcd.gui.main_window.stop_existing_keepalive", lambda: None)
 
-    class FakePopen:
-        def __init__(self, args, **kwargs):  # noqa: ANN001
-            started.append((args, kwargs))
-
-    monkeypatch.setattr("usb9_lcd.gui.main_window.subprocess.Popen", FakePopen)
     driver = FakeDriver()
     driver.device = _fake_device(driver_id="asus.lc_iii")
 
@@ -5399,6 +5906,12 @@ def test_main_window_close_starts_keepalive_for_asus_last_frame(monkeypatch, tmp
     )
     window.refresh_devices()
     window.upload_monitoring_frame()
+
+    class FakePopen:
+        def __init__(self, args, **kwargs):  # noqa: ANN001
+            started.append((args, kwargs))
+
+    monkeypatch.setattr("usb9_lcd.gui.main_window.subprocess.Popen", FakePopen)
     window.close()
 
     assert started
@@ -6133,6 +6646,85 @@ def test_main_window_request_telemetry_refresh_updates_dashboard_synchronously()
     assert "CPU 61°C" in window.cpu_temp_value.text()
     assert "Load 20%" in window.cpu_temp_value.text()
     assert window.gpu_temp_value.text() == "GPU 72°C"
+
+    window.close()
+    app.quit()
+
+
+def test_main_window_enforces_lianli_write_gate_in_production_page():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+
+    assert window.lianli_page.require_write_gate is True
+
+    window.close()
+    app.quit()
+
+
+def test_main_window_forwards_telemetry_to_lianli_page_synchronously():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+
+    def provider() -> SystemTelemetry:
+        return SystemTelemetry(
+            cpu=CpuTelemetry(package_temperature_c=61.2, utilization_percent=20, available=True),
+            gpu=GpuTelemetry(name="RTX", temperature_c=72, available=True),
+            captured_at=datetime(2026, 5, 20, 12, 2, 0),
+        )
+
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=provider,
+        auto_refresh=False,
+    )
+    forwarded: list[float | None] = []
+    window.lianli_page.update_telemetry = lambda telemetry: forwarded.append(telemetry.cpu.package_temperature_c)
+
+    window.request_telemetry_refresh()
+
+    assert forwarded == [61.2]
+
+    window.close()
+    app.quit()
+
+
+def test_main_window_forwards_telemetry_to_lianli_page_asynchronously():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+
+    def provider() -> SystemTelemetry:
+        return SystemTelemetry(
+            cpu=CpuTelemetry(package_temperature_c=63.5, utilization_percent=25, available=True),
+            gpu=GpuTelemetry(name="RTX", temperature_c=72, available=True),
+            captured_at=datetime(2026, 5, 20, 12, 2, 0),
+        )
+
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=provider,
+        auto_refresh=True,
+    )
+    forwarded: list[float | None] = []
+    window.lianli_page.update_telemetry = lambda telemetry: forwarded.append(telemetry.cpu.package_temperature_c)
+
+    window.request_telemetry_refresh()
+
+    assert _process_events_until(app, lambda: forwarded)
+    assert forwarded[-1] == 63.5
 
     window.close()
     app.quit()

@@ -32,7 +32,14 @@ from PySide6.QtWidgets import (
 )
 
 from usb9_lcd.gui.debug import log_event, log_exception
-from usb9_lcd.gui.settings import GuiSettings, LianLiWirelessTargetSettings, save_settings as _save_settings_impl
+from usb9_lcd.gui.settings import (
+    DEFAULT_LIANLI_FAN_CURVE_PROFILES,
+    LIANLI_FAN_CURVE_MODES,
+    GuiSettings,
+    LianLiWirelessTargetSettings,
+    save_settings as _save_settings_impl,
+)
+from usb9_lcd.gui.wheel_guard import install_wheel_guard
 from usb9_lcd.lianli.analysis import analyze_live_log, diff_snapshot_files, summarize_experiment_dir
 from usb9_lcd.lianli.capture import linux_control_write_gate_report
 from usb9_lcd.lianli.lcd import LianLiWirelessLcdBackend, create_pyusb_lcd_backend
@@ -52,6 +59,7 @@ from usb9_lcd.lianli.wireless import (
     tlv2_color_effect_index,
     tlv2_effect_capability,
 )
+from usb9_lcd.monitoring.models import SystemTelemetry
 
 
 LIANLI_WRITE_CONFIRM_TOKEN = "WRITE-LIANLI"
@@ -203,6 +211,7 @@ class LianLiWirelessTestDialog(QDialog):
         self.shortcut_dec.activated.connect(lambda: self._adjust_and_apply(-1))
 
         self.page.operation_finished.connect(self._operation_finished)
+        install_wheel_guard(self)
         self.update_controls()
 
     def _initial_probe_count(self) -> int:
@@ -579,6 +588,8 @@ class LianLiWirelessPage(QWidget):
 
         self._updating_lianli_fan_controls = False
 
+        self._lianli_hardware_lock = threading.RLock()
+
         self._lianli_led_effect_index = 78000000
 
         self._lianli_loop_effect: str | None = None
@@ -590,6 +601,14 @@ class LianLiWirelessPage(QWidget):
         self._lianli_last_valid_rpm_by_mac: dict[str, tuple[int, int, int, int]] = {}
 
         self._lianli_live_device_by_mac: dict[str, WirelessDeviceInfo] = {}
+
+        self._lianli_latest_telemetry: SystemTelemetry | None = None
+
+        self._lianli_curve_last_rpm: int | None = None
+
+        self._lianli_curve_last_pwm: int | None = None
+
+        self._lianli_curve_pending_pwm: int | None = None
 
         self._lianli_test_dialog: LianLiWirelessTestDialog | None = None
 
@@ -803,9 +822,15 @@ class LianLiWirelessPage(QWidget):
 
         self.lianli_curve_hint.setObjectName("FieldHint")
 
+        self.lianli_auto_curve_enable = QCheckBox("启用自动温度曲线写入")
+
+        self.lianli_auto_curve_enable.setChecked(bool(getattr(self.settings.lianli_wireless, "auto_curve_enabled", False)))
+
+        self.lianli_auto_curve_enable.toggled.connect(self._set_lianli_auto_curve_enabled)
+
         self.lianli_curve_editor = LianLiFanCurveEditor()
 
-        self.lianli_curve_editor.set_points(self._lianli_curve_points())
+        self.lianli_curve_editor.set_points(self._lianli_curve_points(self.settings.lianli_wireless.fan_mode))
 
         self.lianli_curve_editor.curve_changed.connect(self._lianli_curve_changed)
 
@@ -841,13 +866,15 @@ class LianLiWirelessPage(QWidget):
 
         fan_layout.addWidget(self.lianli_curve_hint, 4, 1, 1, 3)
 
-        fan_layout.addWidget(self.lianli_curve_editor, 5, 1, 1, 3)
+        fan_layout.addWidget(self.lianli_auto_curve_enable, 5, 1, 1, 3)
 
-        fan_layout.addWidget(self.lianli_daily_pwm_button, 6, 0, 1, 2)
+        fan_layout.addWidget(self.lianli_curve_editor, 6, 1, 1, 3)
 
-        fan_layout.addWidget(self.lianli_apply_all_fans_button, 6, 2)
+        fan_layout.addWidget(self.lianli_daily_pwm_button, 7, 0, 1, 2)
 
-        fan_layout.addWidget(self.lianli_daily_pwm_sync_button, 6, 3)
+        fan_layout.addWidget(self.lianli_apply_all_fans_button, 7, 2)
+
+        fan_layout.addWidget(self.lianli_daily_pwm_sync_button, 7, 3)
 
         self._restore_lianli_fan_mode_selection()
 
@@ -1599,29 +1626,34 @@ class LianLiWirelessPage(QWidget):
 
 
 
-        self.lianli_write_enable = QCheckBox("启用联力写入")
+        self.lianli_write_enable = QCheckBox("允许联力真实写入")
 
-        self.lianli_write_enable.toggled.connect(self._update_write_controls)
+        self.lianli_write_enable.setChecked(bool(getattr(self.settings.lianli_wireless, "write_enabled", False)))
 
-        self.lianli_confirm_input = QLineEdit()
+        self.lianli_write_enable.toggled.connect(self._set_lianli_write_enabled)
+
+        self.lianli_confirm_input = QLineEdit(LIANLI_WRITE_CONFIRM_TOKEN)
 
         self.lianli_confirm_input.setPlaceholderText(LIANLI_WRITE_CONFIRM_TOKEN)
 
-        self.lianli_confirm_input.textChanged.connect(self._update_write_controls)
+        self.lianli_confirm_input.hide()
 
         self.lianli_mac_input = QLineEdit()
 
         self.lianli_mac_input.setPlaceholderText("aa:bb:cc:dd:ee:ff")
+        self.lianli_mac_input.hide()
 
         self.lianli_master_mac_input = QLineEdit()
 
         self.lianli_master_mac_input.setPlaceholderText("可留空自动读取 Master")
+        self.lianli_master_mac_input.hide()
 
         self.lianli_rx_type_value = QSpinBox()
 
         self.lianli_rx_type_value.setRange(1, 15)
 
         self.lianli_rx_type_value.setValue(3)
+        self.lianli_rx_type_value.hide()
 
         self.lianli_pwm_value = QSpinBox()
 
@@ -1663,47 +1695,39 @@ class LianLiWirelessPage(QWidget):
 
         layout.addWidget(self.lianli_write_enable)
 
+        self.lianli_write_target_label = QLabel("")
+
+        self.lianli_write_target_label.setObjectName("FieldHint")
+
+        self.lianli_write_target_label.setWordWrap(True)
+
+        layout.addWidget(self.lianli_write_target_label)
+
         form = QGridLayout()
 
         form.setHorizontalSpacing(8)
 
         form.setVerticalSpacing(6)
 
-        form.addWidget(QLabel("确认令牌"), 0, 0)
+        form.addWidget(QLabel("PWM"), 0, 0)
 
-        form.addWidget(self.lianli_confirm_input, 0, 1, 1, 3)
+        form.addWidget(self.lianli_pwm_value, 0, 1)
 
-        form.addWidget(QLabel("目标 MAC"), 1, 0)
+        form.addWidget(QLabel("LCD 亮度"), 0, 2)
 
-        form.addWidget(self.lianli_mac_input, 1, 1, 1, 3)
+        form.addWidget(self.lianli_lcd_brightness, 0, 3)
 
-        form.addWidget(QLabel("Master MAC"), 2, 0)
+        form.addWidget(QLabel("LCD 旋转"), 1, 0)
 
-        form.addWidget(self.lianli_master_mac_input, 2, 1, 1, 3)
+        form.addWidget(self.lianli_lcd_rotation, 1, 1)
 
-        form.addWidget(QLabel("RX Type"), 3, 0)
+        form.addWidget(QLabel("彩虹帧数"), 1, 2)
 
-        form.addWidget(self.lianli_rx_type_value, 3, 1)
+        form.addWidget(self.lianli_rainbow_frame_count, 1, 3)
 
-        form.addWidget(QLabel("PWM"), 3, 2)
+        form.addWidget(QLabel("彩虹间隔"), 2, 0)
 
-        form.addWidget(self.lianli_pwm_value, 3, 3)
-
-        form.addWidget(QLabel("LCD 亮度"), 4, 0)
-
-        form.addWidget(self.lianli_lcd_brightness, 4, 1)
-
-        form.addWidget(QLabel("LCD 旋转"), 4, 2)
-
-        form.addWidget(self.lianli_lcd_rotation, 4, 3)
-
-        form.addWidget(QLabel("彩虹帧数"), 5, 0)
-
-        form.addWidget(self.lianli_rainbow_frame_count, 5, 1)
-
-        form.addWidget(QLabel("彩虹间隔"), 5, 2)
-
-        form.addWidget(self.lianli_rainbow_interval, 5, 3)
+        form.addWidget(self.lianli_rainbow_interval, 2, 1)
 
         layout.addLayout(form)
 
@@ -1833,7 +1857,9 @@ class LianLiWirelessPage(QWidget):
 
             try:
 
-                payload = self._auto_connect_lianli_payload()
+                with self._lianli_hardware_lock:
+
+                    payload = self._auto_connect_lianli_payload()
 
                 if not self._closed:
 
@@ -2257,6 +2283,28 @@ class LianLiWirelessPage(QWidget):
 
 
 
+    def _close_lianli_lcd_backend(self, backend: object | None) -> None:
+
+        if backend is None:
+
+            return
+
+        for transport in (backend, getattr(backend, "transport", None)):
+
+            close = getattr(transport, "close", None)
+
+            if callable(close):
+
+                try:
+
+                    close()
+
+                except Exception:
+
+                    pass
+
+
+
     def _store_lianli_targets(self, targets: list[WirelessDeviceInfo]) -> None:
 
         stored: dict[str, LianLiWirelessTargetSettings] = {}
@@ -2425,7 +2473,9 @@ class LianLiWirelessPage(QWidget):
 
             try:
 
-                payload = self._refresh_lianli_rpm_payload()
+                with self._lianli_hardware_lock:
+
+                    payload = self._refresh_lianli_rpm_payload()
 
                 if not self._closed:
 
@@ -2699,7 +2749,7 @@ class LianLiWirelessPage(QWidget):
 
         if not write_unlocked:
 
-            return f"写入锁定：{self._write_blocked_text()}；请勾选“启用联力写入”并输入 WRITE-LIANLI"
+            return f"写入锁定：{self._write_blocked_text()}；请勾选“允许联力真实写入”"
 
         return "可以写入：选择目标转速后，点击“应用到当前风扇组”"
 
@@ -3521,6 +3571,12 @@ class LianLiWirelessPage(QWidget):
         self._pending_lianli_effect = None
 
         self.stop_lianli_lighting_loop()
+
+        if not self._write_unlocked():
+
+            self._set_lianli_status(f"联力无线灯光未关闭：{self._write_blocked_text()}")
+
+            return
 
         self._run_lianli_operation(
 
@@ -4367,19 +4423,18 @@ class LianLiWirelessPage(QWidget):
 
         mode = str(self.lianli_fan_mode_combo.currentData() or "custom")
 
-        rpm = self._lianli_fan_mode_rpm(mode)
-
         self.settings.lianli_wireless.fan_mode = mode
+        self._reset_lianli_curve_write_cache()
 
-        if rpm is not None:
+        self._set_lianli_curve_editor_points(mode)
 
-            self.lianli_rpm_value.setValue(rpm)
-
-            self.settings.lianli_wireless.fan_rpm = rpm
-
-            self.settings.lianli_wireless.pwm = self._lianli_rpm_to_pwm(rpm)
+        self._update_lianli_curve_hint()
 
         save_settings(self.settings)
+
+        if self._lianli_latest_telemetry is not None:
+
+            self._apply_lianli_active_curve(self._lianli_latest_telemetry)
 
 
 
@@ -4391,7 +4446,7 @@ class LianLiWirelessPage(QWidget):
 
         rpm = int(value)
 
-        mode = self._lianli_fan_mode_for_rpm(rpm)
+        mode = "custom"
 
         self._set_lianli_fan_mode_combo(mode)
 
@@ -4400,6 +4455,11 @@ class LianLiWirelessPage(QWidget):
         self.settings.lianli_wireless.fan_rpm = rpm
 
         self.settings.lianli_wireless.pwm = self._lianli_rpm_to_pwm(rpm)
+        self._reset_lianli_curve_write_cache()
+
+        self._set_lianli_curve_editor_points(mode)
+
+        self._update_lianli_curve_hint()
 
         save_settings(self.settings)
 
@@ -4413,23 +4473,17 @@ class LianLiWirelessPage(QWidget):
 
             mode = self._lianli_fan_mode_for_rpm(int(self.settings.lianli_wireless.fan_rpm))
 
-        rpm = self._lianli_fan_mode_rpm(mode)
-
         self._updating_lianli_fan_controls = True
 
         try:
 
             self._set_lianli_fan_mode_combo(mode)
 
-            if rpm is not None and int(self.settings.lianli_wireless.fan_rpm) != rpm:
-
-                self.lianli_rpm_value.setValue(rpm)
-
-                self.lianli_rpm_slider.setValue(rpm)
-
         finally:
 
             self._updating_lianli_fan_controls = False
+
+        self._set_lianli_curve_editor_points(mode)
 
 
 
@@ -4487,13 +4541,47 @@ class LianLiWirelessPage(QWidget):
 
 
 
-    def _lianli_curve_points(self) -> list[list[int]]:
+    def _lianli_fan_mode_label(self, mode: str) -> str:
 
-        points = getattr(self.settings.lianli_wireless, "fan_curve_points", None)
+        return {
+
+            "quiet": "安静",
+
+            "normal": "标准",
+
+            "high": "高速",
+
+            "full": "全速",
+
+            "custom": "自定义",
+
+        }.get(mode, "自定义")
+
+
+
+    def _lianli_active_fan_mode(self) -> str:
+
+        mode = str(self.lianli_fan_mode_combo.currentData() or self.settings.lianli_wireless.fan_mode or "custom")
+
+        return mode if mode in LIANLI_FAN_CURVE_MODES else "custom"
+
+
+
+    def _default_lianli_curve_points(self, mode: str) -> list[list[int]]:
+
+        points = DEFAULT_LIANLI_FAN_CURVE_PROFILES.get(mode, DEFAULT_LIANLI_FAN_CURVE_PROFILES["custom"])
+
+        return [list(point) for point in points]
+
+
+
+    def _sanitize_lianli_curve_points(self, points: object, mode: str = "custom") -> list[list[int]]:
+
+        default = self._default_lianli_curve_points(mode)
 
         if not isinstance(points, list) or len(points) < 2:
 
-            return [[30, 450], [50, 900], [70, 1440], [85, 1800]]
+            return default
 
         parsed: list[list[int]] = []
 
@@ -4511,9 +4599,75 @@ class LianLiWirelessPage(QWidget):
 
         while len(parsed) < 2:
 
-            parsed.append([[30, 450], [85, 1800]][len(parsed)])
+            parsed.append(default[len(parsed)])
 
         return sorted(parsed, key=lambda item: item[0])
+
+
+
+    def _lianli_curve_points(self, mode: str | None = None) -> list[list[int]]:
+
+        mode = mode if mode in LIANLI_FAN_CURVE_MODES else self._lianli_active_fan_mode()
+
+        if mode == "custom":
+
+            default_custom = self._default_lianli_curve_points("custom")
+
+            profiles = getattr(self.settings.lianli_wireless, "fan_curve_profiles", None)
+
+            profile_points = (
+
+                self._sanitize_lianli_curve_points(profiles.get("custom"), "custom")
+
+                if isinstance(profiles, dict) and "custom" in profiles
+
+                else default_custom
+
+            )
+
+            legacy_points = self._sanitize_lianli_curve_points(
+
+                getattr(self.settings.lianli_wireless, "fan_curve_points", None),
+
+                mode,
+
+            )
+
+            if profile_points != default_custom:
+
+                return profile_points
+
+            if legacy_points != default_custom:
+
+                return legacy_points
+
+            return profile_points
+
+        profiles = getattr(self.settings.lianli_wireless, "fan_curve_profiles", None)
+
+        if isinstance(profiles, dict) and mode in profiles:
+
+            return self._sanitize_lianli_curve_points(profiles.get(mode), mode)
+
+        return self._default_lianli_curve_points(mode)
+
+
+
+    def _set_lianli_curve_editor_points(self, mode: str | None = None) -> None:
+
+        if not hasattr(self, "lianli_curve_editor"):
+
+            return
+
+        self._updating_lianli_fan_controls = True
+
+        try:
+
+            self.lianli_curve_editor.set_points(self._lianli_curve_points(mode))
+
+        finally:
+
+            self._updating_lianli_fan_controls = False
 
 
 
@@ -4531,13 +4685,25 @@ class LianLiWirelessPage(QWidget):
 
             return
 
-        self.settings.lianli_wireless.fan_curve_points = points
+        mode = self._lianli_active_fan_mode()
 
-        if str(self.lianli_fan_mode_combo.currentData() or "") != "custom":
+        sanitized = self._sanitize_lianli_curve_points(points, mode)
 
-            self._set_lianli_fan_mode_combo("custom")
+        profiles = getattr(self.settings.lianli_wireless, "fan_curve_profiles", None)
 
-            self.settings.lianli_wireless.fan_mode = "custom"
+        if not isinstance(profiles, dict):
+
+            profiles = {}
+
+            self.settings.lianli_wireless.fan_curve_profiles = profiles
+
+        profiles[mode] = sanitized
+
+        if mode == "custom":
+
+            self.settings.lianli_wireless.fan_curve_points = sanitized
+
+        self._reset_lianli_curve_write_cache()
 
         save_settings(self.settings)
 
@@ -4551,11 +4717,162 @@ class LianLiWirelessPage(QWidget):
 
             return
 
-        points = sorted(self._lianli_curve_points(), key=lambda item: item[0])
+        mode = self._lianli_active_fan_mode()
+
+        points = sorted(self._lianli_curve_points(mode), key=lambda item: item[0])
 
         summary = "，".join(f"{temp}°C→{rpm} RPM" for temp, rpm in points)
 
-        self.lianli_curve_hint.setText(f"自定义曲线：{summary}")
+        self.lianli_curve_hint.setText(
+            f"{self._lianli_fan_mode_label(mode)} CPU 曲线：{summary}；"
+            "只有同时启用自动曲线和真实写入时才会随温度写入"
+        )
+
+
+
+    def update_telemetry(self, telemetry: SystemTelemetry | None) -> None:
+
+        self._lianli_latest_telemetry = telemetry
+
+        if telemetry is None:
+
+            return
+
+        self._apply_lianli_active_curve(telemetry)
+
+
+
+    def _apply_lianli_active_curve(self, telemetry: SystemTelemetry) -> None:
+
+        if self._closed or self._operation_active:
+
+            return
+
+        mode = self._lianli_active_fan_mode()
+
+        if mode not in LIANLI_FAN_CURVE_MODES:
+
+            return
+
+        if not self._auto_curve_unlocked() or not self._write_unlocked() or not self.settings.lianli_wireless.targets:
+
+            return
+
+        temperature_c = telemetry.cpu.package_temperature_c
+
+        if temperature_c is None:
+
+            return
+
+        rpm = self._lianli_curve_rpm_for_temperature(float(temperature_c))
+
+        if rpm is None:
+
+            return
+
+        pwm = self._lianli_rpm_to_pwm(rpm)
+
+        if self._lianli_curve_last_rpm is not None and abs(rpm - self._lianli_curve_last_rpm) < 50:
+
+            return
+
+        self._set_lianli_target_rpm_display(rpm)
+
+        self.settings.lianli_wireless.fan_mode = mode
+
+        self.settings.lianli_wireless.fan_rpm = rpm
+
+        self.settings.lianli_wireless.pwm = pwm
+
+        save_settings(self.settings)
+
+        self._lianli_curve_last_rpm = rpm
+
+        self._lianli_curve_last_pwm = pwm
+
+        self._lianli_curve_pending_pwm = pwm
+
+        def operation() -> dict[str, object]:
+
+            result = self._send_lianli_direct_pwm(pwm)
+
+            result["curve_source"] = "cpu"
+
+            result["curve_mode"] = mode
+
+            result["curve_temperature_c"] = float(temperature_c)
+
+            result["curve_rpm"] = rpm
+
+            return result
+
+        self._run_lianli_operation(
+
+            f"联力温度曲线：CPU {float(temperature_c):.0f}°C -> {rpm} RPM...",
+
+            operation,
+
+        )
+
+
+
+    def _lianli_curve_rpm_for_temperature(self, temperature_c: float) -> int | None:
+
+        points = sorted(self._lianli_curve_points(), key=lambda item: item[0])
+
+        if len(points) < 2:
+
+            return None
+
+        if temperature_c <= points[0][0]:
+
+            return int(points[0][1])
+
+        if temperature_c >= points[-1][0]:
+
+            return int(points[-1][1])
+
+        for index in range(len(points) - 1):
+
+            left_temp, left_rpm = points[index]
+
+            right_temp, right_rpm = points[index + 1]
+
+            if left_temp <= temperature_c <= right_temp:
+
+                span = max(1.0, float(right_temp - left_temp))
+
+                ratio = (temperature_c - left_temp) / span
+
+                return round((left_rpm + (right_rpm - left_rpm) * ratio) / 10) * 10
+
+        return int(points[-1][1])
+
+
+
+    def _set_lianli_target_rpm_display(self, rpm: int) -> None:
+
+        self._updating_lianli_fan_controls = True
+
+        try:
+
+            self.lianli_rpm_value.setValue(rpm)
+
+            self.lianli_rpm_slider.setValue(rpm)
+
+        finally:
+
+            self._updating_lianli_fan_controls = False
+
+
+
+    def _reset_lianli_curve_write_cache(self) -> None:
+
+        self._lianli_curve_last_rpm = None
+
+        self._lianli_curve_last_pwm = None
+
+        self._lianli_curve_pending_pwm = None
 
 
 
@@ -4881,47 +5198,55 @@ class LianLiWirelessPage(QWidget):
 
         def operation() -> dict[str, object]:
 
-            backend = self.backend_factory()
+            backend = None
 
-            before = backend.list_devices()
+            try:
 
-            motherboard_pwm = self._safe_snapshot_motherboard_pwm(before.motherboard_pwm)
+                backend = self.backend_factory()
 
-            target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
+                before = backend.list_devices()
 
-            if target is None:
+                motherboard_pwm = self._safe_snapshot_motherboard_pwm(before.motherboard_pwm)
 
-                raise ValueError(f"未找到接收器 MAC：{mac}")
+                target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
 
-            packets_written = backend.send_motherboard_pwm_mirror(target, motherboard_pwm)
+                if target is None:
 
-            after = backend.list_devices()
+                    raise ValueError(f"未找到接收器 MAC：{mac}")
 
-            return {
+                packets_written = backend.send_motherboard_pwm_mirror(target, motherboard_pwm)
 
-                "operation": "live-pwm-mirror",
+                after = backend.list_devices()
 
-                "target": target.mac,
+                return {
 
-                "motherboard_pwm": motherboard_pwm,
+                    "operation": "live-pwm-mirror",
 
-                "pwm_values": [motherboard_pwm] * 4,
+                    "target": target.mac,
 
-                "packets_written": packets_written,
+                    "motherboard_pwm": motherboard_pwm,
 
-                "before": _wireless_device_payload(target),
+                    "pwm_values": [motherboard_pwm] * 4,
 
-                "after": {
+                    "packets_written": packets_written,
 
-                    "device_count": after.device_count,
+                    "before": _wireless_device_payload(target),
 
-                    "motherboard_pwm": after.motherboard_pwm,
+                    "after": {
 
-                    "devices": [_wireless_device_payload(device) for device in after.devices],
+                        "device_count": after.device_count,
 
-                },
+                        "motherboard_pwm": after.motherboard_pwm,
 
-            }
+                        "devices": [_wireless_device_payload(device) for device in after.devices],
+
+                    },
+
+                }
+
+            finally:
+
+                self._close_lianli_backend(backend)
 
 
 
@@ -4949,137 +5274,145 @@ class LianLiWirelessPage(QWidget):
 
         def operation() -> dict[str, object]:
 
-            backend = self.backend_factory()
+            backend = None
 
-            output_dir = self.mirror_experiment_output_dir
+            try:
 
-            output_dir.mkdir(parents=True, exist_ok=True)
+                backend = self.backend_factory()
 
-            before = backend.list_devices()
+                output_dir = self.mirror_experiment_output_dir
 
-            motherboard_pwm = self._safe_snapshot_motherboard_pwm(before.motherboard_pwm)
+                output_dir.mkdir(parents=True, exist_ok=True)
 
-            pwm_values = [motherboard_pwm] * 4
+                before = backend.list_devices()
 
-            before_payload = {
+                motherboard_pwm = self._safe_snapshot_motherboard_pwm(before.motherboard_pwm)
 
-                "operation": "live-list-before",
+                pwm_values = [motherboard_pwm] * 4
 
-                "device_count": before.device_count,
+                before_payload = {
 
-                "motherboard_pwm": before.motherboard_pwm,
+                    "operation": "live-list-before",
 
-                "devices": [_wireless_device_payload(device) for device in before.devices],
+                    "device_count": before.device_count,
 
-            }
+                    "motherboard_pwm": before.motherboard_pwm,
 
-            before_path = output_dir / "live-list-before.json"
+                    "devices": [_wireless_device_payload(device) for device in before.devices],
 
-            before_path.write_text(json.dumps(before_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                }
 
+                before_path = output_dir / "live-list-before.json"
 
+                before_path.write_text(json.dumps(before_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-            target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
 
-            if target is None:
 
-                raise ValueError(f"未找到接收器 MAC：{mac}")
+                target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
 
-            packets_written = backend.send_motherboard_pwm_mirror(target, motherboard_pwm)
+                if target is None:
 
+                    raise ValueError(f"未找到接收器 MAC：{mac}")
 
+                packets_written = backend.send_motherboard_pwm_mirror(target, motherboard_pwm)
 
-            after = backend.list_devices()
 
-            after_payload = {
 
-                "operation": "live-list-after",
+                after = backend.list_devices()
 
-                "device_count": after.device_count,
+                after_payload = {
 
-                "motherboard_pwm": after.motherboard_pwm,
+                    "operation": "live-list-after",
 
-                "devices": [_wireless_device_payload(device) for device in after.devices],
+                    "device_count": after.device_count,
 
-            }
+                    "motherboard_pwm": after.motherboard_pwm,
 
-            after_path = output_dir / "live-list-after.json"
+                    "devices": [_wireless_device_payload(device) for device in after.devices],
 
-            after_path.write_text(json.dumps(after_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                }
 
+                after_path = output_dir / "live-list-after.json"
 
+                after_path.write_text(json.dumps(after_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-            write_payload = {
 
-                "operation": "live-pwm-mirror",
 
-                "target": target.mac,
+                write_payload = {
 
-                "motherboard_pwm": motherboard_pwm,
+                    "operation": "live-pwm-mirror",
 
-                "pwm_values": pwm_values,
+                    "target": target.mac,
 
-                "packets_written": packets_written,
+                    "motherboard_pwm": motherboard_pwm,
 
-                "before": _wireless_device_payload(target),
+                    "pwm_values": pwm_values,
 
-                "after": after_payload,
+                    "packets_written": packets_written,
 
-            }
+                    "before": _wireless_device_payload(target),
 
-            write_path = output_dir / "live-pwm-mirror.json"
+                    "after": after_payload,
 
-            write_path.write_text(json.dumps(write_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                }
 
+                write_path = output_dir / "live-pwm-mirror.json"
 
+                write_path.write_text(json.dumps(write_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-            analysis_payload = analyze_live_log(write_path)
 
-            analysis_path = output_dir / "analyze-live-pwm-mirror.json"
 
-            analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                analysis_payload = analyze_live_log(write_path)
 
-            summary_payload = summarize_experiment_dir(output_dir)
+                analysis_path = output_dir / "analyze-live-pwm-mirror.json"
 
-            summary_path = output_dir / "summary.json"
+                analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-            summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                summary_payload = summarize_experiment_dir(output_dir)
 
-            return {
+                summary_path = output_dir / "summary.json"
 
-                "operation": "gui-safe-pwm-mirror-experiment",
+                summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-                "target": target.mac,
+                return {
 
-                "motherboard_pwm": motherboard_pwm,
+                    "operation": "gui-safe-pwm-mirror-experiment",
 
-                "pwm_values": pwm_values,
+                    "target": target.mac,
 
-                "output_dir": str(output_dir),
+                    "motherboard_pwm": motherboard_pwm,
 
-                "packets_written": packets_written,
+                    "pwm_values": pwm_values,
 
-                "likely_effective": analysis_payload["likely_effective"],
+                    "output_dir": str(output_dir),
 
-                "steps": [
+                    "packets_written": packets_written,
 
-                    {"name": "before", "path": str(before_path)},
+                    "likely_effective": analysis_payload["likely_effective"],
 
-                    {"name": "write", "path": str(write_path)},
+                    "steps": [
 
-                    {"name": "after", "path": str(after_path)},
+                        {"name": "before", "path": str(before_path)},
 
-                    {"name": "analysis", "path": str(analysis_path)},
+                        {"name": "write", "path": str(write_path)},
 
-                    {"name": "summary", "path": str(summary_path)},
+                        {"name": "after", "path": str(after_path)},
 
-                ],
+                        {"name": "analysis", "path": str(analysis_path)},
 
-                "analysis": analysis_payload,
+                        {"name": "summary", "path": str(summary_path)},
 
-                "summary": summary_payload,
+                    ],
 
-            }
+                    "analysis": analysis_payload,
+
+                    "summary": summary_payload,
+
+                }
+
+            finally:
+
+                self._close_lianli_backend(backend)
 
 
 
@@ -5466,33 +5799,41 @@ class LianLiWirelessPage(QWidget):
 
         def operation() -> dict[str, object]:
 
-            backend = self.lcd_backend_factory()
+            backend = None
 
-            return {
+            try:
 
-                "operation": "live-lcd-control",
+                backend = self.lcd_backend_factory()
 
-                "applied": {
+                return {
 
-                    "brightness": {
+                    "operation": "live-lcd-control",
 
-                        "value": brightness,
+                    "applied": {
 
-                        "bytes_written": backend.set_brightness(brightness),
+                        "brightness": {
+
+                            "value": brightness,
+
+                            "bytes_written": backend.set_brightness(brightness),
+
+                        },
+
+                        "rotation": {
+
+                            "degrees": rotation,
+
+                            "bytes_written": backend.set_rotation(rotation),
+
+                        },
 
                     },
 
-                    "rotation": {
+                }
 
-                        "degrees": rotation,
+            finally:
 
-                        "bytes_written": backend.set_rotation(rotation),
-
-                    },
-
-                },
-
-            }
+                self._close_lianli_lcd_backend(backend)
 
 
 
@@ -5554,9 +5895,17 @@ class LianLiWirelessPage(QWidget):
 
     def _live_master_payload(self) -> dict[str, object]:
 
-        backend = self.backend_factory()
+        backend = None
 
-        result = backend.query_master_mac(channel=8)
+        try:
+
+            backend = self.backend_factory()
+
+            result = backend.query_master_mac(channel=8)
+
+        finally:
+
+            self._close_lianli_backend(backend)
 
         return {
 
@@ -5574,19 +5923,27 @@ class LianLiWirelessPage(QWidget):
 
     def _live_lcd_info_payload(self) -> dict[str, object]:
 
-        backend = self.lcd_backend_factory()
+        backend = None
 
-        return {
+        try:
 
-            "operation": "live-lcd-info",
+            backend = self.lcd_backend_factory()
 
-            "mode": "both",
+            return {
 
-            "handshake": backend.handshake(),
+                "operation": "live-lcd-info",
 
-            "firmware": backend.firmware_version(),
+                "mode": "both",
 
-        }
+                "handshake": backend.handshake(),
+
+                "firmware": backend.firmware_version(),
+
+            }
+
+        finally:
+
+            self._close_lianli_lcd_backend(backend)
 
 
 
@@ -5742,85 +6099,59 @@ class LianLiWirelessPage(QWidget):
 
         def operation() -> dict[str, object]:
 
-            backend = self.backend_factory()
+            backend = None
 
-            output_dir.mkdir(parents=True, exist_ok=True)
+            try:
 
-            before = backend.list_devices()
+                backend = self.backend_factory()
 
-            before_payload = {
+                output_dir.mkdir(parents=True, exist_ok=True)
 
-                "operation": "live-list-before",
+                before = backend.list_devices()
 
-                "device_count": before.device_count,
+                before_payload = {
 
-                "motherboard_pwm": before.motherboard_pwm,
+                    "operation": "live-list-before",
 
-                "devices": [_wireless_device_payload(device) for device in before.devices],
+                    "device_count": before.device_count,
 
-            }
+                    "motherboard_pwm": before.motherboard_pwm,
 
-            before_path = output_dir / "live-list-before.json"
+                    "devices": [_wireless_device_payload(device) for device in before.devices],
 
-            before_path.write_text(json.dumps(before_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                }
 
+                before_path = output_dir / "live-list-before.json"
 
-
-            target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
-
-            if target is None:
-
-                raise ValueError(f"未找到接收器 MAC：{mac}")
-
-            write_result = writer(backend, target)
-
-            dynamic_write_fields: dict[str, object] = {}
-
-            dynamic_result_fields: dict[str, object] = {}
-
-            if isinstance(write_result, tuple):
-
-                packets_written, dynamic_write_fields, dynamic_result_fields = write_result
-
-            else:
-
-                packets_written = write_result
-
-            after = backend.list_devices()
-
-            after_payload = {
-
-                "operation": "live-list-after",
-
-                "device_count": after.device_count,
-
-                "motherboard_pwm": after.motherboard_pwm,
-
-                "devices": [_wireless_device_payload(device) for device in after.devices],
-
-            }
-
-            after_path = output_dir / "live-list-after.json"
-
-            after_path.write_text(json.dumps(after_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                before_path.write_text(json.dumps(before_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 
-            write_payload = {
+                target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
 
-                "operation": write_operation,
+                if target is None:
 
-                "target": target.mac,
+                    raise ValueError(f"未找到接收器 MAC：{mac}")
 
-                **write_fields,
+                write_result = writer(backend, target)
 
-                **dynamic_write_fields,
+                dynamic_write_fields: dict[str, object] = {}
 
-                "packets_written": packets_written,
+                dynamic_result_fields: dict[str, object] = {}
 
-                "before": _wireless_device_payload(target),
+                if isinstance(write_result, tuple):
 
-                "after": {
+                    packets_written, dynamic_write_fields, dynamic_result_fields = write_result
+
+                else:
+
+                    packets_written = write_result
+
+                after = backend.list_devices()
+
+                after_payload = {
+
+                    "operation": "live-list-after",
 
                     "device_count": after.device_count,
 
@@ -5828,67 +6159,101 @@ class LianLiWirelessPage(QWidget):
 
                     "devices": [_wireless_device_payload(device) for device in after.devices],
 
-                },
+                }
 
-            }
+                after_path = output_dir / "live-list-after.json"
 
-            write_path = output_dir / write_filename
-
-            write_path.write_text(json.dumps(write_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                after_path.write_text(json.dumps(after_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 
-            analysis_payload = analyze_live_log(write_path)
+                write_payload = {
 
-            enriched_result_fields = {**result_fields, **dynamic_result_fields}
+                    "operation": write_operation,
 
-            if analysis_enricher is not None:
+                    "target": target.mac,
 
-                enriched_result_fields.update(analysis_enricher(analysis_payload))
+                    **write_fields,
 
-            analysis_path = output_dir / analysis_filename
+                    **dynamic_write_fields,
 
-            analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                    "packets_written": packets_written,
 
-            summary_payload = summarize_experiment_dir(output_dir)
+                    "before": _wireless_device_payload(target),
 
-            summary_path = output_dir / "summary.json"
+                    "after": {
 
-            summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                        "device_count": after.device_count,
 
-            return {
+                        "motherboard_pwm": after.motherboard_pwm,
 
-                "operation": result_operation,
+                        "devices": [_wireless_device_payload(device) for device in after.devices],
 
-                "target": target.mac,
+                    },
 
-                **enriched_result_fields,
+                }
 
-                "output_dir": str(output_dir),
+                write_path = output_dir / write_filename
 
-                "packets_written": packets_written,
+                write_path.write_text(json.dumps(write_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-                "likely_effective": analysis_payload["likely_effective"],
 
-                "steps": [
 
-                    {"name": "before", "path": str(before_path)},
+                analysis_payload = analyze_live_log(write_path)
 
-                    {"name": "write", "path": str(write_path)},
+                enriched_result_fields = {**result_fields, **dynamic_result_fields}
 
-                    {"name": "after", "path": str(after_path)},
+                if analysis_enricher is not None:
 
-                    {"name": "analysis", "path": str(analysis_path)},
+                    enriched_result_fields.update(analysis_enricher(analysis_payload))
 
-                    {"name": "summary", "path": str(summary_path)},
+                analysis_path = output_dir / analysis_filename
 
-                ],
+                analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-                "analysis": analysis_payload,
+                summary_payload = summarize_experiment_dir(output_dir)
 
-                "summary": summary_payload,
+                summary_path = output_dir / "summary.json"
 
-            }
+                summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+                return {
+
+                    "operation": result_operation,
+
+                    "target": target.mac,
+
+                    **enriched_result_fields,
+
+                    "output_dir": str(output_dir),
+
+                    "packets_written": packets_written,
+
+                    "likely_effective": analysis_payload["likely_effective"],
+
+                    "steps": [
+
+                        {"name": "before", "path": str(before_path)},
+
+                        {"name": "write", "path": str(write_path)},
+
+                        {"name": "after", "path": str(after_path)},
+
+                        {"name": "analysis", "path": str(analysis_path)},
+
+                        {"name": "summary", "path": str(summary_path)},
+
+                    ],
+
+                    "analysis": analysis_payload,
+
+                    "summary": summary_payload,
+
+                }
+
+            finally:
+
+                self._close_lianli_backend(backend)
 
 
 
@@ -5924,41 +6289,49 @@ class LianLiWirelessPage(QWidget):
 
         def operation() -> dict[str, object]:
 
-            backend = self.backend_factory()
+            backend = None
 
-            before = backend.list_devices()
+            try:
 
-            target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
+                backend = self.backend_factory()
 
-            if target is None:
+                before = backend.list_devices()
 
-                raise ValueError(f"未找到接收器 MAC：{mac}")
+                target = next((device for device in before.devices if device.mac.lower() == mac.lower()), None)
 
-            packets_written = writer(backend, target)
+                if target is None:
 
-            after = backend.list_devices()
+                    raise ValueError(f"未找到接收器 MAC：{mac}")
 
-            return {
+                packets_written = writer(backend, target)
 
-                "operation": "live-write",
+                after = backend.list_devices()
 
-                "target": target.mac,
+                return {
 
-                "packets_written": packets_written,
+                    "operation": "live-write",
 
-                "before": _wireless_device_payload(target),
+                    "target": target.mac,
 
-                "after": {
+                    "packets_written": packets_written,
 
-                    "device_count": after.device_count,
+                    "before": _wireless_device_payload(target),
 
-                    "motherboard_pwm": after.motherboard_pwm,
+                    "after": {
 
-                    "devices": [_wireless_device_payload(device) for device in after.devices],
+                        "device_count": after.device_count,
 
-                },
+                        "motherboard_pwm": after.motherboard_pwm,
 
-            }
+                        "devices": [_wireless_device_payload(device) for device in after.devices],
+
+                    },
+
+                }
+
+            finally:
+
+                self._close_lianli_backend(backend)
 
 
 
@@ -5998,7 +6371,9 @@ class LianLiWirelessPage(QWidget):
 
             try:
 
-                result = operation()
+                with self._lianli_hardware_lock:
+
+                    result = operation()
 
                 if not self._closed:
 
@@ -6027,6 +6402,10 @@ class LianLiWirelessPage(QWidget):
         if isinstance(result, Exception):
 
             self._lianli_loop_effect = None
+
+            if self._lianli_curve_pending_pwm is not None:
+
+                self._reset_lianli_curve_write_cache()
 
             self._set_lianli_status(f"{message}：{result}")
 
@@ -6067,6 +6446,8 @@ class LianLiWirelessPage(QWidget):
             self._selected_lianli_target_changed()
 
             message = self._lianli_pwm_result_message(result, message)
+
+            self._lianli_curve_pending_pwm = None
 
         if isinstance(result, dict) and result.get("operation") == "gui-lianli-lighting":
 
@@ -6128,11 +6509,11 @@ class LianLiWirelessPage(QWidget):
 
                 break
 
-        if selected is None and devices and isinstance(devices[0], dict):
-
-            selected = devices[0]
-
         if selected is None:
+
+            if target_mac:
+
+                return f"联力风扇写入完成：目标 {target_mac} 未在回读中出现"
 
             return fallback
 
@@ -6355,6 +6736,39 @@ class LianLiWirelessPage(QWidget):
         self._update_write_controls()
 
 
+    def _set_lianli_write_enabled(self, enabled: bool) -> None:
+
+        self.settings.lianli_wireless.write_enabled = bool(enabled)
+
+        self._update_write_controls()
+
+
+
+    def _set_lianli_auto_curve_enabled(self, enabled: bool) -> None:
+
+        self.settings.lianli_wireless.auto_curve_enabled = bool(enabled)
+
+        save_settings(self.settings)
+
+        self._reset_lianli_curve_write_cache()
+
+        self._update_daily_controls()
+
+        if enabled and self._lianli_latest_telemetry is not None:
+
+            self._apply_lianli_active_curve(self._lianli_latest_telemetry)
+
+
+
+    def _auto_curve_unlocked(self) -> bool:
+
+        if not hasattr(self, "lianli_auto_curve_enable"):
+
+            return bool(getattr(self.settings.lianli_wireless, "auto_curve_enabled", False))
+
+        return self.lianli_auto_curve_enable.isChecked()
+
+
 
     def _write_unlocked(self) -> bool:
 
@@ -6365,8 +6779,6 @@ class LianLiWirelessPage(QWidget):
         return (
 
             self.lianli_write_enable.isChecked()
-
-            and self.lianli_confirm_input.text().strip() == LIANLI_WRITE_CONFIRM_TOKEN
 
             and self._write_gate_unlocked()
 
@@ -6396,21 +6808,25 @@ class LianLiWirelessPage(QWidget):
 
             return "还没有识别到可用的联力无线风扇组"
 
-        if not self.lianli_write_enable.isChecked() or self.lianli_confirm_input.text().strip() != LIANLI_WRITE_CONFIRM_TOKEN:
+        if not self.lianli_write_enable.isChecked():
 
-            return "写入未启用或确认令牌不正确"
+            return "写入未启用"
 
         if self.require_write_gate and not self._write_gate_unlocked():
 
             return "写入门禁未通过：请先点击写入门禁，完成官方抓包对比后再写入"
 
-        return "写入未启用或确认令牌不正确"
+        return "写入未启用"
 
 
 
     def _update_write_controls(self) -> None:
 
-        enabled = (not self._operation_active) and self._write_unlocked()
+        has_write_target = self._has_lianli_write_target()
+
+        write_enabled = (not self._operation_active) and self._write_unlocked()
+
+        targeted_write_enabled = write_enabled and has_write_target
 
         for name in (
 
@@ -6438,13 +6854,15 @@ class LianLiWirelessPage(QWidget):
 
             "lianli_safe_unbind_button",
 
-            "lianli_lcd_control_button",
-
         ):
 
             if hasattr(self, name):
 
-                getattr(self, name).setEnabled(enabled)
+                getattr(self, name).setEnabled(targeted_write_enabled)
+
+        if hasattr(self, "lianli_lcd_control_button"):
+
+            self.lianli_lcd_control_button.setEnabled(write_enabled)
 
         if hasattr(self, "lianli_lcd_info_button"):
 
@@ -6462,7 +6880,9 @@ class LianLiWirelessPage(QWidget):
 
             if hasattr(self, name):
 
-                getattr(self, name).setEnabled(enabled if name != "lianli_preview_packet_button" else not self._operation_active)
+                getattr(self, name).setEnabled(
+                    targeted_write_enabled if name != "lianli_preview_packet_button" else not self._operation_active
+                )
 
         if hasattr(self, "lianli_stop_loop_button"):
 
@@ -6471,7 +6891,43 @@ class LianLiWirelessPage(QWidget):
         if hasattr(self, "lianli_write_gate_label"):
 
             self.lianli_write_gate_label.setText(self._write_gate_label_text())
+
+        if hasattr(self, "lianli_write_target_label"):
+
+            self.lianli_write_target_label.setText(self._lianli_write_target_text())
+
         self._update_daily_controls()
+
+
+    def _lianli_write_target_text(self) -> str:
+
+        target = self._cached_lianli_target()
+
+        if target is None:
+
+            return "写入目标：未识别到风扇组。点击上方“重新识别”后会自动填充 MAC、Master 和 RX Type。"
+
+        return (
+
+            f"写入目标：{target.label or '风扇组'} | MAC {target.mac} | Master {target.master_mac or '未读取'} | "
+
+            f"Channel {target.channel} | RX Type {target.rx_type} | {target.fan_count} 把风扇 | {target.led_count} LED"
+
+        )
+
+
+
+    def _has_lianli_write_target(self) -> bool:
+
+        if self._cached_lianli_target() is not None:
+
+            return True
+
+        if hasattr(self, "lianli_mac_input"):
+
+            return bool(self.lianli_mac_input.text().strip())
+
+        return False
 
 
 

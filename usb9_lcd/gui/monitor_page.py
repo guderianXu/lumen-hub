@@ -18,8 +18,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from usb9_lcd.assets import bundled_asset_path
 from usb9_lcd.monitoring.models import CpuTelemetry, FanTelemetry, GpuTelemetry, SystemTelemetry
 from usb9_lcd.monitoring.render import MonitorRenderSettings
+
+
+def builtin_monitor_backgrounds() -> tuple[tuple[str, Path], ...]:
+    return (
+        ("ROG 红色网格", bundled_asset_path("monitor_backgrounds/rog_red_grid.png")),
+        ("蓝色核心", bundled_asset_path("monitor_backgrounds/blue_core.png")),
+        ("霓虹仪表", bundled_asset_path("monitor_backgrounds/neon_meter.png")),
+    )
 
 
 def format_cpu_temperature(cpu: CpuTelemetry) -> str:
@@ -520,15 +529,7 @@ class MonitorPage(QWidget):
 
         self.monitor_background_combo.addItem("默认暗色", "")
 
-        for label, path in (
-
-            ("ROG 红色网格", Path("assets/monitor_backgrounds/rog_red_grid.png")),
-
-            ("蓝色核心", Path("assets/monitor_backgrounds/blue_core.png")),
-
-            ("霓虹仪表", Path("assets/monitor_backgrounds/neon_meter.png")),
-
-        ):
+        for label, path in builtin_monitor_backgrounds():
 
             self.monitor_background_combo.addItem(label, str(path))
 

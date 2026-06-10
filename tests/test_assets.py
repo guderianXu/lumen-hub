@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,27 @@ def test_asset_library_creates_directories_and_default_links(tmp_path: Path):
     assert any(link.title == "ROG official GIPHY" for link in links)
     assert any(link.title == "Gif Abyss ROG animated emblem" for link in links)
     assert any(link.title == "Pixabay cyber eye GIF search" for link in links)
+
+
+def test_default_asset_root_does_not_depend_on_current_working_directory(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    library = AssetLibrary()
+
+    assert library.root == Path(__file__).resolve().parents[1] / "assets"
+    assert not (tmp_path / "assets").exists()
+
+
+def test_bundled_asset_path_uses_pyinstaller_meipass_when_frozen(tmp_path: Path, monkeypatch):
+    bundle_root = tmp_path / "bundle"
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle_root), raising=False)
+
+    from usb9_lcd import assets as assets_module
+
+    assert assets_module.bundled_asset_path("monitor_backgrounds/blue_core.png") == (
+        bundle_root / "assets" / "monitor_backgrounds" / "blue_core.png"
+    )
 
 
 def test_asset_library_indexes_static_and_animated_files(tmp_path: Path):

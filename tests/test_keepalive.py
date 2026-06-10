@@ -1,6 +1,24 @@
 from pathlib import Path
 
-from usb9_lcd.keepalive import run_keepalive, stop_existing_keepalive
+from usb9_lcd.keepalive import keepalive_worker_command, run_keepalive, stop_existing_keepalive
+
+
+def test_keepalive_worker_command_uses_module_in_development(monkeypatch):
+    monkeypatch.setattr("usb9_lcd.keepalive.sys.executable", "/usr/bin/python")
+    monkeypatch.setattr("usb9_lcd.keepalive.sys.frozen", False, raising=False)
+
+    assert keepalive_worker_command(["frame.bin"]) == ["/usr/bin/python", "-m", "usb9_lcd.keepalive", "frame.bin"]
+
+
+def test_keepalive_worker_command_uses_packaged_exe_when_frozen(monkeypatch):
+    monkeypatch.setattr("usb9_lcd.keepalive.sys.executable", "/opt/LumenHub/LumenHub")
+    monkeypatch.setattr("usb9_lcd.keepalive.sys.frozen", True, raising=False)
+
+    assert keepalive_worker_command(["frame.bin"]) == [
+        "/opt/LumenHub/LumenHub",
+        "--lumen-hub-keepalive-worker",
+        "frame.bin",
+    ]
 
 
 def test_stop_existing_keepalive_removes_stale_pid(monkeypatch, tmp_path: Path):

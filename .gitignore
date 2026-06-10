@@ -4,10 +4,12 @@ __pycache__/
 *.egg-info/
 .superpowers/
 .cache/
+.build/
 logs/
 *.log
 build/
 dist/
+release/
 htmlcov/
 .coverage
 assets/user/

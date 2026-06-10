@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import colorsys
 from collections.abc import Callable
+from dataclasses import dataclass
 import sys
 import threading
 import time
@@ -55,6 +56,58 @@ LIGHTING_PALETTES: dict[str, tuple[str, tuple[str, ...]]] = {
     "mono": ("Mono contrast", ("#ffffff", "#cbd5e1", "#94a3b8", "#64748b", "#000000")),
 
 }
+
+
+@dataclass(frozen=True)
+class _OpenRgbRuntimeSnapshot:
+    host: str
+    port: int
+    app_path: str
+    auto_start_server: bool
+
+
+@dataclass(frozen=True)
+class _LightingUiSnapshot:
+    target_id: str
+    effect: str
+    color: str
+    brightness_percent: int
+    speed: int
+    argb_zone_size: int
+    save_mode: bool
+    sync_mode: int
+    temperature_limit: int
+    palette: str
+
+    def profile(self) -> dict[str, object]:
+        return {
+            "effect": self.effect,
+            "color": self.color,
+            "brightness_percent": self.brightness_percent,
+            "speed": self.speed,
+            "argb_zone_size": self.argb_zone_size,
+            "save_mode": self.save_mode,
+            "sync_mode": self.sync_mode,
+            "temperature_limit": self.temperature_limit,
+            "palette": self.palette,
+        }
+
+
+@dataclass(frozen=True)
+class _LightingApplyCommit:
+    target_ids: tuple[str, ...]
+    selected_target_id: str
+    snapshot: _LightingUiSnapshot
+
+
+@dataclass(frozen=True)
+class _LightingOperationResult:
+    message: str
+    targets: tuple[LightingTarget, ...] | None = None
+    update_target_controls: bool = False
+    apply_commit: _LightingApplyCommit | None = None
+    active_scene: str | None = None
+    argb_next_index: int | None = None
 
 
 def save_settings(settings: GuiSettings) -> None:
@@ -155,10 +208,12 @@ class OpenRgbTestDialog(QDialog):
         self._show_profiles()
 
     def apply_stable_static_red(self) -> None:
+        runtime = self.page._openrgb_runtime_snapshot()
+        zone_size = self.page.argb_zone_size.value()
         self.page._run_lighting_operation(
             "OpenRGB 测试：稳定静态红...",
             "openrgb_test_static_failed",
-            lambda: self.page._openrgb_test_static_red_from_worker(),
+            lambda: self.page._openrgb_test_static_red_from_worker(runtime, zone_size),
         )
 
     def apply_selected_target_red(self) -> None:
@@ -166,17 +221,21 @@ class OpenRgbTestDialog(QDialog):
         if not target_id:
             self.profile_text.setPlainText("请先连接 OpenRGB 并选择测试目标。")
             return
+        runtime = self.page._openrgb_runtime_snapshot()
+        zone_size = self.page.argb_zone_size.value()
         self.page._run_lighting_operation(
             "OpenRGB 测试：只亮选中目标...",
             "openrgb_test_target_failed",
-            lambda: self.page._openrgb_test_single_target_red_from_worker(target_id),
+            lambda: self.page._openrgb_test_single_target_red_from_worker(target_id, runtime, zone_size),
         )
 
     def turn_off_all(self) -> None:
+        runtime = self.page._openrgb_runtime_snapshot()
+        zone_size = self.page.argb_zone_size.value()
         self.page._run_lighting_operation(
             "OpenRGB 测试：全部关闭...",
             "openrgb_test_off_failed",
-            lambda: self.page._turn_off_all_lighting_from_worker(),
+            lambda: self.page._turn_off_all_lighting_from_worker(runtime, zone_size),
         )
 
     def _show_profiles(self) -> None:
@@ -201,7 +260,7 @@ class OpenRgbTestDialog(QDialog):
 
 class LightingPage(QWidget):
 
-    operation_finished = Signal(str, object)
+    operation_finished = Signal(object, object)
 
     status_changed = Signal(str)
 
@@ -1051,6 +1110,73 @@ class LightingPage(QWidget):
 
 
 
+    def replace_settings(self, settings: GuiSettings) -> None:
+        self.settings = settings
+        self.controller.host = settings.openrgb.host
+        self.controller.port = settings.openrgb.port
+        self.server_manager = OpenRgbServerManager(
+            settings.openrgb.app_path,
+            host=settings.openrgb.host,
+            port=settings.openrgb.port,
+        )
+        self._selected_scene_name = settings.lighting.active_scene
+        widgets = (
+            self.openrgb_host_input,
+            self.openrgb_port_input,
+            self.lighting_palette_combo,
+            self.selected_color_input,
+            self.brightness_slider,
+            self.speed_slider,
+            self.argb_zone_size,
+            self.save_mode_checkbox,
+            self.sync_mode_combo,
+            self.temperature_limit,
+            self.scene_combo,
+            self.effect_group,
+        )
+        previous = [widget.blockSignals(True) for widget in widgets]
+        try:
+            self.openrgb_host_input.setText(settings.openrgb.host)
+            self.openrgb_port_input.setValue(settings.openrgb.port)
+            self._restore_lighting_settings(settings.lighting)
+            self.scene_combo.clear()
+            self.scene_combo.addItems(sorted(settings.lighting.scenes))
+            if settings.lighting.active_scene:
+                self.scene_combo.setCurrentText(settings.lighting.active_scene)
+        finally:
+            for widget, blocked in zip(widgets, previous, strict=False):
+                widget.blockSignals(blocked)
+        self.selected_color = self.selected_color_input.text().strip()
+        self._update_lighting_swatches()
+        self._update_lighting_slider_labels()
+        self._update_scene_summary()
+        self._update_lighting_apply_preview()
+
+
+    def _openrgb_runtime_snapshot(self) -> _OpenRgbRuntimeSnapshot:
+        return _OpenRgbRuntimeSnapshot(
+            host=self.controller.host,
+            port=self.controller.port,
+            app_path=self.settings.openrgb.app_path,
+            auto_start_server=self.settings.openrgb.auto_start_server,
+        )
+
+
+    def _current_lighting_ui_snapshot(self, target_id: str) -> _LightingUiSnapshot:
+        return _LightingUiSnapshot(
+            target_id=target_id,
+            effect=self._selected_effect(),
+            color=self.selected_color_input.text().strip(),
+            brightness_percent=self.brightness_slider.value(),
+            speed=self.speed_slider.value(),
+            argb_zone_size=self.argb_zone_size.value(),
+            save_mode=self.save_mode_checkbox.isChecked(),
+            sync_mode=self.sync_mode_combo.currentIndex(),
+            temperature_limit=self.temperature_limit.value(),
+            palette=self._lighting_palette_key(),
+        )
+
+
     def connect_openrgb(self) -> None:
 
         self.controller.host = self.openrgb_host_input.text().strip() or "127.0.0.1"
@@ -1061,8 +1187,15 @@ class LightingPage(QWidget):
 
         self.settings.openrgb.port = self.controller.port
 
+        self.server_manager = OpenRgbServerManager(
+            self.settings.openrgb.app_path,
+            host=self.controller.host,
+            port=self.controller.port,
+        )
+
         save_settings(self.settings)
         self._show_lighting_saved_feedback("OpenRGB 连接设置已保存")
+        runtime = self._openrgb_runtime_snapshot()
 
         self._run_lighting_operation(
 
@@ -1070,7 +1203,7 @@ class LightingPage(QWidget):
 
             "openrgb_connect_failed",
 
-            lambda: self._connect_from_worker(),
+            lambda: self._connect_from_worker(runtime),
 
         )
 
@@ -1239,13 +1372,16 @@ class LightingPage(QWidget):
 
             return
 
+        runtime = self._openrgb_runtime_snapshot()
+        known_targets = tuple(self.targets)
+        scene_settings = self._scene_lighting_settings(scene)
         self._run_lighting_operation(
 
             f"正在应用场景：{name}",
 
             "openrgb_scene_apply_failed",
 
-            lambda: self._apply_scene_from_worker(name, scene),
+            lambda: self._apply_scene_from_worker(name, scene_settings, runtime, known_targets),
 
         )
 
@@ -1344,6 +1480,8 @@ class LightingPage(QWidget):
         self.save_next_argb_button.setVisible(True)
 
         self._select_target_by_id(targets[0].id)
+        target = targets[0]
+        restore = self._argb_wizard_restore[0]
 
         self._run_lighting_operation(
 
@@ -1351,7 +1489,7 @@ class LightingPage(QWidget):
 
             "openrgb_identify_argb_failed",
 
-            lambda: self._flash_argb_wizard_target_from_worker(targets[0]),
+            lambda: self._flash_argb_wizard_target_from_worker(target, restore, 0, len(targets)),
 
         )
 
@@ -1368,6 +1506,8 @@ class LightingPage(QWidget):
         self._save_current_target_alias()
 
         index = self._argb_wizard_index
+        targets = tuple(self._argb_wizard_targets)
+        restore = tuple(self._argb_wizard_restore)
 
         self._run_lighting_operation(
 
@@ -1375,13 +1515,14 @@ class LightingPage(QWidget):
 
             "openrgb_identify_argb_failed",
 
-            lambda: self._advance_argb_wizard_from_worker(index),
+            lambda: self._advance_argb_wizard_from_worker(index, targets, restore),
 
         )
 
 
 
     def refresh_openrgb_targets(self) -> None:
+        runtime = self._openrgb_runtime_snapshot()
 
         self._run_lighting_operation(
 
@@ -1389,7 +1530,7 @@ class LightingPage(QWidget):
 
             "openrgb_refresh_failed",
 
-            lambda: self._set_targets_from_worker(self._refresh_or_connect_openrgb_from_worker(), "已刷新"),
+            lambda: self._refresh_targets_from_worker(runtime),
 
         )
 
@@ -1430,6 +1571,7 @@ class LightingPage(QWidget):
         try:
 
             settings = self._current_lighting_settings(target_id)
+            snapshot = self._current_lighting_ui_snapshot(target_id)
 
         except Exception as error:
 
@@ -1439,6 +1581,7 @@ class LightingPage(QWidget):
 
         if not getattr(self.controller, "connected", False):
 
+            runtime = self._openrgb_runtime_snapshot()
 
             self._run_lighting_operation(
 
@@ -1446,7 +1589,7 @@ class LightingPage(QWidget):
 
                 "openrgb_connect_apply_failed",
 
-                lambda: self._connect_and_apply_from_worker(settings, apply_all),
+                lambda: self._connect_and_apply_from_worker(settings, apply_all, snapshot, runtime),
 
             )
 
@@ -1458,13 +1601,14 @@ class LightingPage(QWidget):
 
             return
 
+        runtime = self._openrgb_runtime_snapshot()
         self._run_lighting_operation(
 
             "正在应用灯效...",
 
             "openrgb_apply_failed",
 
-            lambda: self._apply_from_worker(settings, apply_all),
+            lambda: self._apply_from_worker(settings, apply_all, snapshot, runtime),
 
         )
 
@@ -1479,6 +1623,8 @@ class LightingPage(QWidget):
         self.brightness_slider.setValue(0)
 
         self.sync_mode_combo.setCurrentIndex(0)
+        runtime = self._openrgb_runtime_snapshot()
+        zone_size = self.argb_zone_size.value()
 
         self._run_lighting_operation(
 
@@ -1486,7 +1632,7 @@ class LightingPage(QWidget):
 
             "openrgb_turn_off_all_failed",
 
-            lambda: self._turn_off_all_lighting_from_worker(),
+            lambda: self._turn_off_all_lighting_from_worker(runtime, zone_size),
 
         )
 
@@ -1540,55 +1686,47 @@ class LightingPage(QWidget):
 
 
 
-    def _connect_from_worker(self) -> str:
+    def _ensure_openrgb_server_from_worker(self, runtime: _OpenRgbRuntimeSnapshot) -> None:
+        if runtime.auto_start_server:
+            OpenRgbServerManager(
+                runtime.app_path,
+                host=runtime.host,
+                port=runtime.port,
+            ).ensure_running()
 
-        if self.settings.openrgb.auto_start_server:
 
-            self.server_manager = OpenRgbServerManager(
+    def _connect_from_worker(self, runtime: _OpenRgbRuntimeSnapshot) -> _LightingOperationResult:
 
-                self.settings.openrgb.app_path,
-
-                host=self.controller.host,
-
-                port=self.controller.port,
-
-            )
-
-            self.server_manager.ensure_running()
+        self._ensure_openrgb_server_from_worker(runtime)
 
         targets = self.controller.connect()
 
-        self._set_targets_from_worker(targets, "已连接")
-
-        return f"已连接，发现 {len(targets)} 个目标，默认保持关闭"
-
-
-
-    def _set_targets_from_worker(self, targets: list[LightingTarget], prefix: str) -> str:
-
-        self.targets = targets
-
-        return f"{prefix}，发现 {len(targets)} 个目标"
+        return _LightingOperationResult(
+            f"已连接，发现 {len(targets)} 个目标，默认保持关闭",
+            targets=tuple(targets),
+            update_target_controls=True,
+        )
 
 
+    def _refresh_targets_from_worker(self, runtime: _OpenRgbRuntimeSnapshot) -> _LightingOperationResult:
 
-    def _refresh_or_connect_openrgb_from_worker(self) -> list[LightingTarget]:
+        targets = self._refresh_or_connect_openrgb_from_worker(runtime)
+
+        return _LightingOperationResult(f"已刷新，发现 {len(targets)} 个目标", targets=tuple(targets), update_target_controls=True)
+
+
+
+    def _set_targets_from_worker(self, targets: list[LightingTarget], prefix: str) -> _LightingOperationResult:
+
+        return _LightingOperationResult(f"{prefix}，发现 {len(targets)} 个目标", targets=tuple(targets), update_target_controls=True)
+
+
+
+    def _refresh_or_connect_openrgb_from_worker(self, runtime: _OpenRgbRuntimeSnapshot) -> list[LightingTarget]:
 
         if not getattr(self.controller, "connected", False):
 
-            if self.settings.openrgb.auto_start_server:
-
-                self.server_manager = OpenRgbServerManager(
-
-                    self.settings.openrgb.app_path,
-
-                    host=self.controller.host,
-
-                    port=self.controller.port,
-
-                )
-
-                self.server_manager.ensure_running()
+            self._ensure_openrgb_server_from_worker(runtime)
 
             targets = self.controller.connect()
 
@@ -1606,13 +1744,9 @@ class LightingPage(QWidget):
 
                     disconnect()
 
-                if self.settings.openrgb.auto_start_server:
-
-                    self.server_manager.ensure_running()
+                self._ensure_openrgb_server_from_worker(runtime)
 
                 targets = self.controller.connect()
-
-        self.targets = targets
 
         return targets
 
@@ -1746,7 +1880,12 @@ class LightingPage(QWidget):
 
 
 
-    def _remember_lighting_settings_for_targets(self, target_ids: list[str], selected_target_id: str) -> None:
+    def _remember_lighting_settings_for_targets(
+        self,
+        target_ids: tuple[str, ...],
+        selected_target_id: str,
+        snapshot: _LightingUiSnapshot,
+    ) -> None:
 
         if not target_ids:
 
@@ -1754,45 +1893,25 @@ class LightingPage(QWidget):
 
         self.settings.lighting.target_id = selected_target_id if selected_target_id in target_ids else target_ids[0]
 
-        self.settings.lighting.effect = self._selected_effect()
+        self.settings.lighting.effect = snapshot.effect
 
-        self.settings.lighting.color = self.selected_color_input.text().strip()
+        self.settings.lighting.color = snapshot.color
 
-        self.settings.lighting.brightness_percent = self.brightness_slider.value()
+        self.settings.lighting.brightness_percent = snapshot.brightness_percent
 
-        self.settings.lighting.speed = self.speed_slider.value()
+        self.settings.lighting.speed = snapshot.speed
 
-        self.settings.lighting.argb_zone_size = self.argb_zone_size.value()
+        self.settings.lighting.argb_zone_size = snapshot.argb_zone_size
 
-        self.settings.lighting.save_mode = self.save_mode_checkbox.isChecked()
+        self.settings.lighting.save_mode = snapshot.save_mode
 
-        self.settings.lighting.sync_mode = self.sync_mode_combo.currentIndex()
+        self.settings.lighting.sync_mode = snapshot.sync_mode
 
-        self.settings.lighting.temperature_limit = self.temperature_limit.value()
+        self.settings.lighting.temperature_limit = snapshot.temperature_limit
 
-        self.settings.lighting.palette = self._lighting_palette_key()
+        self.settings.lighting.palette = snapshot.palette
 
-        profile = {
-
-            "effect": self.settings.lighting.effect,
-
-            "color": self.settings.lighting.color,
-
-            "brightness_percent": self.settings.lighting.brightness_percent,
-
-            "speed": self.settings.lighting.speed,
-
-            "argb_zone_size": self.settings.lighting.argb_zone_size,
-
-            "save_mode": self.settings.lighting.save_mode,
-
-            "sync_mode": self.settings.lighting.sync_mode,
-
-            "temperature_limit": self.settings.lighting.temperature_limit,
-
-            "palette": self.settings.lighting.palette,
-
-        }
+        profile = snapshot.profile()
 
         for target_id in target_ids:
 
@@ -1818,9 +1937,15 @@ class LightingPage(QWidget):
 
 
 
-    def _apply_from_worker(self, settings: LightingSettings, apply_all: bool = False) -> str:
+    def _apply_from_worker(
+        self,
+        settings: LightingSettings,
+        apply_all: bool,
+        snapshot: _LightingUiSnapshot,
+        runtime: _OpenRgbRuntimeSnapshot,
+    ) -> _LightingOperationResult:
 
-        targets = self._refresh_or_connect_openrgb_from_worker()
+        targets = self._refresh_or_connect_openrgb_from_worker(runtime)
 
         target_ids = self._resolve_lighting_apply_target_ids(settings, targets, apply_all)
 
@@ -1830,25 +1955,27 @@ class LightingPage(QWidget):
 
             raise RuntimeError("; ".join(errors) or "OpenRGB 没有成功应用任何目标")
 
-        self._remember_lighting_settings_for_targets(applied, settings.target_id)
+        return _LightingOperationResult(
+            self._lighting_apply_message(applied, errors),
+            targets=tuple(targets),
+            apply_commit=_LightingApplyCommit(tuple(applied), settings.target_id, snapshot),
+        )
 
-        return self._lighting_apply_message(applied, errors)
 
 
+    def _turn_off_all_lighting_from_worker(
+        self,
+        runtime: _OpenRgbRuntimeSnapshot,
+        zone_size: int,
+    ) -> _LightingOperationResult:
 
-    def _turn_off_all_lighting_from_worker(self) -> str:
-
-        if self.settings.openrgb.auto_start_server:
-
-            self.server_manager.ensure_running()
+        self._ensure_openrgb_server_from_worker(runtime)
 
         targets = self.controller.refresh() if self.controller.connected else self.controller.connect()
 
-        self.targets = targets
-
         if not targets:
 
-            return "OpenRGB 未发现灯光设备"
+            return _LightingOperationResult("OpenRGB 未发现灯光设备", targets=tuple(), update_target_controls=True)
 
         targets_to_disable = [target for target in targets if target.zone_index is None] or targets
 
@@ -1868,7 +1995,7 @@ class LightingPage(QWidget):
 
                     speed_percent=0,
 
-                    zone_size=self.argb_zone_size.value(),
+                    zone_size=zone_size,
 
                     save=False,
 
@@ -1876,12 +2003,20 @@ class LightingPage(QWidget):
 
             )
 
-        return f"所有灯光已关闭：{len(targets_to_disable)} 个目标"
+        return _LightingOperationResult(
+            f"所有灯光已关闭：{len(targets_to_disable)} 个目标",
+            targets=tuple(targets),
+            update_target_controls=True,
+        )
 
 
-    def _openrgb_test_static_red_from_worker(self) -> str:
+    def _openrgb_test_static_red_from_worker(
+        self,
+        runtime: _OpenRgbRuntimeSnapshot,
+        zone_size: int,
+    ) -> _LightingOperationResult:
 
-        targets = self._refresh_or_connect_openrgb_from_worker()
+        targets = self._refresh_or_connect_openrgb_from_worker(runtime)
 
         whole_targets = [target for target in targets if target.zone_index is None] or targets
 
@@ -1901,7 +2036,7 @@ class LightingPage(QWidget):
 
                     speed_percent=50,
 
-                    zone_size=self.argb_zone_size.value(),
+                    zone_size=zone_size,
 
                     save=False,
 
@@ -1909,12 +2044,17 @@ class LightingPage(QWidget):
 
             )
 
-        return f"OpenRGB 测试完成：稳定静态红 {len(whole_targets)} 个目标"
+        return _LightingOperationResult(f"OpenRGB 测试完成：稳定静态红 {len(whole_targets)} 个目标", targets=tuple(targets))
 
 
-    def _openrgb_test_single_target_red_from_worker(self, target_id: str) -> str:
+    def _openrgb_test_single_target_red_from_worker(
+        self,
+        target_id: str,
+        runtime: _OpenRgbRuntimeSnapshot,
+        zone_size: int,
+    ) -> _LightingOperationResult:
 
-        targets = self._refresh_or_connect_openrgb_from_worker()
+        targets = self._refresh_or_connect_openrgb_from_worker(runtime)
 
         if not any(target.id == target_id for target in targets):
 
@@ -1934,7 +2074,7 @@ class LightingPage(QWidget):
 
                 speed_percent=50,
 
-                zone_size=self.argb_zone_size.value(),
+                zone_size=zone_size,
 
                 save=False,
 
@@ -1942,23 +2082,25 @@ class LightingPage(QWidget):
 
         )
 
-        return f"OpenRGB 测试完成：{target_id} 静态红"
+        return _LightingOperationResult(f"OpenRGB 测试完成：{target_id} 静态红", targets=tuple(targets))
 
 
 
-    def _connect_and_apply_from_worker(self, settings: LightingSettings, apply_all: bool = False) -> str:
+    def _connect_and_apply_from_worker(
+        self,
+        settings: LightingSettings,
+        apply_all: bool,
+        snapshot: _LightingUiSnapshot,
+        runtime: _OpenRgbRuntimeSnapshot,
+    ) -> _LightingOperationResult:
 
-        targets = self._refresh_or_connect_openrgb_from_worker()
+        targets = self._refresh_or_connect_openrgb_from_worker(runtime)
 
         if not targets:
 
-            self.targets = []
-
-            return "OpenRGB 未发现灯光设备"
+            return _LightingOperationResult("OpenRGB 未发现灯光设备", targets=tuple(), update_target_controls=True)
 
         target_ids = self._resolve_lighting_apply_target_ids(settings, targets, apply_all)
-
-        self.targets = targets
 
         applied, errors = self._apply_lighting_settings_to_targets(settings, target_ids)
 
@@ -1966,11 +2108,14 @@ class LightingPage(QWidget):
 
             raise RuntimeError("; ".join(errors) or "OpenRGB 没有成功应用任何目标")
 
-        self._remember_lighting_settings_for_targets(applied, settings.target_id)
-
         message = self._lighting_apply_message(applied, errors, connected=True)
 
-        return f"{message}，发现 {len(targets)} 个目标"
+        return _LightingOperationResult(
+            f"{message}，发现 {len(targets)} 个目标",
+            targets=tuple(targets),
+            update_target_controls=True,
+            apply_commit=_LightingApplyCommit(tuple(applied), settings.target_id, snapshot),
+        )
 
 
 
@@ -2000,61 +2145,66 @@ class LightingPage(QWidget):
 
             return False
 
-        return self._apply_scene_payload(scene, targets) > 0
+        return self._apply_scene_payload(self._scene_lighting_settings(scene), targets) > 0
 
 
 
-    def _apply_scene_from_worker(self, name: str, scene: dict) -> str:
+    def _scene_lighting_settings(self, scene: dict) -> tuple[LightingSettings, ...]:
+        profiles = scene.get("targets")
+        if not isinstance(profiles, dict):
+            return ()
+        return tuple(
+            self._settings_from_profile(str(target_id), profile)
+            for target_id, profile in profiles.items()
+            if isinstance(profile, dict)
+        )
+
+
+    def _apply_scene_from_worker(
+        self,
+        name: str,
+        scene_settings: tuple[LightingSettings, ...],
+        runtime: _OpenRgbRuntimeSnapshot,
+        known_targets: tuple[LightingTarget, ...],
+    ) -> _LightingOperationResult:
 
         if not self.controller.connected:
 
-            if self.settings.openrgb.auto_start_server:
-
-                self.server_manager.ensure_running()
+            self._ensure_openrgb_server_from_worker(runtime)
 
             targets = self.controller.connect()
 
-            self.targets = targets
-
         else:
 
-            targets = self.targets or self.controller.refresh()
+            targets = list(known_targets) or self.controller.refresh()
 
-        applied_count = self._apply_scene_payload(scene, targets)
+        applied_count = self._apply_scene_payload(scene_settings, targets)
 
         if not applied_count:
 
-            return f"场景没有匹配当前 OpenRGB 目标：{name}"
+            return _LightingOperationResult(f"场景没有匹配当前 OpenRGB 目标：{name}", targets=tuple(targets))
 
-        self.settings.lighting.active_scene = name
-
-        self._selected_scene_name = name
-
-        save_settings(self.settings)
-
-        return f"场景已应用：{name}，{applied_count} 个区域"
+        return _LightingOperationResult(
+            f"场景已应用：{name}，{applied_count} 个区域",
+            targets=tuple(targets),
+            active_scene=name,
+        )
 
 
 
-    def _apply_scene_payload(self, scene: dict, targets: list[LightingTarget]) -> int:
+    def _apply_scene_payload(self, scene_settings: tuple[LightingSettings, ...], targets: list[LightingTarget]) -> int:
 
         target_ids = {target.id for target in targets}
 
-        profiles = scene.get("targets")
-
-        if not isinstance(profiles, dict):
-
-            return 0
-
         applied_count = 0
 
-        for target_id, profile in profiles.items():
+        for settings in scene_settings:
 
-            if target_id not in target_ids or not isinstance(profile, dict):
+            if settings.target_id not in target_ids:
 
                 continue
 
-            self.controller.apply(self._settings_from_profile(str(target_id), profile))
+            self.controller.apply(settings)
 
             applied_count += 1
 
@@ -2098,9 +2248,14 @@ class LightingPage(QWidget):
 
 
 
-    def _flash_argb_wizard_target_from_worker(self, target: LightingTarget) -> str:
+    def _flash_argb_wizard_target_from_worker(
+        self,
+        target: LightingTarget,
+        restore: LightingSettings,
+        index: int,
+        total: int,
+    ) -> _LightingOperationResult:
 
-        restore = self._argb_wizard_restore[self._argb_wizard_index]
 
         self.controller.apply(
 
@@ -2122,31 +2277,32 @@ class LightingPage(QWidget):
 
         )
 
-        return f"ARGB 向导：当前 {self._argb_wizard_index + 1}/{len(self._argb_wizard_targets)}，输入名称后点保存并下一步"
+        return _LightingOperationResult(f"ARGB 向导：当前 {index + 1}/{total}，输入名称后点保存并下一步")
 
 
 
-    def _advance_argb_wizard_from_worker(self, index: int) -> str:
+    def _advance_argb_wizard_from_worker(
+        self,
+        index: int,
+        targets: tuple[LightingTarget, ...],
+        restore_settings: tuple[LightingSettings, ...],
+    ) -> _LightingOperationResult:
 
-        if index >= len(self._argb_wizard_restore):
+        if index >= len(restore_settings):
 
-            return "ARGB 命名完成"
+            return _LightingOperationResult("ARGB 命名完成", argb_next_index=-1)
 
-        self.controller.apply(self._argb_wizard_restore[index])
+        self.controller.apply(restore_settings[index])
 
         next_index = index + 1
 
-        if next_index >= len(self._argb_wizard_targets):
+        if next_index >= len(targets):
 
-            self._argb_wizard_index = -1
+            return _LightingOperationResult("ARGB 命名完成", argb_next_index=-1)
 
-            return "ARGB 命名完成"
+        target = targets[next_index]
 
-        self._argb_wizard_index = next_index
-
-        target = self._argb_wizard_targets[next_index]
-
-        restore = self._argb_wizard_restore[next_index]
+        restore = restore_settings[next_index]
 
         self.controller.apply(
 
@@ -2168,11 +2324,14 @@ class LightingPage(QWidget):
 
         )
 
-        return f"ARGB 向导：当前 {next_index + 1}/{len(self._argb_wizard_targets)}，输入名称后点保存并下一步"
+        return _LightingOperationResult(
+            f"ARGB 向导：当前 {next_index + 1}/{len(targets)}，输入名称后点保存并下一步",
+            argb_next_index=next_index,
+        )
 
 
 
-    def _lighting_operation_finished(self, message: str, error: object) -> None:
+    def _lighting_operation_finished(self, result: object, error: object) -> None:
 
         next_operation = self._lighting_operation_queue.complete_current()
 
@@ -2191,9 +2350,34 @@ class LightingPage(QWidget):
 
             return
 
-        if message.startswith(("已连接", "已刷新", "场景已应用", "所有灯光已关闭")):
+        operation_result = result if isinstance(result, _LightingOperationResult) else _LightingOperationResult(str(result))
+        message = operation_result.message
 
-            self._set_targets(self.targets)
+        if operation_result.targets is not None:
+
+            self.targets = list(operation_result.targets)
+
+        if operation_result.update_target_controls or message.startswith(("已连接", "已刷新", "场景已应用", "所有灯光已关闭")):
+
+            self._set_targets(list(operation_result.targets or self.targets))
+
+        if operation_result.apply_commit is not None:
+
+            commit = operation_result.apply_commit
+
+            self._remember_lighting_settings_for_targets(commit.target_ids, commit.selected_target_id, commit.snapshot)
+
+        if operation_result.active_scene is not None:
+
+            self.settings.lighting.active_scene = operation_result.active_scene
+
+            self._selected_scene_name = operation_result.active_scene
+
+            save_settings(self.settings)
+
+        if operation_result.argb_next_index is not None:
+
+            self._argb_wizard_index = operation_result.argb_next_index
 
         if message.startswith(("灯效已应用", "已连接并应用灯效")):
 

@@ -22,6 +22,9 @@ usb9-lcd = "usb9_lcd.cli:main"
 dev = [
   "pytest>=8.0",
 ]
+build = [
+  "pyinstaller>=6.0",
+]
 lianli = [
   "pyusb>=1.2",
   "pycryptodomex>=3.20",

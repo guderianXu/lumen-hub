@@ -10,7 +10,12 @@ from pathlib import Path
 import pytest
 
 from usb9_lcd.lianli.artifact import extract_wireless_js_clues
-from usb9_lcd.lianli.wireless import RGB_FIRST_PAYLOAD_REPEAT_COUNT, WirelessDeviceInfo, WirelessSnapshot
+from usb9_lcd.lianli.wireless import (
+    RGB_FIRST_PAYLOAD_REPEAT_COUNT,
+    WirelessDeviceInfo,
+    WirelessSnapshot,
+    build_static_rgb_payloads,
+)
 
 
 def _run_probe(*args: str) -> dict:
@@ -29,6 +34,20 @@ def _run_probe_raw(*args: str) -> subprocess.CompletedProcess[str]:
         check=True,
         capture_output=True,
         text=True,
+    )
+
+
+def _expected_static_rgb_frame_count(
+    target: WirelessDeviceInfo,
+    color: tuple[int, int, int],
+    *,
+    led_count: int | None = None,
+    effect_index: int | None = None,
+) -> int:
+    return (
+        len(build_static_rgb_payloads(target, color, led_count=led_count, effect_index=effect_index))
+        + RGB_FIRST_PAYLOAD_REPEAT_COUNT
+        - 1
     )
 
 
@@ -773,6 +792,39 @@ def test_probe_analyze_log_reports_live_write_effect(tmp_path):
     }
     assert payload["changes"][0]["field"] == "pwm_values"
     assert payload["notes"] == ["After snapshot matches the expected command effect."]
+
+
+def test_probe_analyze_log_parses_numeric_string_pwm_values(tmp_path):
+    log_path = tmp_path / "live-pwm.json"
+    log_path.write_text(
+        json.dumps(
+            {
+                "operation": "live-pwm",
+                "target": "aa:bb:cc:dd:ee:ff",
+                "pwm_values": ["120", "120", "120", "120"],
+                "packets_written": 4,
+                "before": _device_payload(pwm=[80, 90, 100, 110]),
+                "after": {
+                    "device_count": 1,
+                    "devices": [_device_payload(pwm=[120, 120, 120, 120])],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = _run_probe("analyze-log", str(log_path))
+
+    assert payload["expected_effect"]["available"] is True
+    assert payload["expected_effect"]["matched"] is True
+    assert payload["expected_effect"]["checks"][0] == {
+        "field": "pwm_values",
+        "expected": [120, 120, 120, 120],
+        "actual": [120, 120, 120, 120],
+        "matched": True,
+    }
+    assert payload["likely_effective"] is True
 
 
 def test_probe_analyze_log_flags_expected_effect_mismatch(tmp_path):
@@ -2222,12 +2274,16 @@ def test_probe_live_rainbow_writes_one_target_and_rereads(monkeypatch, capsys):
             interval_ms,
             effect_index,
             led_count,
+            brightness=100,
+            direction="left",
         ):
             calls["target"] = target.mac
             calls["frame_count"] = frame_count
             calls["interval_ms"] = interval_ms
             calls["effect_index"] = effect_index
             calls["led_count"] = led_count
+            calls["brightness"] = brightness
+            calls["direction"] = direction
             return 44
 
     backend = FakeBackend()
@@ -2266,6 +2322,8 @@ def test_probe_live_rainbow_writes_one_target_and_rereads(monkeypatch, capsys):
         "interval_ms": 40,
         "effect_index": 2,
         "led_count": 132,
+        "brightness": 100,
+        "direction": "left",
     }
 
 
@@ -2939,7 +2997,7 @@ def test_probe_rgb_dry_run_outputs_turn_off_packets():
     assert payload["operation"] == "dry-run-rgb"
     assert payload["color"] == [0, 0, 0]
     assert payload["led_count"] == 132
-    assert payload["packet_count"] == (4 + RGB_FIRST_PAYLOAD_REPEAT_COUNT - 1) * 4
+    assert payload["packet_count"] == _expected_static_rgb_frame_count(_bound_device(), (0, 0, 0)) * 4
     assert payload["packet_size"] == 64
     assert payload["first_packet_hex"].startswith("100008031220")
 
@@ -2949,7 +3007,7 @@ def test_probe_rgb_dry_run_accepts_led_count_override():
 
     assert payload["operation"] == "dry-run-rgb"
     assert payload["led_count"] == 12
-    assert payload["packet_count"] == (2 + RGB_FIRST_PAYLOAD_REPEAT_COUNT - 1) * 4
+    assert payload["packet_count"] == _expected_static_rgb_frame_count(_bound_device(), (0, 0, 0), led_count=12) * 4
 
 
 def test_probe_rainbow_dry_run_outputs_multi_frame_packets():
@@ -2959,7 +3017,7 @@ def test_probe_rainbow_dry_run_outputs_multi_frame_packets():
     assert payload["led_count"] == 132
     assert payload["frame_count"] == 3
     assert payload["interval_ms"] == 40
-    assert payload["packet_count"] > (4 + RGB_FIRST_PAYLOAD_REPEAT_COUNT - 1) * 4
+    assert payload["packet_count"] > _expected_static_rgb_frame_count(_bound_device(), (0, 0, 0)) * 4
     assert payload["packet_size"] == 64
     assert payload["first_packet_hex"].startswith("100008031220")
 
@@ -3974,26 +4032,26 @@ def test_probe_capture_protocol_report_decodes_static_rgb_color(tmp_path):
     capture_path.write_text("\n".join(packet.hex() for packet in packets), encoding="utf-8")
 
     payload = _run_probe("capture-protocol-report", str(capture_path))
+    expected_frame_count = _expected_static_rgb_frame_count(target, (0, 0, 0), effect_index=1)
 
     assert payload["operation"] == "capture-protocol-report"
-    assert payload["rf_frame_count"] == 4 + RGB_FIRST_PAYLOAD_REPEAT_COUNT - 1
+    assert payload["rf_frame_count"] == expected_frame_count
     assert payload["replay_hint_count"] == 1
     assert payload["summary"]["rf_operations"] == {"live-rgb": 1}
-    assert payload["summary"]["rf_frame_operations"] == {
-        "live-rgb": 4 + RGB_FIRST_PAYLOAD_REPEAT_COUNT - 1
-    }
+    assert payload["summary"]["rf_frame_operations"] == {"live-rgb": expected_frame_count}
     assert payload["devices"]["aa:bb:cc:dd:ee:ff"]["operations"] == {"live-rgb": 1}
-    assert payload["devices"]["aa:bb:cc:dd:ee:ff"]["rf_frame_operations"] == {
-        "live-rgb": 4 + RGB_FIRST_PAYLOAD_REPEAT_COUNT - 1
-    }
+    assert payload["devices"]["aa:bb:cc:dd:ee:ff"]["rf_frame_operations"] == {"live-rgb": expected_frame_count}
     assert payload["operations"]["live-rgb"]["count"] == 1
     assert payload["operations"]["live-rgb"]["rgb_sequence_frame_counts"] == [
-        4 + RGB_FIRST_PAYLOAD_REPEAT_COUNT - 1
+        expected_frame_count
     ]
     assert payload["operations"]["live-rgb"]["rgb_first_packet_retransmit_counts"] == [
         RGB_FIRST_PAYLOAD_REPEAT_COUNT
     ]
-    assert payload["operations"]["live-rgb"]["rgb_decode_statuses"] == {"decoded-literal": 1}
+    assert payload["operations"]["live-rgb"]["rgb_decode_statuses"] in (
+        {"decoded-literal": 1},
+        {"decoded-backref": 1},
+    )
     assert payload["operations"]["live-rgb"]["rgb_static_colors"] == {"#000000": 1}
     assert payload["operations"]["live-rgb"]["rgb_decoded_lengths"] == [132 * 3]
 

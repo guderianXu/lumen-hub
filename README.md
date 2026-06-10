@@ -84,6 +84,45 @@ lumen-hub-gui
 
 The desktop GUI supports a dark monitoring dashboard, local asset library, static image upload, animated asset playback for the detected ASUS LCD, OpenRGB lighting, PWM fan control, and an experimental LIAN LI wireless page. The display model and preview geometry are device-aware, so future screens can provide different sizes, shapes, pixel styles, and protocols through separate drivers.
 
+## 打包成可双击程序
+
+项目提供 PyInstaller 一键打包脚本。默认输出目录版程序，比单文件模式更适合 PySide6/Qt，启动也更快。
+
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/build-exe.ps1 -Clean
+.\dist\LumenHub\LumenHub.exe
+```
+
+Windows 发布 zip:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/package-release.ps1 -Clean
+```
+
+输出文件默认在 `release\LumenHub-windows-x64.zip`。解压后可运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-app.ps1 -DesktopShortcut
+```
+
+Linux:
+
+```bash
+bash packaging/linux/build-executable.sh --clean
+./dist/LumenHub/lumen-hub
+```
+
+Linux 一键构建并安装到当前用户：
+
+```bash
+bash packaging/linux/install-app.sh --clean --skip-install
+lumen-hub-gui
+```
+
+首次打包会创建 `.build/package-venv`，安装项目依赖、联力 USB 可选依赖和 PyInstaller。已经在当前 Python 环境装好依赖时，可以追加 `--skip-install` 跳过虚拟环境安装。需要单文件程序时，Windows 使用 `-OneFile`，Linux 使用 `--onefile`；`packaging/linux/install-app.sh --onefile` 会安装 `dist/lumen-hub` 单文件产物。
+
 ## 安装与自启动
 
 Linux 桌面入口和权限样例放在 `packaging/linux/`：
@@ -101,13 +140,14 @@ sudo install -Dm644 packaging/linux/lumen-hub-tmpfiles.conf /etc/tmpfiles.d/lume
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/lumen-hub-pwm.conf
 ```
 
-`packaging/linux/lumen-hub.desktop` 调用安装后的 `lumen-hub-gui` 入口；`packaging/linux/lumen-hub-udev.rules` 覆盖 ASUS LCD、OpenRGB i2c 访问和联力无线 USB 权限；`packaging/linux/lumen-hub-tmpfiles.conf` 用于让普通用户组写入 Linux hwmon `pwm*` 风扇控制节点。修改 udev/tmpfiles 后建议重新插拔相关 USB 设备并重新打开软件。
+`packaging/linux/lumen-hub.desktop` 调用安装后的 `lumen-hub-gui` 入口；`packaging/linux/lumen-hub-udev.rules` 默认只覆盖 ASUS LCD 和联力无线 USB 权限。OpenRGB i2c/SMBus 访问权限过宽，规则文件中仅保留注释示例；确实需要时请按本机总线和用户组单独创建本地规则。`packaging/linux/lumen-hub-tmpfiles.conf` 用于让普通用户组写入 Linux hwmon `pwm*` 风扇控制节点。修改 udev/tmpfiles 后建议重新插拔相关 USB 设备并重新打开软件。
 
 Windows 自启动脚本放在 `packaging/windows/lumen-hub-autostart.ps1`：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging/windows/lumen-hub-autostart.ps1
 powershell -ExecutionPolicy Bypass -File packaging/windows/lumen-hub-autostart.ps1 -Mode ScheduledTask
+powershell -ExecutionPolicy Bypass -File packaging/windows/lumen-hub-autostart.ps1 -Command "$PWD\dist\LumenHub\LumenHub.exe"
 powershell -ExecutionPolicy Bypass -File packaging/windows/lumen-hub-autostart.ps1 -Uninstall
 ```
 
@@ -133,7 +173,7 @@ PWM 风扇写入权限可以在 GUI 的 `风扇` 页诊断。Linux 下软件启�
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/lumen-hub-pwm.conf
 ```
 
-OpenRGB 灯效页默认保持关闭；连接 OpenRGB SDK Server 后才会应用灯效。联力无线页目前仍是实验性功能，默认只读，写入必须启用复选框并输入确认令牌。
+OpenRGB 灯效页默认保持关闭；连接 OpenRGB SDK Server 后才会应用灯效。联力无线页目前仍是实验性功能，默认只读；真实写入需要勾选“允许联力真实写入”，生产 GUI 还会要求先通过写入门禁。联力风扇温度曲线不会自动恢复写入状态，必须在本次会话里显式启用“自动温度曲线写入”。
 
 ## 开发验证
 

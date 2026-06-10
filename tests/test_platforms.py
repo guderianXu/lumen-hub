@@ -171,7 +171,9 @@ def test_linux_install_artifacts_define_gui_entrypoint_and_permissions():
     assert "1cbe" in udev and "0006" in udev
     assert 'GROUP="plugdev"' in udev
     assert 'TAG+="uaccess"' in udev
-    assert "OpenRGB" in udev and "i2c-dev" in udev
+    active_udev_lines = [line for line in udev.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    assert not any("i2c" in line for line in active_udev_lines)
+    assert "OpenRGB" in udev and "i2c-dev" in udev and "optional" in udev.lower()
     assert "pwm*" in tmpfiles
     assert "pwm*_enable" in tmpfiles
     assert "plugdev" in tmpfiles

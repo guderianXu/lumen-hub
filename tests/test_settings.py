@@ -42,6 +42,42 @@ def test_settings_saves_config_version_and_device_profiles(tmp_path):
     assert payload["lighting"]["device_profiles"]["device:0"]["key"] == "asus-rog-strix-b850-a"
 
 
+def test_settings_does_not_restore_lianli_write_enable(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings = GuiSettings()
+    settings.lianli_wireless.write_enabled = True
+
+    save_settings(settings, settings_path)
+    loaded = load_settings(settings_path)
+
+    assert loaded.lianli_wireless.write_enabled is False
+
+
+def test_settings_round_trips_lianli_auto_curve_enable(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings = GuiSettings()
+    settings.lianli_wireless.auto_curve_enabled = True
+
+    save_settings(settings, settings_path)
+    loaded = load_settings(settings_path)
+
+    assert loaded.lianli_wireless.auto_curve_enabled is True
+
+
+def test_settings_round_trips_lianli_fan_curve_profiles(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings = GuiSettings()
+    settings.lianli_wireless.fan_curve_profiles["quiet"] = [[30, 320], [60, 760], [90, 1200]]
+    settings.lianli_wireless.fan_curve_profiles["normal"] = [[30, 520], [60, 1040], [90, 1600]]
+
+    save_settings(settings, settings_path)
+    loaded = load_settings(settings_path)
+
+    assert loaded.lianli_wireless.fan_curve_profiles["quiet"] == [[30, 320], [60, 760], [90, 1200]]
+    assert loaded.lianli_wireless.fan_curve_profiles["normal"] == [[30, 520], [60, 1040], [90, 1600]]
+    assert {"quiet", "normal", "high", "full", "custom"} <= set(loaded.lianli_wireless.fan_curve_profiles)
+
+
 def test_openrgb_profile_matches_asus_b850a_behavior():
     profile = profile_for_device_name("ASUS ROG STRIX B850-A GAMING WIFI S")
 

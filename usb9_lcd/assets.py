@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import copy2
@@ -51,6 +52,16 @@ DEFAULT_LINKS = [
 ]
 
 
+def bundled_asset_root() -> Path:
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+    return bundle_root / "assets"
+
+
+def bundled_asset_path(relative_path: str | Path = "") -> Path:
+    path = Path(relative_path)
+    return bundled_asset_root() / path if path != Path(".") else bundled_asset_root()
+
+
 @dataclass(frozen=True)
 class AssetLink:
     title: str
@@ -73,8 +84,8 @@ class MediaAsset:
 
 
 class AssetLibrary:
-    def __init__(self, root: Path | str = Path("assets")) -> None:
-        self.root = Path(root)
+    def __init__(self, root: Path | str | None = None) -> None:
+        self.root = Path(root) if root is not None else bundled_asset_root()
         self.presets_dir = self.root / "presets"
         self.user_dir = self.root / "user"
         self.monitor_backgrounds_dir = self.root / "monitor_backgrounds"

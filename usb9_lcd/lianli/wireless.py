@@ -73,6 +73,10 @@ class LianLiWirelessError(ValueError):
     pass
 
 
+class _ReceiverSnapshotShortReadError(LianLiWirelessError):
+    pass
+
+
 class WirelessReceiverTransport(Protocol):
     def write(self, payload: bytes) -> int: ...
 
@@ -452,7 +456,9 @@ class LianLiWirelessBackend:
     def list_devices(self, *, page_count: int = 1) -> WirelessSnapshot:
         if self.receiver is None:
             raise LianLiWirelessError("receiver transport is not configured")
+        page_count = max(1, min(255, int(page_count)))
         request = build_wireless_list_request(page_count)
+        snapshot_length = expected_snapshot_length(page_count)
         last_error: Exception | None = None
         for attempt in range(3):
             try:
@@ -461,26 +467,24 @@ class LianLiWirelessBackend:
                     raise LianLiWirelessError(
                         f"incomplete receiver request write ({written}/{len(request)})"
                     )
-                raw = self.receiver.read(64)
+                raw = self.receiver.read(snapshot_length)
                 if not raw:
                     return WirelessSnapshot(devices=[], raw=raw)
                 if raw[0] != RF_GET_DEV_CMD:
                     # Some receiver firmware revisions intermittently return a transient
                     # empty/status frame (e.g. 0x00) before the real snapshot frame.
                     for _ in range(2):
-                        follow = self.receiver.read(64)
+                        follow = self.receiver.read(snapshot_length)
                         if follow and follow[0] == RF_GET_DEV_CMD:
                             raw = follow
                             break
                     if raw[0] != RF_GET_DEV_CMD:
                         raise LianLiWirelessError(f"unexpected RF snapshot header 0x{raw[0]:02x}")
-                reported_count = int(raw[1]) if len(raw) > 1 else 0
-                max_count = max(1, int(page_count)) * MAX_DEVICES_PER_PAGE
-                record_count = max(0, min(reported_count, max_count))
-                expected_length = 4 + record_count * 42
-                while len(raw) < expected_length:
-                    raw += self.receiver.read(min(64, expected_length - len(raw)))
+                raw = self._finish_receiver_snapshot_read(raw, snapshot_length)
                 return WirelessSnapshot(devices=parse_wireless_snapshot(raw), raw=raw)
+            except _ReceiverSnapshotShortReadError as error:
+                last_error = error
+                break
             except Exception as error:
                 last_error = error
                 # Receiver reads can transiently return stale/invalid headers (0x00/0xff) or overflow.
@@ -492,6 +496,19 @@ class LianLiWirelessBackend:
         if last_error is None:
             raise LianLiWirelessError("receiver snapshot read failed")
         raise last_error
+
+    def _finish_receiver_snapshot_read(self, raw: bytes, expected_length: int) -> bytes:
+        if self.receiver is None:
+            raise LianLiWirelessError("receiver transport is not configured")
+        while len(raw) < expected_length:
+            remaining = expected_length - len(raw)
+            chunk = self.receiver.read(remaining)
+            if not chunk:
+                raise _ReceiverSnapshotShortReadError(
+                    f"receiver snapshot read returned no data with {remaining} byte(s) remaining"
+                )
+            raw += chunk
+        return raw
 
     def query_master_mac(self, *, channel: int = 8) -> tuple[str, int | None] | None:
         if self.sender is None:
@@ -1130,18 +1147,23 @@ class PyUsbEndpointTransport:
 
 
 def create_pyusb_backend(timeout_ms: int = 1000) -> LianLiWirelessBackend:
-    return LianLiWirelessBackend(
-        sender=PyUsbEndpointTransport(
-            RF_SENDER_VID,
-            RF_SENDER_PID,
-            timeout_ms=timeout_ms,
-        ),
-        receiver=PyUsbEndpointTransport(
+    sender = PyUsbEndpointTransport(
+        RF_SENDER_VID,
+        RF_SENDER_PID,
+        timeout_ms=timeout_ms,
+    )
+    try:
+        receiver = PyUsbEndpointTransport(
             RF_RECEIVER_VID,
             RF_RECEIVER_PID,
             timeout_ms=timeout_ms,
-        ),
-    )
+        )
+    except Exception:
+        close = getattr(sender, "close", None)
+        if callable(close):
+            close()
+        raise
+    return LianLiWirelessBackend(sender=sender, receiver=receiver)
 
 
 def build_wireless_list_request(page_count: int = 1) -> bytes:
@@ -1938,6 +1960,8 @@ def scan_known_usb_devices(sys_root: Path = Path("/sys")) -> list[LianLiUsbDevic
     sys_devices = _scan_known_usb_devices_from_sys(sys_root)
     if sys_devices:
         return sys_devices
+    if sys_root.expanduser().resolve() != Path("/sys"):
+        return []
     try:
         return _scan_known_usb_devices_from_pyusb()
     except LianLiWirelessError:

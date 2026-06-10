@@ -18,6 +18,22 @@ DEFAULT_SETTINGS_PATH = _PLATFORM.settings_path()
 DEFAULT_OPENRGB_PATH = _PLATFORM.default_openrgb_path()
 CONFIG_VERSION = 3
 
+LIANLI_FAN_CURVE_MODES = ("quiet", "normal", "high", "full", "custom")
+DEFAULT_LIANLI_FAN_CURVE_PROFILES: dict[str, list[list[int]]] = {
+    "quiet": [[30, 420], [50, 600], [70, 900], [85, 1300]],
+    "normal": [[30, 520], [50, 900], [70, 1300], [85, 1700]],
+    "high": [[30, 720], [50, 1200], [70, 1600], [85, 1800]],
+    "full": [[30, 1200], [50, 1500], [70, 1800], [85, 1800]],
+    "custom": [[30, 450], [50, 900], [70, 1440], [85, 1800]],
+}
+
+
+def default_lianli_fan_curve_profiles() -> dict[str, list[list[int]]]:
+    return {
+        mode: [list(point) for point in points]
+        for mode, points in DEFAULT_LIANLI_FAN_CURVE_PROFILES.items()
+    }
+
 
 @dataclass
 class LightingUiSettings:
@@ -86,6 +102,8 @@ class LianLiWirelessTargetSettings:
 @dataclass
 class LianLiWirelessUiSettings:
     auto_connect: bool = True
+    write_enabled: bool = False
+    auto_curve_enabled: bool = False
     active_target_mac: str = ""
     targets: dict[str, LianLiWirelessTargetSettings] = field(default_factory=dict)
     effect: str = "off"
@@ -98,7 +116,8 @@ class LianLiWirelessUiSettings:
     fan_mode: str = "full"
     fan_rpm: int = 1800
     pwm: int = 120
-    fan_curve_points: list[list[int]] = field(default_factory=lambda: [[30, 450], [50, 900], [70, 1440], [85, 1800]])
+    fan_curve_points: list[list[int]] = field(default_factory=lambda: [list(point) for point in DEFAULT_LIANLI_FAN_CURVE_PROFILES["custom"]])
+    fan_curve_profiles: dict[str, list[list[int]]] = field(default_factory=default_lianli_fan_curve_profiles)
 
 
 @dataclass
@@ -263,8 +282,16 @@ def _lianli_wireless_from_dict(value: Any) -> LianLiWirelessUiSettings:
     fan_mode = str(value.get("fan_mode", "")).strip().lower()
     if fan_mode not in {"quiet", "normal", "high", "full", "custom"}:
         fan_mode = _lianli_fan_mode_for_rpm(fan_rpm)
+    fan_curve_points = _lianli_fan_curve_points_from_dict(value.get("fan_curve_points"), defaults.fan_curve_points)
+    fan_curve_profiles = _lianli_fan_curve_profiles_from_dict(
+        value.get("fan_curve_profiles"),
+        defaults.fan_curve_profiles,
+        fan_curve_points,
+    )
     return LianLiWirelessUiSettings(
         auto_connect=bool(value.get("auto_connect", defaults.auto_connect)),
+        write_enabled=False,
+        auto_curve_enabled=bool(value.get("auto_curve_enabled", defaults.auto_curve_enabled)),
         active_target_mac=str(value.get("active_target_mac", defaults.active_target_mac)),
         targets=targets,
         effect=str(value.get("effect", defaults.effect)),
@@ -277,7 +304,8 @@ def _lianli_wireless_from_dict(value: Any) -> LianLiWirelessUiSettings:
         fan_mode=fan_mode,
         fan_rpm=fan_rpm,
         pwm=_clamp_int(value.get("pwm"), 40, 255, defaults.pwm),
-        fan_curve_points=_lianli_fan_curve_points_from_dict(value.get("fan_curve_points"), defaults.fan_curve_points),
+        fan_curve_points=fan_curve_points,
+        fan_curve_profiles=fan_curve_profiles,
     )
 
 
@@ -363,3 +391,23 @@ def _lianli_fan_curve_points_from_dict(value: Any, default: list[list[int]]) -> 
     while len(points) < 2:
         points.append(list(default[len(points)]))
     return sorted(points, key=lambda point: point[0])
+
+
+def _lianli_fan_curve_profiles_from_dict(
+    value: Any,
+    default: dict[str, list[list[int]]],
+    legacy_custom_points: list[list[int]],
+) -> dict[str, list[list[int]]]:
+    profiles = {
+        mode: _lianli_fan_curve_points_from_dict(default.get(mode), DEFAULT_LIANLI_FAN_CURVE_PROFILES[mode])
+        for mode in LIANLI_FAN_CURVE_MODES
+    }
+    if isinstance(value, dict):
+        for mode in LIANLI_FAN_CURVE_MODES:
+            if mode in value:
+                profiles[mode] = _lianli_fan_curve_points_from_dict(value.get(mode), profiles[mode])
+        if "custom" not in value:
+            profiles["custom"] = [list(point) for point in legacy_custom_points]
+    else:
+        profiles["custom"] = [list(point) for point in legacy_custom_points]
+    return profiles

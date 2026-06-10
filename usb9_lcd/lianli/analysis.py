@@ -889,7 +889,7 @@ def receiver_write_expected_pwm_values(live_write: dict[str, Any]) -> list[int]:
             return [6, 6, 6, 6]
         fallback_pwm = _int_value(live_write.get("fallback_pwm"), default=-1)
         return [fallback_pwm] * 4 if fallback_pwm >= 0 else []
-    return _int_list(live_write.get("pwm_values")) or []
+    return _int_list_or_empty(live_write.get("pwm_values"))
 
 
 def receiver_machine_write_consistency(
@@ -939,7 +939,7 @@ def receiver_machine_write_consistency(
             notes.append(f"{name} snapshot does not contain live write target.")
 
     machine_pwm = receiver_write_expected_pwm_values(live_pwm)
-    after_pwm = _int_list(after_target.get("pwm_values")) if isinstance(after_target, dict) else []
+    after_pwm = _int_list_or_empty(after_target.get("pwm_values")) if isinstance(after_target, dict) else []
     if machine_pwm and after_pwm:
         status = "match" if after_pwm == machine_pwm else "mismatch"
         checks.append(
@@ -1044,16 +1044,20 @@ def _normalize_mac(value: str) -> str:
     return ":".join(parts[:6]) if len(parts) >= 6 else text
 
 
-def _int_list(value: Any) -> list[int]:
+def _int_list(value: Any) -> list[int] | None:
     if not isinstance(value, list):
-        return []
-    result = []
+        return None
+    result: list[int] = []
     for item in value:
         try:
             result.append(int(item))
         except (TypeError, ValueError):
-            return []
+            return None
     return result
+
+
+def _int_list_or_empty(value: Any) -> list[int]:
+    return _int_list(value) or []
 
 
 def _parse_observed_pwm_values(value: str) -> list[int] | None:
@@ -1277,7 +1281,7 @@ def _receiver_observation_note(operation: str) -> str:
 
 
 def _format_observed_pwm_arg(value: Any) -> str:
-    values = _int_list(value)
+    values = _int_list_or_empty(value)
     if not values:
         return ""
     if len(set(values)) == 1:
@@ -2305,14 +2309,6 @@ def _after_value(after_target: dict[str, Any] | None, field: str) -> Any:
     if after_target is None:
         return None
     return after_target.get(field)
-
-
-def _int_list(value: Any) -> list[int] | None:
-    if not isinstance(value, list):
-        return None
-    if not all(isinstance(item, int) for item in value):
-        return None
-    return value
 
 
 def analysis_notes(

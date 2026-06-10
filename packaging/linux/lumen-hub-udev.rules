@@ -11,6 +11,8 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="7372", MODE="0660", 
 SUBSYSTEM=="usb", ATTR{idVendor}=="04fc", ATTR{idProduct}=="7393", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTR{idVendor}=="1cbe", ATTR{idProduct}=="0006", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 
-# OpenRGB often needs SMBus/i2c access for motherboard and memory controllers on Linux.
-SUBSYSTEM=="i2c-dev", MODE="0660", GROUP="plugdev", TAG+="uaccess"
-KERNEL=="i2c-[0-9]*", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# Optional OpenRGB SMBus/i2c access for motherboard and memory controllers.
+# This is intentionally disabled by default because i2c nodes can expose broad
+# motherboard control. If you accept that risk, install a separate local rule
+# scoped to the bus/group you want to manage, for example:
+# SUBSYSTEM=="i2c-dev", KERNEL=="i2c-[0-9]*", MODE="0660", GROUP="i2c", TAG+="uaccess"

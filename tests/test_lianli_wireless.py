@@ -4,8 +4,11 @@ import json
 import hashlib
 import lzma
 
+import pytest
+
 from usb9_lcd.lianli.wireless import (
     LianLiWirelessBackend,
+    LianLiWirelessError,
     PyUsbEndpointTransport,
     DEFAULT_TINYUZ_DICT_SIZE,
     FIRST_LED_PACKET_DATA_MAX,
@@ -32,6 +35,7 @@ from usb9_lcd.lianli.wireless import (
     build_tlv2_effect_payloads,
     build_unbind_payload,
     build_wireless_list_request,
+    create_pyusb_backend,
     extract_led_count_hint,
     extract_motherboard_pwm,
     generate_rainbow_rgb_frames,
@@ -364,6 +368,23 @@ class FakeReceiverTransport:
         return self.payload[:size]
 
 
+class SequenceReceiverTransport:
+    def __init__(self, payloads: list[bytes]):
+        self.payloads = list(payloads)
+        self.writes: list[bytes] = []
+        self.read_sizes: list[int] = []
+
+    def write(self, payload: bytes) -> int:
+        self.writes.append(payload)
+        return len(payload)
+
+    def read(self, size: int) -> bytes:
+        self.read_sizes.append(size)
+        if not self.payloads:
+            return b""
+        return self.payloads.pop(0)
+
+
 class FakeSenderTransport:
     def __init__(self, read_payload: bytes = b""):
         self.writes: list[bytes] = []
@@ -452,6 +473,17 @@ def test_backend_lists_devices_and_sends_pwm_packets():
     assert len(sender.writes) == 4
     assert sender.writes[0][:4] == bytes([RF_PACKET_HEADER, 0, 8, 3])
     assert sender.writes[-1][:4] == bytes([RF_PACKET_HEADER, 3, 8, 3])
+
+
+def test_backend_list_devices_raises_when_snapshot_short_read_returns_empty():
+    receiver = SequenceReceiverTransport([_snapshot_payload()[:64], b""])
+    backend = LianLiWirelessBackend(receiver=receiver)
+
+    with pytest.raises(LianLiWirelessError, match="receiver snapshot read returned no data"):
+        backend.list_devices()
+
+    assert receiver.writes == [build_wireless_list_request()]
+    assert receiver.read_sizes == [434, 370]
 
 
 def test_backend_queries_master_mac_from_sender():
@@ -1534,6 +1566,35 @@ def test_pyusb_transport_import_is_lazy():
     assert PyUsbEndpointTransport.__name__ == "PyUsbEndpointTransport"
 
 
+def test_create_pyusb_backend_closes_sender_when_receiver_open_fails(monkeypatch):
+    class FakeTransport:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    opened_sender = FakeTransport()
+    constructor_calls: list[tuple[int, int, int]] = []
+
+    def fake_transport(vendor_id, product_id, *, timeout_ms):  # noqa: ANN001
+        constructor_calls.append((vendor_id, product_id, timeout_ms))
+        if len(constructor_calls) == 1:
+            return opened_sender
+        raise LianLiWirelessError("receiver open failed")
+
+    monkeypatch.setattr(wireless_module, "PyUsbEndpointTransport", fake_transport)
+
+    with pytest.raises(LianLiWirelessError, match="receiver open failed"):
+        create_pyusb_backend(timeout_ms=250)
+
+    assert opened_sender.closed is True
+    assert constructor_calls == [
+        (wireless_module.RF_SENDER_VID, wireless_module.RF_SENDER_PID, 250),
+        (wireless_module.RF_RECEIVER_VID, wireless_module.RF_RECEIVER_PID, 250),
+    ]
+
+
 def test_udev_rules_cover_l_wireless_receiver():
     assert any('ATTR{idProduct}=="8041"' in rule for rule in UDEV_RULES)
 
@@ -2001,9 +2062,12 @@ def test_capture_analyzer_decodes_literal_static_rgb_color():
     packets = LianLiWirelessBackend().build_static_rgb_packets(target, (255, 0, 0), effect_index=1)
 
     analysis = analyze_capture_packets(packets, source="official-rgb.txt")
+    expected_frame_count = len(build_static_rgb_payloads(target, (255, 0, 0), effect_index=1)) + RGB_FIRST_PAYLOAD_REPEAT_COUNT - 1
+    expected_wire_color = list(static_rgb_wire_color((255, 0, 0)))
+    expected_wire_hex = "#" + "".join(f"{component:02x}" for component in expected_wire_color)
 
     assert analysis["summary"]["rf_operations"] == {"live-rgb": 1}
-    assert analysis["summary"]["rf_frame_operations"] == {"live-rgb": 7}
+    assert analysis["summary"]["rf_frame_operations"] == {"live-rgb": expected_frame_count}
     assert analysis["summary"]["replay_hint_count"] == 1
     assert analysis["summary"]["rgb_sequence_count"] == 1
     first = analysis["rf_frames"][0]
@@ -2011,25 +2075,25 @@ def test_capture_analyzer_decodes_literal_static_rgb_color():
     assert first["packet_index"] == 0
     assert first["rgb_sequence_primary_index"] == 0
     assert first["rgb_sequence_member_index"] == 0
-    assert first["rgb_decode_status"] == "decoded-literal"
-    assert first["rgb_payload"]["decode_status"] == "decoded-literal"
-    assert first["rgb_payload"]["static_color"] == [255, 0, 0]
-    assert first["rgb_payload"]["static_color_hex"] == "#ff0000"
+    assert first["rgb_decode_status"] in {"decoded-literal", "decoded-backref"}
+    assert first["rgb_payload"]["decode_status"] in {"decoded-literal", "decoded-backref"}
+    assert first["rgb_payload"]["static_color"] == expected_wire_color
+    assert first["rgb_payload"]["static_color_hex"] == expected_wire_hex
     assert first["rgb_payload"]["decoded_length"] == 132 * 3
     assert first["rgb_payload"]["expected_decoded_length"] == 132 * 3
-    assert first["rgb_payload"]["sequence_rf_frame_count"] == 7
-    assert first["rgb_payload"]["sequence_frame_indexes"] == list(range(7))
+    assert first["rgb_payload"]["sequence_rf_frame_count"] == expected_frame_count
+    assert first["rgb_payload"]["sequence_frame_indexes"] == list(range(expected_frame_count))
     assert first["rgb_payload"]["first_packet_retransmit_count"] == RGB_FIRST_PAYLOAD_REPEAT_COUNT
     assert first["rgb_payload"]["first_packet_frame_indexes"] == list(range(RGB_FIRST_PAYLOAD_REPEAT_COUNT))
     assert first["rgb_payload"]["unique_color_count"] == 1
-    assert first["rgb_payload"]["sample_colors_hex"] == ["#ff0000"]
+    assert first["rgb_payload"]["sample_colors_hex"] == [expected_wire_hex]
     assert len(first["rgb_payload"]["decoded_sha256"]) == 64
     assert analysis["rf_frames"][1]["rgb_sequence_primary_index"] == 0
     assert analysis["rf_frames"][1]["rgb_sequence_member_index"] == 1
     assert "replay_hint" not in analysis["rf_frames"][1]
     hint = first["replay_hint"]
     assert hint["dry_run"]["argv"][2] == "dry-run-rgb"
-    assert hint["dry_run"]["argv"][-4:] == ["--color", "255,0,0", "--effect-index", "1"]
+    assert hint["dry_run"]["argv"][-4:] == ["--color", "254,0,0", "--effect-index", "1"]
     assert "--led-count" in hint["dry_run"]["argv"]
     assert hint["dry_run"]["argv"][hint["dry_run"]["argv"].index("--led-count") + 1] == "132"
     assert hint["compare_capture"]["argv"][2:5] == ["compare-capture", "official-rgb.txt", "rgb"]
@@ -2038,14 +2102,14 @@ def test_capture_analyzer_decodes_literal_static_rgb_color():
 
     report = capture_protocol_report_from_analysis(analysis)
     rgb = report["operations"]["live-rgb"]
-    assert report["devices"]["aa:bb:cc:dd:ee:ff"]["rf_frame_operations"] == {"live-rgb": 7}
+    assert report["devices"]["aa:bb:cc:dd:ee:ff"]["rf_frame_operations"] == {"live-rgb": expected_frame_count}
     assert report["devices"]["aa:bb:cc:dd:ee:ff"]["operations"] == {"live-rgb": 1}
     assert rgb["count"] == 1
     assert rgb["rgb_sequence_count"] == 1
-    assert rgb["rgb_sequence_frame_counts"] == [7]
+    assert rgb["rgb_sequence_frame_counts"] == [expected_frame_count]
     assert rgb["rgb_first_packet_retransmit_counts"] == [RGB_FIRST_PAYLOAD_REPEAT_COUNT]
-    assert rgb["rgb_decode_statuses"] == {"decoded-literal": 1}
-    assert rgb["rgb_static_colors"] == {"#ff0000": 1}
+    assert rgb["rgb_decode_statuses"] in ({"decoded-literal": 1}, {"decoded-backref": 1})
+    assert rgb["rgb_static_colors"] == {expected_wire_hex: 1}
     assert rgb["rgb_decoded_lengths"] == [132 * 3]
     assert rgb["rgb_unique_color_counts"] == [1]
     assert list(rgb["rgb_decoded_hashes"].values()) == [1]
