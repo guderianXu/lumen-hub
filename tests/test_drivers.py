@@ -65,7 +65,7 @@ def test_asus_driver_discovers_square_static_image_device(monkeypatch, tmp_path)
         HidInterface(path=tmp_path / "hidraw0", name="hidraw0", report_size=440, can_read=True, can_write=True),
         HidInterface(path=tmp_path / "hidraw1", name="hidraw1", report_size=1024, can_read=False, can_write=True),
     ]
-    monkeypatch.setattr("usb9_lcd.drivers.asus_lc_iii.discover_from_sysfs", lambda: interfaces)
+    monkeypatch.setattr("usb9_lcd.drivers.asus_lc_iii.discover_lcd_interfaces", lambda: interfaces)
 
     devices = AsusLcIiiDriver().discover()
 
@@ -85,7 +85,7 @@ def test_asus_driver_discovers_square_static_image_device(monkeypatch, tmp_path)
 
 
 def test_asus_driver_returns_no_devices_when_interfaces_are_incomplete(monkeypatch):
-    monkeypatch.setattr("usb9_lcd.drivers.asus_lc_iii.discover_from_sysfs", lambda: [])
+    monkeypatch.setattr("usb9_lcd.drivers.asus_lc_iii.discover_lcd_interfaces", lambda: [])
 
     assert AsusLcIiiDriver().discover() == []
 
@@ -146,3 +146,58 @@ def test_asus_upload_session_reuses_hidraw_transports(monkeypatch, tmp_path):
         (tmp_path / "hidraw0", tmp_path / "hidraw1", b"one"),
         (tmp_path / "hidraw0", tmp_path / "hidraw1", b"two"),
     ]
+
+
+def test_asus_upload_session_uses_hidapi_for_windows_hid_paths(monkeypatch):
+    device = DisplayDevice(
+        connection=DeviceConnection(
+            driver_id="asus.lc_iii",
+            display_name="ASUS Test LCD",
+            paths=(
+                Path("\\\\?\\HID#VID_0B05&PID_1C7B&MI_00#a&control#{guid}"),
+                Path("\\\\?\\HID#VID_0B05&PID_1C7B&MI_01#a&data#{guid}"),
+            ),
+            writable=True,
+            readable=True,
+        ),
+        width=320,
+        height=320,
+        pixel_format=PixelFormat.JPEG,
+        preview=PreviewProfile(
+            width=320,
+            height=320,
+            shape=PreviewShape.SQUARE,
+            pixel_style=PixelStyle.CONTINUOUS,
+        ),
+        capabilities=frozenset({Capability.STATIC_IMAGE}),
+    )
+    opened_paths = []
+    uploaded_frames = []
+
+    class FakeTransport:
+        def __init__(self, path):
+            self.path = str(path)
+
+        def __enter__(self):
+            opened_paths.append(self.path)
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return None
+
+    class FakeProtocol:
+        def __init__(self, control, data):
+            self.control = control
+            self.data = data
+
+        def upload_frame(self, frame):
+            uploaded_frames.append((self.control.path, self.data.path, frame))
+
+    monkeypatch.setattr("usb9_lcd.drivers.asus_lc_iii.HidApiTransport", FakeTransport)
+    monkeypatch.setattr("usb9_lcd.drivers.asus_lc_iii.LcdProtocol", FakeProtocol)
+
+    with AsusLcIiiDriver().open_upload_session(device) as session:
+        session.upload_static_frame(b"frame")
+
+    assert opened_paths == [str(device.connection.paths[0]), str(device.connection.paths[1])]
+    assert uploaded_frames == [(str(device.connection.paths[0]), str(device.connection.paths[1]), b"frame")]

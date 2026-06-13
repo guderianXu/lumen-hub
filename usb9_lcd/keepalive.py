@@ -7,10 +7,10 @@ import sys
 import time
 from pathlib import Path
 
-from usb9_lcd.device import choose_interfaces, discover_from_sysfs
+from usb9_lcd.device import choose_interfaces, discover_lcd_interfaces
 from usb9_lcd.platforms import current_platform
 from usb9_lcd.protocol import LcdProtocol
-from usb9_lcd.transport import HidrawTransport
+from usb9_lcd.transport import HidApiTransport, HidrawTransport
 
 
 DEFAULT_PID_FILE = current_platform().keepalive_pid_path()
@@ -46,9 +46,16 @@ def stop_existing_keepalive(pid_file: Path = DEFAULT_PID_FILE) -> None:
 
 
 def upload_frame_once(frame: bytes) -> None:
-    control, data = choose_interfaces(discover_from_sysfs())
-    with HidrawTransport(control.path) as control_transport, HidrawTransport(data.path) as data_transport:
+    control, data = choose_interfaces(discover_lcd_interfaces())
+    with _transport_for_path(control.path) as control_transport, _transport_for_path(data.path) as data_transport:
         LcdProtocol(control=control_transport, data=data_transport, data_report_size=data.report_size).upload_frame(frame)
+
+
+def _transport_for_path(path):  # noqa: ANN001
+    path_text = str(path)
+    if path_text.startswith("\\\\?\\HID#"):
+        return HidApiTransport(path_text)
+    return HidrawTransport(path)
 
 
 def run_keepalive(frame_path: Path, *, interval: float, pid_file: Path = DEFAULT_PID_FILE) -> int:

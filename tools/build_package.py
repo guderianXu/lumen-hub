@@ -64,6 +64,8 @@ def build_pyinstaller_args(config: BuildConfig) -> list[str]:
         "usb.util",
         "--hidden-import",
         "Cryptodome.Cipher.AES",
+        "--hidden-import",
+        "hid",
     ]
     if config.clean:
         args.append("--clean")

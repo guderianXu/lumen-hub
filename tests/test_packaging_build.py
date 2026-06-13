@@ -33,6 +33,7 @@ def test_pyinstaller_args_use_gui_entry_and_bundle_assets():
     assert args[args.index("--collect-all") + 1] == "PySide6"
     assert _arg_pair_exists(args, "--hidden-import", "usb9_lcd.gui.app")
     assert _arg_pair_exists(args, "--hidden-import", "usb9_lcd.gui.gif_preview")
+    assert _arg_pair_exists(args, "--hidden-import", "hid")
     assert str(Path("E:/repo/lumen-hub") / "packaging" / "pyinstaller_lumen_hub_entry.py") in args
     assert any(item.endswith("assets;assets") for item in args)
 

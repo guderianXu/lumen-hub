@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from usb9_lcd.keepalive import keepalive_worker_command, run_keepalive, stop_existing_keepalive
+from usb9_lcd.device import HidInterface
+from usb9_lcd.keepalive import keepalive_worker_command, run_keepalive, stop_existing_keepalive, upload_frame_once
 
 
 def test_keepalive_worker_command_uses_module_in_development(monkeypatch):
@@ -62,3 +63,45 @@ def test_run_keepalive_uploads_frame_until_interrupted(monkeypatch, tmp_path: Pa
 
     assert uploads == [b"jpeg-frame"]
     assert not pid_file.exists()
+
+
+def test_upload_frame_once_uses_hidapi_for_windows_hid_paths(monkeypatch):
+    control_path = Path("\\\\?\\HID#VID_0B05&PID_1C7B&MI_00#a&control#{guid}")
+    data_path = Path("\\\\?\\HID#VID_0B05&PID_1C7B&MI_01#a&data#{guid}")
+    opened = []
+    uploaded = []
+
+    class FakeTransport:
+        def __init__(self, path):
+            self.path = str(path)
+
+        def __enter__(self):
+            opened.append(self.path)
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return None
+
+    class FakeProtocol:
+        def __init__(self, control, data, data_report_size):
+            self.control = control
+            self.data = data
+            self.data_report_size = data_report_size
+
+        def upload_frame(self, frame):
+            uploaded.append((self.control.path, self.data.path, self.data_report_size, frame))
+
+    monkeypatch.setattr(
+        "usb9_lcd.keepalive.discover_lcd_interfaces",
+        lambda: [
+            HidInterface(control_path, "control", 440, True, True),
+            HidInterface(data_path, "data", 1024, True, True),
+        ],
+    )
+    monkeypatch.setattr("usb9_lcd.keepalive.HidApiTransport", FakeTransport)
+    monkeypatch.setattr("usb9_lcd.keepalive.LcdProtocol", FakeProtocol)
+
+    upload_frame_once(b"frame")
+
+    assert opened == [str(control_path), str(data_path)]
+    assert uploaded == [(str(control_path), str(data_path), 1024, b"frame")]

@@ -3,10 +3,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable
 
 
 TARGET_VENDOR_ID = "0b05"
 TARGET_PRODUCT_ID = "1c7b"
+TARGET_VENDOR_ID_INT = int(TARGET_VENDOR_ID, 16)
+TARGET_PRODUCT_ID_INT = int(TARGET_PRODUCT_ID, 16)
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,38 @@ def discover_from_sysfs(sys_root: Path = Path("/sys"), dev_root: Path = Path("/d
     return interfaces
 
 
+def discover_from_hidapi(
+    enumerate_devices: Callable[[int, int], list[dict[str, Any]]] | None = None,
+) -> list[HidInterface]:
+    if enumerate_devices is None:
+        try:
+            import hid  # type: ignore[import-not-found]
+        except ImportError:
+            return []
+        enumerate_devices = hid.enumerate
+
+    interfaces: list[HidInterface] = []
+    for item in enumerate_devices(TARGET_VENDOR_ID_INT, TARGET_PRODUCT_ID_INT):
+        path_text = _hidapi_path_text(item.get("path"))
+        if not path_text:
+            continue
+        interface_number = _hidapi_interface_number(item)
+        report_size = _hidapi_report_size(interface_number)
+        if report_size <= 0:
+            continue
+        product = str(item.get("product_string") or "ASUS TUF Gaming LC III LCD")
+        interfaces.append(
+            HidInterface(
+                path=Path(path_text),
+                name=f"{product} MI_{interface_number:02d}",
+                report_size=report_size,
+                can_read=True,
+                can_write=True,
+            )
+        )
+    return sorted(interfaces, key=lambda interface: (interface.report_size, interface.name, str(interface.path)))
+
+
 def choose_interfaces(interfaces: list[HidInterface]) -> tuple[HidInterface, HidInterface]:
     control = next((interface for interface in interfaces if interface.report_size == 440), None)
     data = next((interface for interface in interfaces if interface.report_size == 1024), None)
@@ -58,6 +93,13 @@ def choose_interfaces(interfaces: list[HidInterface]) -> tuple[HidInterface, Hid
         raise ValueError(f"expected HID report sizes 440 and 1024 for ASUS LCD; found {sizes}")
 
     return control, data
+
+
+def discover_lcd_interfaces() -> list[HidInterface]:
+    interfaces = discover_from_sysfs()
+    if interfaces:
+        return interfaces
+    return discover_from_hidapi()
 
 
 def _is_target_lcd(uevent: str) -> bool:
@@ -77,6 +119,32 @@ def _is_target_lcd(uevent: str) -> bool:
         return vendor == TARGET_VENDOR_ID and product == TARGET_PRODUCT_ID
 
     return False
+
+
+def _hidapi_path_text(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
+def _hidapi_interface_number(item: dict[str, Any]) -> int:
+    value = item.get("interface_number")
+    if isinstance(value, int) and value >= 0:
+        return value
+    path_text = _hidapi_path_text(item.get("path")).lower()
+    if "mi_00" in path_text:
+        return 0
+    if "mi_01" in path_text:
+        return 1
+    return -1
+
+
+def _hidapi_report_size(interface_number: int) -> int:
+    if interface_number == 0:
+        return 440
+    if interface_number == 1:
+        return 1024
+    return 0
 
 
 def _report_size(report: bytes) -> int:

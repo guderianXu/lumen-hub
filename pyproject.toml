@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Linux and Windows hardware control center for LCD screens, OpenRGB lighting, PWM fans, and LIAN LI wireless devices"
 requires-python = ">=3.10"
 dependencies = [
+  "hidapi>=0.15",
   "openrgb-python>=0.3.6",
   "Pillow>=10.0",
   "PySide6>=6.7",

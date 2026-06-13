@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import TracebackType
 
-from usb9_lcd.device import choose_interfaces, discover_from_sysfs
+from usb9_lcd.device import choose_interfaces, discover_lcd_interfaces
 from usb9_lcd.drivers.base import (
     Capability,
     DeviceConnection,
@@ -13,7 +13,7 @@ from usb9_lcd.drivers.base import (
     PreviewShape,
 )
 from usb9_lcd.protocol import LcdProtocol
-from usb9_lcd.transport import HidrawTransport
+from usb9_lcd.transport import HidApiTransport, HidrawTransport
 
 
 class AsusLcIiiDriver:
@@ -24,7 +24,7 @@ class AsusLcIiiDriver:
 
     def discover(self) -> list[DisplayDevice]:
         try:
-            control, data = choose_interfaces(discover_from_sysfs())
+            control, data = choose_interfaces(discover_lcd_interfaces())
         except ValueError:
             return []
 
@@ -76,8 +76,8 @@ class AsusLcIiiDriver:
 class AsusLcIiiUploadSession:
     def __init__(self, device: DisplayDevice) -> None:
         control_path, data_path = device.connection.paths
-        self.control_transport = HidrawTransport(control_path)
-        self.data_transport = HidrawTransport(data_path)
+        self.control_transport = _transport_for_path(control_path)
+        self.data_transport = _transport_for_path(data_path)
         self.protocol: LcdProtocol | None = None
 
     def __enter__(self) -> "AsusLcIiiUploadSession":
@@ -102,3 +102,10 @@ class AsusLcIiiUploadSession:
         if self.protocol is None:
             raise RuntimeError("upload session is not open")
         self.protocol.upload_frame(frame)
+
+
+def _transport_for_path(path):  # noqa: ANN001
+    path_text = str(path)
+    if path_text.startswith("\\\\?\\HID#"):
+        return HidApiTransport(path_text)
+    return HidrawTransport(path)

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from usb9_lcd.device import HidInterface, choose_interfaces, discover_from_sysfs
+from usb9_lcd.device import HidInterface, choose_interfaces, discover_from_hidapi, discover_from_sysfs
 
 
 def make_hidraw(root: Path, name: str, hid_id: str, report: bytes, mode: int = 0o660) -> Path:
@@ -76,6 +76,55 @@ def test_choose_interfaces_selects_440_control_and_1024_data(tmp_path):
     data = HidInterface(path=tmp_path / "hidraw-data", name="hidraw-data", report_size=1024, can_read=True, can_write=True)
 
     assert choose_interfaces([data, control]) == (control, data)
+
+
+def test_discover_from_hidapi_matches_windows_asus_interfaces():
+    def enumerate_devices(vendor_id, product_id):  # noqa: ANN001
+        assert vendor_id == 0x0B05
+        assert product_id == 0x1C7B
+        return [
+            {
+                "path": b"\\\\?\\HID#VID_0B05&PID_1C7B&MI_01#a&data#{guid}",
+                "interface_number": 1,
+                "product_string": "TUF GAMING LC III 360 ARGB LCD",
+            },
+            {
+                "path": b"\\\\?\\HID#VID_0B05&PID_1C7B&MI_00#a&control#{guid}",
+                "interface_number": 0,
+                "product_string": "TUF GAMING LC III 360 ARGB LCD",
+            },
+        ]
+
+    interfaces = discover_from_hidapi(enumerate_devices=enumerate_devices)
+
+    assert interfaces == [
+        HidInterface(
+            path=Path("\\\\?\\HID#VID_0B05&PID_1C7B&MI_00#a&control#{guid}"),
+            name="TUF GAMING LC III 360 ARGB LCD MI_00",
+            report_size=440,
+            can_read=True,
+            can_write=True,
+        ),
+        HidInterface(
+            path=Path("\\\\?\\HID#VID_0B05&PID_1C7B&MI_01#a&data#{guid}"),
+            name="TUF GAMING LC III 360 ARGB LCD MI_01",
+            report_size=1024,
+            can_read=True,
+            can_write=True,
+        ),
+    ]
+
+
+def test_discover_from_hidapi_parses_interface_from_path_when_number_is_missing():
+    def enumerate_devices(vendor_id, product_id):  # noqa: ANN001
+        return [
+            {"path": "\\\\?\\HID#VID_0B05&PID_1C7B&MI_00#a&control#{guid}", "product_string": ""},
+            {"path": "\\\\?\\HID#VID_0B05&PID_1C7B&MI_01#a&data#{guid}", "product_string": ""},
+        ]
+
+    interfaces = discover_from_hidapi(enumerate_devices=enumerate_devices)
+
+    assert [interface.report_size for interface in interfaces] == [440, 1024]
 
 
 @pytest.mark.parametrize("report_sizes", [(16, 440), (440, 440), (1024, 1024)])
