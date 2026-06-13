@@ -98,17 +98,31 @@ def log_exception(event: str, error: BaseException, **fields: Any) -> None:
     _LOGGER.exception("%s %s error=%r", event, details, error)
 
 
-def recent_log_lines(log_path: str | Path | None = None, *, limit: int = 6) -> list[str]:
+def recent_log_lines(log_path: str | Path | None = None, *, limit: int = 6, max_bytes: int = 64 * 1024) -> list[str]:
     if limit <= 0:
         return []
     path = Path(log_path) if log_path is not None else _LOG_PATH
     if path is None or not path.is_file():
         return []
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = _read_text_tail(path, max_bytes=max_bytes).splitlines()
     except OSError:
         return []
     return [line for line in lines if line.strip()][-limit:]
+
+
+def _read_text_tail(path: Path, *, max_bytes: int) -> str:
+    tail_size = max(4096, max_bytes)
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        start = max(0, size - tail_size)
+        handle.seek(start)
+        data = handle.read()
+    if start > 0:
+        lines = data.splitlines()
+        data = b"\n".join(lines[1:]) if len(lines) > 1 else b""
+    return data.decode("utf-8", errors="replace")
 
 
 def _log_uncaught_exception(exc_type, exc_value, exc_traceback) -> None:  # noqa: ANN001

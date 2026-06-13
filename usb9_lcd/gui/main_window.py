@@ -985,6 +985,7 @@ class MainWindow(QMainWindow):
         if thread is not None and thread.is_alive():
             return
         self.telemetry_poll_timer.stop()
+        self._join_finished_thread(thread)
         self._telemetry_thread = None
         if self._telemetry_error is not None:
             self.latest_telemetry = None
@@ -1001,6 +1002,11 @@ class MainWindow(QMainWindow):
         self._forward_telemetry_to_lianli_page(telemetry)
         self._refresh_home_permission_status()
         self.update_monitor_preview()
+
+    def _join_finished_thread(self, thread: threading.Thread | None) -> None:
+        if thread is None or thread is threading.current_thread() or thread.is_alive():
+            return
+        thread.join(timeout=0.0)
 
     def _connect_monitor_customization(self) -> None:
         self.monitor_page.monitor_background_combo.currentIndexChanged.connect(self.update_monitor_preview)

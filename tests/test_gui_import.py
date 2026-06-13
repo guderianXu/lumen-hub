@@ -310,6 +310,19 @@ def test_gui_debug_logging_writes_log_file(tmp_path: Path):
     assert recent_log_lines(log_path, limit=0) == []
 
 
+def test_recent_log_lines_reads_bounded_tail(tmp_path: Path):
+    from usb9_lcd.gui.debug import recent_log_lines
+
+    log_path = tmp_path / "large.log"
+    log_path.write_text("".join(f"line {index:04d}\n" for index in range(2000)), encoding="utf-8")
+
+    assert recent_log_lines(log_path, limit=3, max_bytes=128) == [
+        "line 1997",
+        "line 1998",
+        "line 1999",
+    ]
+
+
 def test_system_status_report_includes_permission_and_component_state():
     from usb9_lcd.gui.device_inventory import build_device_tree_snapshot
     from usb9_lcd.gui.system_status import StatusItem, SystemStatusSnapshot, render_system_status_report
@@ -6816,6 +6829,64 @@ def test_main_window_forwards_telemetry_to_lianli_page_asynchronously():
 
     assert _process_events_until(app, lambda: forwarded)
     assert forwarded[-1] == 63.5
+
+    window.close()
+    app.quit()
+
+
+def test_main_window_joins_completed_async_telemetry_thread(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.main_window as main_window
+    from usb9_lcd.gui.main_window import MainWindow
+
+    class ImmediateThread:
+        instances: list["ImmediateThread"] = []
+
+        def __init__(self, *, target, name: str, daemon: bool) -> None:  # noqa: ANN001
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+            self.started = False
+            self.joined = False
+            self.join_timeout: float | None = None
+            self._alive = False
+            self.__class__.instances.append(self)
+
+        def start(self) -> None:
+            self.started = True
+            self._alive = True
+            self.target()
+            self._alive = False
+
+        def is_alive(self) -> bool:
+            return self._alive
+
+        def join(self, timeout: float | None = None) -> None:
+            self.joined = True
+            self.join_timeout = timeout
+
+    monkeypatch.setattr(main_window.threading, "Thread", ImmediateThread)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+    )
+    window.telemetry_timer.start()
+
+    window.request_telemetry_refresh()
+    assert len(ImmediateThread.instances) == 1
+    thread = ImmediateThread.instances[0]
+    assert thread.started is True
+    assert thread.joined is False
+
+    window._poll_telemetry_worker()
+
+    assert thread.joined is True
+    assert thread.join_timeout == 0.0
+    assert window._telemetry_thread is None
+    assert window.latest_telemetry is not None
 
     window.close()
     app.quit()

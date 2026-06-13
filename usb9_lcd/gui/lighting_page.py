@@ -1652,6 +1652,8 @@ class LightingPage(QWidget):
 
     def _start_lighting_operation(self, hardware_operation: HardwareOperation) -> None:
 
+        self._reap_finished_lighting_threads()
+
         self._set_lighting_busy(True, self._queued_busy_message(hardware_operation.busy_message))
 
 
@@ -2333,6 +2335,8 @@ class LightingPage(QWidget):
 
     def _lighting_operation_finished(self, result: object, error: object) -> None:
 
+        self._reap_finished_lighting_threads()
+
         next_operation = self._lighting_operation_queue.complete_current()
 
         if error is not None:
@@ -2412,6 +2416,25 @@ class LightingPage(QWidget):
             self._start_lighting_operation(next_operation)
 
         self.status_changed.emit(self.home_status_text())
+
+
+    def _reap_finished_lighting_threads(self) -> None:
+
+        active_threads: list[threading.Thread] = []
+
+        for thread in self._lighting_threads:
+
+            if thread.is_alive():
+
+                active_threads.append(thread)
+
+                continue
+
+            if thread is not threading.current_thread():
+
+                thread.join(timeout=0.0)
+
+        self._lighting_threads = active_threads
 
 
     def _show_lighting_saved_feedback(self, message: str) -> None:
@@ -3463,3 +3486,9 @@ class LightingPage(QWidget):
             if thread.is_alive():
 
                 thread.join(timeout=1.0)
+
+            elif thread is not threading.current_thread():
+
+                thread.join(timeout=0.0)
+
+        self._lighting_threads = []
