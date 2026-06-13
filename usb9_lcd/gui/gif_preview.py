@@ -12,6 +12,7 @@ from PIL import Image, ImageSequence
 
 from usb9_lcd.gui.debug import log_event
 from usb9_lcd.platforms import current_platform
+from usb9_lcd.platforms.process import hidden_subprocess_kwargs
 
 
 GIF_PREVIEW_WORKER_ARG = "--lumen-hub-gif-preview-worker"
@@ -67,6 +68,7 @@ def decode_gif_preview_frames(
         stderr=subprocess.PIPE,
         text=True,
         timeout=timeout,
+        **hidden_subprocess_kwargs(),
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "gif decode failed"

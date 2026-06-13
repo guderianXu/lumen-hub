@@ -4,6 +4,8 @@ import csv
 import subprocess
 from collections.abc import Callable, Sequence
 
+from usb9_lcd.platforms.process import hidden_subprocess_kwargs
+
 from .models import GpuTelemetry
 
 NVIDIA_SMI_QUERY = (
@@ -65,7 +67,14 @@ def collect_nvidia_gpu(
         "--format=csv,noheader,nounits",
     )
     try:
-        result = run(command, capture_output=True, text=True, timeout=timeout, check=False)
+        result = run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            **hidden_subprocess_kwargs(),
+        )
     except FileNotFoundError as error:
         return GpuTelemetry(error=str(error))
     except subprocess.TimeoutExpired:

@@ -43,6 +43,7 @@ from usb9_lcd.gui.settings import GuiSettings, save_settings
 from usb9_lcd.monitoring.models import FanTelemetry, SystemTelemetry
 from usb9_lcd.monitoring.service import collect_system_telemetry
 from usb9_lcd.monitoring.windows import WindowsFanChannel, collect_windows_fan_channels, set_windows_fan_control_percent
+from usb9_lcd.platforms.process import hidden_subprocess_kwargs
 from usb9_lcd.service.permissions import (
     PermissionRequest,
     build_pwm_write_request,
@@ -1489,6 +1490,7 @@ class FanControlHostPage(QWidget):
                 ],
                 check=False,
                 cwd=Path.cwd(),
+                **hidden_subprocess_kwargs(),
             )
         except Exception as exc:  # noqa: BLE001
             self.details.append(f"\n管理员重启失败:\n{exc}")

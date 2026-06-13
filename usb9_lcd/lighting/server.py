@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from usb9_lcd.platforms import current_platform
+from usb9_lcd.platforms.process import hidden_subprocess_kwargs
 
 
 def resolve_openrgb_app_path(app_path: str | Path, platform_adapter=None) -> Path:  # noqa: ANN001
@@ -66,6 +67,7 @@ class OpenRgbServerManager:
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            **hidden_subprocess_kwargs(),
         )
 
         deadline = time.monotonic() + timeout

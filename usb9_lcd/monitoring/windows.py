@@ -5,6 +5,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any
 
+from usb9_lcd.platforms.process import hidden_subprocess_kwargs
+
 from .models import CpuTelemetry, FanTelemetry
 
 
@@ -29,8 +31,11 @@ def _run_powershell_json(script: str, *, timeout: int = 8) -> Any:
         [
             POWERSHELL,
             "-NoProfile",
+            "-NonInteractive",
             "-ExecutionPolicy",
             "Bypass",
+            "-WindowStyle",
+            "Hidden",
             "-Command",
             script,
         ],
@@ -38,6 +43,7 @@ def _run_powershell_json(script: str, *, timeout: int = 8) -> Any:
         capture_output=True,
         text=True,
         timeout=timeout,
+        **hidden_subprocess_kwargs(),
     )
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "").strip() or f"PowerShell exited {result.returncode}")

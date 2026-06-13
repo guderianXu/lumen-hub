@@ -6,11 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from usb9_lcd.monitoring import windows as windows_monitoring
 from usb9_lcd.monitoring.cpu import (
     collect_cpu_temperature_from_hwmon,
     cpu_power_permission_paths,
     cpu_power_permission_shell,
 )
+import usb9_lcd.monitoring.nvidia as nvidia_module
 from usb9_lcd.monitoring.models import CpuTelemetry, GpuTelemetry
 from usb9_lcd.monitoring.nvidia import collect_nvidia_gpu, parse_nvidia_smi_csv
 from usb9_lcd.monitoring.service import collect_system_telemetry
@@ -87,6 +89,46 @@ def test_collect_nvidia_gpu_returns_unavailable_on_command_failure():
 
     assert telemetry.available is False
     assert telemetry.error == "driver not loaded"
+
+
+def test_collect_nvidia_gpu_hides_windows_console_window(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def run_ok(command, **kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            command,
+            returncode=0,
+            stdout="NVIDIA GPU, 61, 42, 216.50, 8123, 24564, 2745, 48\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(nvidia_module, "hidden_subprocess_kwargs", lambda: {"creationflags": 123})
+
+    telemetry = collect_nvidia_gpu(run=run_ok)
+
+    assert telemetry.available is True
+    assert captured["creationflags"] == 123
+
+
+def test_windows_powershell_json_hides_console_window(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def run_ok(command, **kwargs):  # noqa: ANN001
+        captured["command"] = command
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(command, returncode=0, stdout='{"Value": 42}', stderr="")
+
+    monkeypatch.setattr(windows_monitoring.subprocess, "run", run_ok)
+    monkeypatch.setattr(windows_monitoring, "hidden_subprocess_kwargs", lambda: {"creationflags": 123})
+
+    data = windows_monitoring._run_powershell_json("[pscustomobject]@{ Value = 42 } | ConvertTo-Json")
+
+    assert data == {"Value": 42}
+    command = captured["command"]
+    assert "-NonInteractive" in command
+    assert command[command.index("-WindowStyle") + 1] == "Hidden"
+    assert captured["creationflags"] == 123
 
 
 def test_collect_cpu_temperature_from_hwmon_prefers_package_label(tmp_path: Path):

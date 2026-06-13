@@ -60,6 +60,7 @@ from usb9_lcd.lianli.wireless import (
     tlv2_effect_capability,
 )
 from usb9_lcd.monitoring.models import SystemTelemetry
+from usb9_lcd.platforms.process import hidden_subprocess_kwargs
 
 
 LIANLI_WRITE_CONFIRM_TOKEN = "WRITE-LIANLI"
@@ -2070,6 +2071,7 @@ class LianLiWirelessPage(QWidget):
                     timeout=4,
 
                     check=False,
+                    **hidden_subprocess_kwargs(),
 
                 )
 
@@ -2106,6 +2108,7 @@ class LianLiWirelessPage(QWidget):
                     timeout=4,
 
                     check=False,
+                    **hidden_subprocess_kwargs(),
 
                 )
 
@@ -2144,6 +2147,7 @@ class LianLiWirelessPage(QWidget):
                         timeout=4,
 
                         check=False,
+                        **hidden_subprocess_kwargs(),
 
                     )
 
@@ -2188,6 +2192,7 @@ class LianLiWirelessPage(QWidget):
                     timeout=4,
 
                     check=False,
+                    **hidden_subprocess_kwargs(),
 
                 )
 
@@ -2236,6 +2241,7 @@ class LianLiWirelessPage(QWidget):
                 timeout=5,
 
                 check=False,
+                **hidden_subprocess_kwargs(),
 
             )
 

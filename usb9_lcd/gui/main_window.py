@@ -106,6 +106,7 @@ from usb9_lcd.monitoring.cpu import cpu_power_permission_paths, cpu_power_permis
 from usb9_lcd.monitoring.render import render_monitoring_frame, render_monitoring_image
 from usb9_lcd.monitoring.service import collect_system_telemetry
 from usb9_lcd.platforms import current_platform
+from usb9_lcd.platforms.process import hidden_subprocess_kwargs
 from usb9_lcd.render import ImageRenderSettings, render_static_image
 from usb9_lcd.service.permissions import (
     build_powercap_read_request,
@@ -1232,6 +1233,7 @@ class MainWindow(QMainWindow):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                **hidden_subprocess_kwargs(),
             )
         except OSError as error:
             log_exception("keepalive_start_failed", error)
