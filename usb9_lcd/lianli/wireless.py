@@ -2616,15 +2616,25 @@ def _extra_tlv2_effect_frame(
         return _maybe_reverse_generated_frame(frame, direction_step)
 
     if effect_key == "heartbeat":
-        beat_phase = progress * 2.0
-        pulse = 0.12
-        for center_point in (0.18, 0.34, 1.18, 1.34):
-            pulse += max(0.0, 1.0 - abs(beat_phase - center_point) / 0.08) * 0.88
-        chase = int(progress * led_count * direction_step) % max(1, led_count)
+        primary_center = float(round(frame_count * 0.18))
+        accent_center = float(round(frame_count * 0.34))
+        primary_width = max(2.0, frame_count * 0.055)
+        accent_width = max(2.0, frame_count * 0.05)
+        travel = max(2.0, frame_count * 0.09)
+
+        def heartbeat_pulse(position: float, center: float, width: float) -> float:
+            distance = abs((position - center + frame_count / 2.0) % frame_count - frame_count / 2.0)
+            return max(0.0, 1.0 - distance / width)
+
         for led_index in range(led_count):
-            distance = min((led_index - chase) % led_count, (chase - led_index) % led_count)
-            local = max(0.45, 1.0 - distance / max(3.0, led_count / 5.0))
-            frame.append(_scale_rgb(_mix_rgb(primary, accent, 0.38), min(1.0, pulse * local)))
+            phase_offset = (led_index / max(1, led_count - 1)) * travel * direction_step
+            local_frame = (frame_index - phase_offset) % frame_count
+            primary_level = heartbeat_pulse(local_frame, primary_center, primary_width)
+            accent_level = heartbeat_pulse(local_frame, accent_center, accent_width)
+            if primary_level >= accent_level:
+                frame.append(_scale_rgb(primary, primary_level))
+            else:
+                frame.append(_scale_rgb(accent, accent_level))
         return frame
 
     if effect_key == "warning":

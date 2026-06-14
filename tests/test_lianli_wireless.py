@@ -1024,6 +1024,31 @@ def test_tlv2_runway_official_template_uses_accent_color_for_second_color_slot()
     assert any(green > red and green > blue for red, green, blue in _unique_frame_colors(red_green))
 
 
+def test_tlv2_heartbeat_uses_two_separate_color_pulses_with_dark_rest():
+    primary = (128, 0, 0)
+    accent = (255, 0, 255)
+    raw, spec = generate_tlv2_effect_rgb_frames(
+        "heartbeat",
+        led_count=12,
+        color=primary,
+        accent_color=accent,
+        brightness=100,
+        direction="left",
+    )
+    frame_size = 12 * 3
+    frame_peaks = []
+    for offset in range(0, len(raw), frame_size):
+        frame = raw[offset : offset + frame_size]
+        colors = _rgb_triplets(frame)
+        peak = max(colors, key=lambda rgb: max(rgb))
+        frame_peaks.append(peak)
+
+    assert spec.frame_count == 72
+    assert primary in frame_peaks
+    assert accent in frame_peaks
+    assert any(max(peak) <= 8 for peak in frame_peaks)
+
+
 def test_tlv2_effect_capability_sets_include_expected_key_controls():
     direction_effects = {
         effect
