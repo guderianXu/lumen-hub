@@ -580,6 +580,7 @@ class LianLiWirelessPage(QWidget):
             self.background_refresh = bool(background_refresh)
 
         self._lianli_write_gate_payload: dict[str, object] | None = None
+        self._lianli_live_write_gate_payload: dict[str, object] | None = None
 
         self._operation_active = False
 
@@ -1933,6 +1934,7 @@ class LianLiWirelessPage(QWidget):
         if detected_targets:
 
             self._store_lianli_targets(detected_targets)
+            self._mark_lianli_live_write_gate(detected_targets, source="auto-connect")
 
             message = f"已连接控制器，识别到 {len(detected_targets)} 个已绑定风扇组"
 
@@ -2351,6 +2353,35 @@ class LianLiWirelessPage(QWidget):
             self.settings.lianli_wireless.active_target_mac = next(iter(stored), "")
 
         save_settings(self.settings)
+
+
+    def _mark_lianli_live_write_gate(self, targets: list[WirelessDeviceInfo], *, source: str) -> None:
+
+        bound_targets = [target for target in targets if target.is_bound]
+
+        if not bound_targets:
+
+            return
+
+        self._lianli_live_write_gate_payload = {
+
+            "operation": "linux-control-write-gate",
+
+            "status": "live-receiver-write-enabled",
+
+            "allows_any_guarded_write": True,
+
+            "ready_action_count": len(bound_targets),
+
+            "blocked_action_count": 0,
+
+            "ready_action_ids": ["live-receiver-bound-target"],
+
+            "source": source,
+
+            "target_macs": [target.mac for target in bound_targets],
+
+        }
 
 
 
@@ -5878,6 +5909,7 @@ class LianLiWirelessPage(QWidget):
             if bound_targets:
 
                 self._store_lianli_targets(bound_targets)
+                self._mark_lianli_live_write_gate(bound_targets, source="live-list")
 
         finally:
 
@@ -6738,6 +6770,8 @@ class LianLiWirelessPage(QWidget):
     def apply_lianli_write_gate(self, payload: dict[str, object]) -> None:
 
         self._lianli_write_gate_payload = dict(payload)
+        if payload.get("allows_any_guarded_write"):
+            self._lianli_live_write_gate_payload = None
 
         self._update_write_controls()
 
@@ -6803,6 +6837,12 @@ class LianLiWirelessPage(QWidget):
             self._lianli_write_gate_payload
 
             and self._lianli_write_gate_payload.get("allows_any_guarded_write")
+
+        ) or bool(
+
+            self._lianli_live_write_gate_payload
+
+            and self._lianli_live_write_gate_payload.get("allows_any_guarded_write")
 
         )
 
@@ -6943,7 +6983,7 @@ class LianLiWirelessPage(QWidget):
 
             return "写入门禁：当前实例未强制；真实 GUI 会要求门禁通过后再写入。"
 
-        payload = self._lianli_write_gate_payload
+        payload = self._lianli_write_gate_payload or self._lianli_live_write_gate_payload
 
         if not payload:
 
@@ -6972,6 +7012,7 @@ class LianLiWirelessPage(QWidget):
         status_text = {
 
             "write-enabled": f"写入门禁通过 [{status}]，{ready} 个安全实验已允许写入",
+            "live-receiver-write-enabled": f"写入门禁通过 [{status}]：已由 live-receiver 验证 {ready} 个已绑定目标",
 
             "needs-packet-compare": f"写入门禁未通过 [{status}]：需要先运行 packet preview/compare",
 

@@ -1298,6 +1298,47 @@ def test_lianli_wireless_page_requires_write_gate_when_configured():
     app.quit()
 
 
+def test_lianli_wireless_page_live_bound_receiver_satisfies_write_gate():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
+
+    class FakeLianLiBackend:
+        def list_devices(self, **_kwargs):
+            return WirelessSnapshot(raw=b"snapshot", devices=[device])
+
+    device = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(
+        backend_factory=lambda: FakeLianLiBackend(),
+        require_write_gate=True,
+        background_refresh=False,
+    )
+
+    page.refresh_live_devices()
+    assert _process_events_until(app, lambda: '"bound_target_count": 1' in page.lianli_snapshot_text.toPlainText())
+    page.lianli_write_enable.setChecked(True)
+
+    assert page.lianli_pwm_button.isEnabled()
+    assert page.lianli_daily_pwm_button.isEnabled()
+    assert "live-receiver" in page.lianli_write_gate_label.text()
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_write_buttons_require_cached_target():
     from PySide6.QtWidgets import QApplication
 
