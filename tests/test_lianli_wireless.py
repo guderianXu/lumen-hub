@@ -1595,6 +1595,22 @@ def test_create_pyusb_backend_closes_sender_when_receiver_open_fails(monkeypatch
     ]
 
 
+def test_libusb_candidate_dll_paths_include_pyinstaller_runtime(monkeypatch, tmp_path):
+    exe = tmp_path / "dist" / "LumenHub.exe"
+    exe.parent.mkdir()
+    bundled_root = exe.parent / "_internal"
+    meipass_root = tmp_path / "meipass"
+    monkeypatch.setattr(wireless_module.sys, "executable", str(exe))
+    monkeypatch.setattr(wireless_module.sys, "_MEIPASS", str(meipass_root), raising=False)
+
+    paths = wireless_module._libusb_candidate_dll_paths()
+
+    assert meipass_root / "usb1" / "libusb-1.0.dll" in paths
+    assert meipass_root / "libusb-1.0.dll" in paths
+    assert bundled_root / "usb1" / "libusb-1.0.dll" in paths
+    assert bundled_root / "libusb-1.0.dll" in paths
+
+
 def test_udev_rules_cover_l_wireless_receiver():
     assert any('ATTR{idProduct}=="8041"' in rule for rule in UDEV_RULES)
 

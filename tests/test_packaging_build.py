@@ -34,8 +34,52 @@ def test_pyinstaller_args_use_gui_entry_and_bundle_assets():
     assert _arg_pair_exists(args, "--hidden-import", "usb9_lcd.gui.app")
     assert _arg_pair_exists(args, "--hidden-import", "usb9_lcd.gui.gif_preview")
     assert _arg_pair_exists(args, "--hidden-import", "hid")
+    assert _arg_pair_exists(args, "--hidden-import", "Cryptodome.Cipher.DES")
+    assert not _arg_pair_exists(args, "--hidden-import", "Cryptodome.Cipher.AES")
     assert str(Path("E:/repo/lumen-hub") / "packaging" / "pyinstaller_lumen_hub_entry.py") in args
     assert any(item.endswith("assets;assets") for item in args)
+
+
+def test_windows_pyinstaller_args_bundle_libusb_backend(monkeypatch, tmp_path):
+    module = _load_build_module()
+    libusb_dll = tmp_path / "usb1" / "libusb-1.0.dll"
+    libusb_dll.parent.mkdir()
+    libusb_dll.write_bytes(b"fake dll")
+    monkeypatch.setattr(module, "libusb_runtime_binaries", lambda _config: [(libusb_dll, "usb1")])
+    config = module.BuildConfig(
+        repo_root=Path("E:/repo/lumen-hub"),
+        system="Windows",
+        onefile=False,
+    )
+
+    args = module.build_pyinstaller_args(config)
+
+    assert _arg_pair_exists(args, "--hidden-import", "usb.backend.libusb1")
+    assert _arg_pair_exists(args, "--hidden-import", "usb1")
+    assert _arg_pair_exists(args, "--add-binary", f"{libusb_dll};usb1")
+
+
+def test_libusb_runtime_binaries_uses_usb1_package_path(monkeypatch, tmp_path):
+    module = _load_build_module()
+    libusb_dll = tmp_path / "usb1" / "libusb-1.0.dll"
+    libusb_dll.parent.mkdir()
+    libusb_dll.write_bytes(b"fake dll")
+    fake_usb1 = types.SimpleNamespace(__file__=str(libusb_dll.parent / "__init__.py"))
+    monkeypatch.setitem(sys.modules, "usb1", fake_usb1)
+    config = module.BuildConfig(repo_root=tmp_path, system="Windows")
+
+    assert module.libusb_runtime_binaries(config) == [(libusb_dll, "usb1")]
+
+
+def test_libusb_runtime_binaries_uses_build_venv_when_system_package_missing(monkeypatch, tmp_path):
+    module = _load_build_module()
+    libusb_dll = tmp_path / "build-venv" / "Lib" / "site-packages" / "usb1" / "libusb-1.0.dll"
+    libusb_dll.parent.mkdir(parents=True)
+    libusb_dll.write_bytes(b"fake dll")
+    monkeypatch.setitem(sys.modules, "usb1", None)
+    config = module.BuildConfig(repo_root=tmp_path, system="Windows", venv_dir=tmp_path / "build-venv")
+
+    assert module.libusb_runtime_binaries(config) == [(libusb_dll, "usb1")]
 
 
 def test_output_executable_name_matches_platform():

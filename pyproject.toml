@@ -28,6 +28,7 @@ build = [
 ]
 lianli = [
   "pyusb>=1.2",
+  "libusb1>=3.0",
   "pycryptodomex>=3.20",
 ]
 

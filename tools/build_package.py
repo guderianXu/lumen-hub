@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
 import platform
 import shutil
@@ -63,7 +64,11 @@ def build_pyinstaller_args(config: BuildConfig) -> list[str]:
         "--hidden-import",
         "usb.util",
         "--hidden-import",
-        "Cryptodome.Cipher.AES",
+        "usb.backend.libusb1",
+        "--hidden-import",
+        "usb1",
+        "--hidden-import",
+        "Cryptodome.Cipher.DES",
         "--hidden-import",
         "hid",
     ]
@@ -72,9 +77,47 @@ def build_pyinstaller_args(config: BuildConfig) -> list[str]:
 
     assets_dir = repo_root / "assets"
     args.extend(["--add-data", f"{assets_dir}{_data_separator(config.system)}assets"])
+    for source, destination in libusb_runtime_binaries(config):
+        args.extend(["--add-binary", f"{source}{_data_separator(config.system)}{destination}"])
 
     args.append(str(entry_script))
     return args
+
+
+def libusb_runtime_binaries(config: BuildConfig) -> list[tuple[Path, str]]:
+    if not config.is_windows:
+        return []
+    dll_path = _find_libusb_runtime_dll(config)
+    if dll_path is None:
+        return []
+    return [(dll_path, "usb1")]
+
+
+def _find_libusb_runtime_dll(config: BuildConfig) -> Path | None:
+    candidates: list[Path] = []
+    candidates.extend(
+        [
+            config.venv_dir / "Lib" / "site-packages" / "usb1" / "libusb-1.0.dll",
+            config.venv_dir / "site-packages" / "usb1" / "libusb-1.0.dll",
+        ]
+    )
+    try:
+        usb1 = importlib.import_module("usb1")
+        package_file = getattr(usb1, "__file__", "")
+        if package_file:
+            package_dir = Path(package_file).resolve().parent
+            candidates.append(package_dir / "libusb-1.0.dll")
+    except Exception:
+        pass
+
+    for root in dict.fromkeys([Path(sys.prefix), Path(sys.base_prefix), Path(sys.executable).resolve().parent]):
+        candidates.append(root / "Lib" / "site-packages" / "usb1" / "libusb-1.0.dll")
+        candidates.append(root / "site-packages" / "usb1" / "libusb-1.0.dll")
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def output_executable_path(config: BuildConfig) -> Path:

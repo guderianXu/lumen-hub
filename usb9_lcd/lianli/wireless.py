@@ -88,20 +88,25 @@ class WirelessSenderTransport(Protocol):
 
     def read(self, size: int) -> bytes: ...
 
-def _resolve_libusb_backend() -> Any | None:
-    try:
-        import usb.backend.libusb1  # type: ignore[import-not-found]
-    except Exception:
-        return None
 
+def _libusb_candidate_dll_paths() -> list[Path]:
+    candidate_dlls: list[Path] = []
+
+    runtime_roots: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        runtime_roots.append(Path(meipass))
     try:
-        backend = usb.backend.libusb1.get_backend()  # type: ignore[attr-defined]
-        if backend is not None:
-            return backend
+        executable_dir = Path(sys.executable).resolve().parent
+        runtime_roots.append(executable_dir / "_internal")
+        runtime_roots.append(executable_dir)
     except Exception:
         pass
 
-    candidate_dlls: list[Path] = []
+    for root in runtime_roots:
+        candidate_dlls.append(root / "usb1" / "libusb-1.0.dll")
+        candidate_dlls.append(root / "libusb-1.0.dll")
+
     try:
         for site_dir in site.getsitepackages():
             candidate_dlls.append(Path(site_dir) / "usb1" / "libusb-1.0.dll")
@@ -116,11 +121,39 @@ def _resolve_libusb_backend() -> Any | None:
     except Exception:
         pass
 
-    candidate_dlls.append(Path(sys.executable).resolve().parent / "Lib" / "site-packages" / "usb1" / "libusb-1.0.dll")
-    candidate_dlls.append(Path(sys.executable).resolve().parent / "site-packages" / "usb1" / "libusb-1.0.dll")
+    try:
+        executable_dir = Path(sys.executable).resolve().parent
+        candidate_dlls.append(executable_dir / "Lib" / "site-packages" / "usb1" / "libusb-1.0.dll")
+        candidate_dlls.append(executable_dir / "site-packages" / "usb1" / "libusb-1.0.dll")
+    except Exception:
+        pass
 
     seen: set[Path] = set()
-    for dll_path in candidate_dlls:
+    unique_candidates: list[Path] = []
+    for candidate in candidate_dlls:
+        normalized = candidate.resolve()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_candidates.append(normalized)
+    return unique_candidates
+
+
+def _resolve_libusb_backend() -> Any | None:
+    try:
+        import usb.backend.libusb1  # type: ignore[import-not-found]
+    except Exception:
+        return None
+
+    try:
+        backend = usb.backend.libusb1.get_backend()  # type: ignore[attr-defined]
+        if backend is not None:
+            return backend
+    except Exception:
+        pass
+
+    seen: set[Path] = set()
+    for dll_path in _libusb_candidate_dll_paths():
         if not dll_path.is_file():
             continue
         dll_path = dll_path.resolve()
