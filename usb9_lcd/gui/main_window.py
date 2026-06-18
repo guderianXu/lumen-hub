@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from collections.abc import Callable
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
@@ -9,7 +10,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import cast
+from typing import Any, cast
 from weakref import ref
 
 from PIL import Image
@@ -91,6 +92,14 @@ from usb9_lcd.gui.lianli_wireless_page import LianLiWirelessPage
 from usb9_lcd.gui.lighting_page import LightingPage
 from usb9_lcd.gui.platform_diagnostics import PlatformDiagnosticsDialog
 from usb9_lcd.gui.preview import fit_preview_geometry
+from usb9_lcd.gui.scenes import (
+    SceneAvailability,
+    SceneProfile,
+    SceneStatus,
+    build_builtin_scenes,
+    build_scene_apply_plan,
+    normalize_scene_payload,
+)
 from usb9_lcd.gui.settings import DEFAULT_SETTINGS_PATH, GuiSettings, load_settings, save_settings
 from usb9_lcd.gui.system_status import (
     StatusItem,
@@ -158,6 +167,20 @@ def _gpu_status_detail(telemetry: SystemTelemetry) -> str:
     load = "--" if telemetry.gpu.utilization_percent is None else f"{telemetry.gpu.utilization_percent:.0f}%"
     power = "--" if telemetry.gpu.power_w is None else f"{telemetry.gpu.power_w:.0f}W"
     return f"{telemetry.gpu.name or 'GPU'} / 温度 {temperature} / 负载 {load} / 功耗 {power}"
+
+
+@dataclass(frozen=True)
+class SceneApplyItem:
+    subsystem: str
+    status: str
+    message: str
+
+
+@dataclass(frozen=True)
+class SceneApplySummary:
+    scene_key: str
+    scene_name: str
+    items: tuple[SceneApplyItem, ...]
 
 
 class _OneShotUploadSession(AbstractContextManager):
@@ -1385,6 +1408,97 @@ class MainWindow(QMainWindow):
         log_event("upload_monitoring_frame_finished", byte_count=len(frame))
         self.home_page.add_event("监控画面已上传到 LCD")
         self.statusBar().showMessage(f"监控画面已上传：{device.width}x{device.height}，{len(frame)} 字节")
+
+    def apply_global_scene_by_key(self, scene_key: str) -> SceneApplySummary:
+        builtins = build_builtin_scenes()
+        if scene_key in builtins:
+            scene = builtins[scene_key]
+        else:
+            payload = self.settings.scenes.get(scene_key)
+            if not isinstance(payload, dict):
+                return SceneApplySummary(scene_key, scene_key, (SceneApplyItem("scene", "failed", "场景不存在"),))
+            scene = normalize_scene_payload(payload, key=scene_key)
+        return self._apply_global_scene(scene)
+
+    def apply_global_scene_payload(self, scene_key: str, payload: dict[str, Any]) -> SceneApplySummary:
+        return self._apply_global_scene(normalize_scene_payload(payload, key=scene_key))
+
+    def _apply_global_scene(self, scene: SceneProfile) -> SceneApplySummary:
+        if scene.key == "sleep":
+            self.sleep_all_off()
+            self.settings.active_scene = scene.key
+            save_settings(self.settings)
+            return SceneApplySummary(scene.key, scene.name, (SceneApplyItem("scene", "applied", "睡眠场景已执行"),))
+
+        plan = build_scene_apply_plan(scene, self._scene_availability())
+        items: list[SceneApplyItem] = []
+        applied_any = False
+        for action in plan.actions:
+            if action.status is not SceneStatus.READY:
+                items.append(SceneApplyItem(action.subsystem, action.status.value, action.message))
+                continue
+            try:
+                self._execute_scene_action(action.subsystem, action.mode, action.payload)
+            except Exception as error:  # pragma: no cover - exercised by GUI integration tests
+                log_exception("scene_action_failed", error)
+                items.append(SceneApplyItem(action.subsystem, SceneStatus.FAILED.value, self._friendly_error(error)))
+            else:
+                applied_any = True
+                items.append(SceneApplyItem(action.subsystem, SceneStatus.APPLIED.value, "已应用"))
+
+        if applied_any:
+            self.settings.active_scene = scene.key
+            save_settings(self.settings)
+            if hasattr(self, "home_page"):
+                self.home_page.set_mode_indicator(scene.name)
+                self.home_page.add_event(f"场景已应用：{scene.name}")
+        return SceneApplySummary(scene.key, scene.name, tuple(items))
+
+    def _scene_availability(self) -> SceneAvailability:
+        return SceneAvailability(
+            screen_available=bool(self.devices),
+            openrgb_available=bool(getattr(self.lighting_page, "targets", [])),
+            lianli_available=self._has_lianli_scene_targets(),
+            lianli_write_unlocked=self._lianli_scene_write_unlocked(),
+            host_fan_available=bool(getattr(self.fan_page, "_snapshot", None)),
+            lianli_fan_available=self._has_lianli_scene_targets(),
+        )
+
+    def _has_lianli_scene_targets(self) -> bool:
+        targets = getattr(self.lianli_page, "_lianli_targets", None)
+        if targets:
+            return True
+        settings_targets = getattr(self.settings.lianli_wireless, "targets", {})
+        return bool(settings_targets)
+
+    def _lianli_scene_write_unlocked(self) -> bool:
+        unlocked = getattr(self.lianli_page, "_write_gate_unlocked", None)
+        if callable(unlocked):
+            try:
+                return bool(unlocked())
+            except Exception as error:  # pragma: no cover - defensive around experimental page state
+                log_exception("scene_lianli_write_gate_check_failed", error)
+                return False
+        return bool(getattr(self.lianli_page, "_lianli_write_gate_unlocked", False))
+
+    def _execute_scene_action(self, subsystem: str, mode: str, payload: dict[str, Any]) -> None:
+        if subsystem == "screen" and mode == "off":
+            for device in self._sleep_mode_devices():
+                frame = self._black_frame_for_device(device)
+                with self._lcd_output_lock:
+                    self.driver.upload_static_frame(device, frame)
+                    self._set_display_sleep_state(device)
+                self._remember_uploaded_frame(device, frame, sleep_mode=True)
+            return
+        if subsystem == "openrgb" and mode == "off":
+            self.lighting_page.turn_off_all_lighting()
+            return
+        if subsystem == "lianli_lighting" and mode == "off":
+            self.lianli_page.turn_off_all_lighting()
+            return
+        if subsystem in {"host_fan", "lianli_fan", "openrgb", "lianli_lighting", "screen"}:
+            return
+        raise ValueError(f"未知场景子系统：{subsystem}")
 
     def sleep_all_off(self) -> None:
         log_event("sleep_all_off_started")

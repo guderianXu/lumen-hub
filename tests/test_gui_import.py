@@ -238,6 +238,22 @@ def _process_events_until(app, condition, timeout: float = 1.0) -> bool:
     return condition()
 
 
+def _scene_test_window():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.main_window import MainWindow
+    from usb9_lcd.gui.settings import GuiSettings
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        driver=FakeDriver(),
+        telemetry_provider=lambda: _fake_telemetry(),
+        auto_refresh=False,
+        settings=GuiSettings(),
+    )
+    return app, window
+
+
 class ExplodingDriver:
     driver_id = "test.exploding"
     display_name = "Exploding Driver"
@@ -799,6 +815,39 @@ def test_main_window_sleep_all_off_blanks_lcds_and_turns_off_openrgb():
     assert "睡眠全关已执行" in window.statusBar().currentMessage()
     assert "联力" in window.statusBar().currentMessage()
 
+    window.close()
+    app.quit()
+
+
+def test_main_window_applies_sleep_scene_through_existing_sleep_path(monkeypatch, tmp_path: Path):
+    app, window = _scene_test_window()
+    calls = []
+    window.sleep_all_off = lambda: calls.append("sleep")
+
+    result = window.apply_global_scene_by_key("sleep")
+
+    assert calls == ["sleep"]
+    assert result.scene_key == "sleep"
+    assert any(item.status == "applied" for item in result.items)
+    window.close()
+    app.quit()
+
+
+def test_main_window_lianli_scene_requires_write_gate(monkeypatch, tmp_path: Path):
+    app, window = _scene_test_window()
+    window.lianli_page._lianli_targets = [object()]
+
+    result = window.apply_global_scene_payload(
+        "wireless",
+        {
+            "name": "Wireless",
+            "lianli_lighting": {"mode": "effect", "effect": "runway", "color": "#ff2d55"},
+            "safety": {"allow_lianli_write": False},
+        },
+    )
+
+    assert result.scene_key == "wireless"
+    assert any(item.subsystem == "lianli_lighting" and item.status == "permission_required" for item in result.items)
     window.close()
     app.quit()
 
