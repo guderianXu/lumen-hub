@@ -421,7 +421,7 @@ def test_main_window_constructs_with_dark_dashboard_pages():
     assert window.device_summary_label.text() == "未发现设备"
 
     window.close()
-    app.quit()
+    app.processEvents()
 
 
 def test_main_window_uses_hardware_dashboard_shell_hooks():
@@ -831,7 +831,7 @@ def test_main_window_applies_sleep_scene_through_existing_sleep_path(monkeypatch
     assert result.scene_key == "sleep"
     assert any(item.status == "applied" for item in result.items)
     window.close()
-    app.quit()
+    app.processEvents()
 
 
 def test_main_window_lianli_scene_requires_write_gate(monkeypatch, tmp_path: Path):
@@ -850,7 +850,7 @@ def test_main_window_lianli_scene_requires_write_gate(monkeypatch, tmp_path: Pat
     assert result.scene_key == "wireless"
     assert any(item.subsystem == "lianli_lighting" and item.status == "permission_required" for item in result.items)
     window.close()
-    app.quit()
+    app.processEvents()
 
 
 def test_home_page_exposes_global_scene_cards(monkeypatch, tmp_path: Path):
@@ -860,7 +860,7 @@ def test_home_page_exposes_global_scene_cards(monkeypatch, tmp_path: Path):
 
     assert {"日常", "游戏", "睡眠", "展示", "静音", "温度警告"} <= set(labels)
     window.close()
-    app.quit()
+    app.processEvents()
 
 
 def test_home_scene_card_applies_scene(monkeypatch, tmp_path: Path):
@@ -873,7 +873,7 @@ def test_home_scene_card_applies_scene(monkeypatch, tmp_path: Path):
 
     assert applied == ["sleep"]
     window.close()
-    app.quit()
+    app.processEvents()
 
 
 def test_scene_page_lists_builtin_scenes(monkeypatch, tmp_path: Path):
@@ -884,7 +884,7 @@ def test_scene_page_lists_builtin_scenes(monkeypatch, tmp_path: Path):
     assert "日常" in names
     assert "睡眠" in names
     window.close()
-    app.quit()
+    app.processEvents()
 
 
 def test_scene_page_apply_button_delegates_to_main_window(monkeypatch, tmp_path: Path):
@@ -897,7 +897,7 @@ def test_scene_page_apply_button_delegates_to_main_window(monkeypatch, tmp_path:
 
     assert applied == ["sleep"]
     window.close()
-    app.quit()
+    app.processEvents()
 
 
 def test_main_window_sleep_all_off_prevents_keepalive_restart(monkeypatch, tmp_path: Path):
