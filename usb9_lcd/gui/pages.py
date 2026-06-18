@@ -22,6 +22,7 @@ from usb9_lcd.gui.platform_diagnostics import (
     render_platform_diagnostic_report,
     render_support_report,
 )
+from usb9_lcd.gui.scene_page import SceneCenterPage
 
 __all__ = [
     "AssetLibraryPage",
@@ -36,6 +37,7 @@ __all__ = [
     "PlatformDiagnosticsDialog",
     "QColorDialog",
     "QFileDialog",
+    "SceneCenterPage",
     "render_platform_diagnostic_report",
     "render_support_report",
     "save_settings",

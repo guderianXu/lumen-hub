@@ -393,12 +393,13 @@ def test_main_window_constructs_with_dark_dashboard_pages():
         "屏幕",
         "风扇",
         "灯效",
+        "场景",
         "设备",
         "联力无线",
         "设置",
     ]
     assert window.navigation.currentRow() == 0
-    assert window.pages.count() == 7
+    assert window.pages.count() == 8
     assert "CPU" in window.cpu_temp_value.text()
     assert "GPU" in window.gpu_temp_value.text()
     assert "54°C" in window.home_page.cpu_value.text()
@@ -869,6 +870,30 @@ def test_home_scene_card_applies_scene(monkeypatch, tmp_path: Path):
 
     sleep_button = next(button for button in window.home_page.scene_buttons if button.text() == "睡眠")
     sleep_button.click()
+
+    assert applied == ["sleep"]
+    window.close()
+    app.quit()
+
+
+def test_scene_page_lists_builtin_scenes(monkeypatch, tmp_path: Path):
+    app, window = _scene_test_window()
+
+    names = [window.scene_page.scene_combo.itemText(index) for index in range(window.scene_page.scene_combo.count())]
+
+    assert "日常" in names
+    assert "睡眠" in names
+    window.close()
+    app.quit()
+
+
+def test_scene_page_apply_button_delegates_to_main_window(monkeypatch, tmp_path: Path):
+    app, window = _scene_test_window()
+    applied = []
+    window.scene_page.apply_scene = lambda key: applied.append(key)
+    window.scene_page.scene_combo.setCurrentIndex(window.scene_page.scene_combo.findData("sleep"))
+
+    window.scene_page.apply_button.click()
 
     assert applied == ["sleep"]
     window.close()

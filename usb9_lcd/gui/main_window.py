@@ -92,6 +92,7 @@ from usb9_lcd.gui.lianli_wireless_page import LianLiWirelessPage
 from usb9_lcd.gui.lighting_page import LightingPage
 from usb9_lcd.gui.platform_diagnostics import PlatformDiagnosticsDialog
 from usb9_lcd.gui.preview import fit_preview_geometry
+from usb9_lcd.gui.scene_page import SceneCenterPage
 from usb9_lcd.gui.scenes import (
     SceneAvailability,
     SceneProfile,
@@ -343,7 +344,7 @@ class MainWindow(QMainWindow):
         self.navigation = QListWidget()
         self.navigation.setObjectName("SideNav")
         self.navigation.setFixedWidth(196)
-        for label in ("首页", "屏幕", "风扇", "灯效", "设备", "联力无线", "设置"):
+        for label in ("首页", "屏幕", "风扇", "灯效", "场景", "设备", "联力无线", "设置"):
             self.navigation.addItem(QListWidgetItem(label))
 
         self.pages = QStackedWidget()
@@ -420,10 +421,12 @@ class MainWindow(QMainWindow):
             "assets": 1,
             "fan": 2,
             "lighting": 3,
-            "device": 4,
-            "lianli": 5,
-            "settings": 6,
+            "scenes": 4,
+            "device": 5,
+            "lianli": 6,
+            "settings": 7,
         }
+        self.scene_page = SceneCenterPage(self.apply_global_scene_by_key)
         self.home_page = ControlCenterPage(
             self._navigate_to_page,
             self.upload_monitoring_frame,
@@ -443,6 +446,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(_scrollable_page(self.screen_page))
         self.pages.addWidget(_scrollable_page(self.fan_page))
         self.pages.addWidget(_scrollable_page(self.lighting_page))
+        self.pages.addWidget(_scrollable_page(self.scene_page))
         self.pages.addWidget(_scrollable_page(self._device_page()))
         self.pages.addWidget(_scrollable_page(self.lianli_page))
         self.pages.addWidget(_scrollable_page(self._settings_page()))
