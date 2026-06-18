@@ -714,7 +714,7 @@ def test_control_center_mode_buttons_update_dashboard_events():
     game_button.click()
 
     assert window.home_page.mode_value.text() == "游戏"
-    assert window.home_page.event_labels[0].text() == "切换到游戏模式"
+    assert window.home_page.event_labels[0].text() == "切换到游戏场景"
     assert game_button.isChecked()
 
     window.close()
@@ -957,7 +957,7 @@ def test_control_center_opens_lianli_wireless_page():
     )
     lianli_button.click()
 
-    assert window.navigation.currentRow() == 5
+    assert window.navigation.currentRow() == window.page_indexes["lianli"]
 
     window.close()
     app.quit()
