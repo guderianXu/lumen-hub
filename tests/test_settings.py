@@ -53,6 +53,18 @@ def test_settings_does_not_restore_lianli_write_enable(tmp_path):
     assert loaded.lianli_wireless.write_enabled is False
 
 
+def test_settings_migrates_removed_lianli_wireless_effect_to_off(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"lianli_wireless": {"effect": "staggered"}}),
+        encoding="utf-8",
+    )
+
+    loaded = load_settings(settings_path)
+
+    assert loaded.lianli_wireless.effect == "off"
+
+
 def test_settings_round_trips_lianli_auto_curve_enable(tmp_path):
     settings_path = tmp_path / "settings.json"
     settings = GuiSettings()

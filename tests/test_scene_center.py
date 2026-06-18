@@ -18,6 +18,19 @@ def test_builtin_scenes_include_required_modes():
     assert scenes["sleep"].lianli_lighting.mode == "off"
 
 
+def test_scene_payload_migrates_removed_lianli_effect_to_off():
+    scene = normalize_scene_payload(
+        {
+            "name": "Legacy",
+            "lianli_lighting": {"mode": "effect", "effect": "staggered"},
+        },
+        key="legacy",
+    )
+
+    assert scene.lianli_lighting.mode == "off"
+    assert scene.lianli_lighting.payload == {}
+
+
 def test_scene_planner_marks_lianli_permission_required_when_write_locked():
     scene = normalize_scene_payload(
         {

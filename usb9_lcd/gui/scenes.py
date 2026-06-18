@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from usb9_lcd.lianli.effects import lianli_wireless_effect
+
 
 class SceneStatus(Enum):
     READY = "ready"
@@ -91,6 +93,18 @@ def _safety(payload: dict[str, Any]) -> SceneSafety:
     )
 
 
+def _normalize_lianli_lighting_section(section: SceneSection) -> SceneSection:
+    if section.mode != "effect":
+        return section
+    try:
+        effect = lianli_wireless_effect(str(section.payload.get("effect", "off")))
+    except ValueError:
+        return SceneSection(mode="off")
+    payload = dict(section.payload)
+    payload["effect"] = effect.key
+    return SceneSection(mode=section.mode, payload=payload)
+
+
 def normalize_scene_payload(payload: dict[str, Any], *, key: str) -> SceneProfile:
     return SceneProfile(
         key=key,
@@ -98,7 +112,7 @@ def normalize_scene_payload(payload: dict[str, Any], *, key: str) -> SceneProfil
         description=str(payload.get("description", "")),
         screen=_section(payload, "screen"),
         openrgb=_section(payload, "openrgb"),
-        lianli_lighting=_section(payload, "lianli_lighting"),
+        lianli_lighting=_normalize_lianli_lighting_section(_section(payload, "lianli_lighting")),
         host_fan=_section(payload, "host_fan"),
         lianli_fan=_section(payload, "lianli_fan"),
         safety=_safety(payload),

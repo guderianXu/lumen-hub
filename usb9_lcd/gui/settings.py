@@ -11,6 +11,7 @@ from usb9_lcd.gui.fan_curve_model import (
     normalize_fan_curve_sensor_source,
     sanitize_fan_curve_points,
 )
+from usb9_lcd.lianli.effects import lianli_wireless_effect
 from usb9_lcd.platforms import current_platform
 
 _PLATFORM = current_platform()
@@ -298,7 +299,7 @@ def _lianli_wireless_from_dict(value: Any) -> LianLiWirelessUiSettings:
         auto_curve_enabled=bool(value.get("auto_curve_enabled", defaults.auto_curve_enabled)),
         active_target_mac=str(value.get("active_target_mac", defaults.active_target_mac)),
         targets=targets,
-        effect=str(value.get("effect", defaults.effect)),
+        effect=_normalize_lianli_wireless_effect(value.get("effect", defaults.effect), defaults.effect),
         color=str(value.get("color", defaults.color)),
         accent_color=str(value.get("accent_color", defaults.accent_color)),
         rotation_colors=str(value.get("rotation_colors", defaults.rotation_colors)),
@@ -311,6 +312,13 @@ def _lianli_wireless_from_dict(value: Any) -> LianLiWirelessUiSettings:
         fan_curve_points=fan_curve_points,
         fan_curve_profiles=fan_curve_profiles,
     )
+
+
+def _normalize_lianli_wireless_effect(value: Any, default: str = "off") -> str:
+    try:
+        return lianli_wireless_effect(str(value)).key
+    except ValueError:
+        return default
 
 
 def _lianli_wireless_target_from_dict(value: Any) -> LianLiWirelessTargetSettings:
