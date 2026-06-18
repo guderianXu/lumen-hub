@@ -128,6 +128,8 @@ class GuiSettings:
     host_fan: HostFanUiSettings = field(default_factory=HostFanUiSettings)
     openrgb: OpenRgbUiSettings = field(default_factory=OpenRgbUiSettings)
     lianli_wireless: LianLiWirelessUiSettings = field(default_factory=LianLiWirelessUiSettings)
+    active_scene: str = ""
+    scenes: dict[str, dict[str, Any]] = field(default_factory=dict)
     keepalive_enabled: bool = True
 
 
@@ -146,6 +148,8 @@ def load_settings(path: Path = DEFAULT_SETTINGS_PATH) -> GuiSettings:
         host_fan=_host_fan_from_dict(payload.get("host_fan")),
         openrgb=_openrgb_from_dict(payload.get("openrgb")),
         lianli_wireless=_lianli_wireless_from_dict(payload.get("lianli_wireless")),
+        active_scene=str(payload.get("active_scene", "")),
+        scenes=payload.get("scenes") if isinstance(payload.get("scenes"), dict) else {},
         keepalive_enabled=bool(payload.get("keepalive_enabled", True)),
     )
 

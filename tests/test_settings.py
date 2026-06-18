@@ -78,6 +78,38 @@ def test_settings_round_trips_lianli_fan_curve_profiles(tmp_path):
     assert {"quiet", "normal", "high", "full", "custom"} <= set(loaded.lianli_wireless.fan_curve_profiles)
 
 
+def test_settings_round_trips_global_scenes_without_losing_openrgb_scenes(tmp_path):
+    settings_path = tmp_path / "settings.json"
+    settings = GuiSettings()
+    settings.active_scene = "Gaming"
+    settings.scenes["Gaming"] = {
+        "name": "Gaming",
+        "screen": {"mode": "monitor_profile", "profile": "Gaming"},
+        "openrgb": {"mode": "scene", "scene_name": "ARGB"},
+        "lianli_lighting": {"mode": "effect", "effect": "runway", "color": "#ff2d55"},
+        "host_fan": {"mode": "preset", "preset": "normal"},
+        "lianli_fan": {"mode": "preset", "preset": "normal"},
+        "safety": {"dry_run": False, "allow_lianli_write": False},
+    }
+    settings.lighting.scenes["ARGB"] = {
+        "targets": {"device:0": {"effect": "static", "color": "#ffffff"}}
+    }
+
+    save_settings(settings, settings_path)
+    loaded = load_settings(settings_path)
+
+    assert loaded.active_scene == "Gaming"
+    assert loaded.scenes["Gaming"]["openrgb"]["scene_name"] == "ARGB"
+    assert loaded.lighting.scenes["ARGB"]["targets"]["device:0"]["effect"] == "static"
+
+
+def test_settings_defaults_global_scene_storage_to_empty():
+    settings = GuiSettings()
+
+    assert settings.active_scene == ""
+    assert settings.scenes == {}
+
+
 def test_openrgb_profile_matches_asus_b850a_behavior():
     profile = profile_for_device_name("ASUS ROG STRIX B850-A GAMING WIFI S")
 
