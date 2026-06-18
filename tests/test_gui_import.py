@@ -852,6 +852,29 @@ def test_main_window_lianli_scene_requires_write_gate(monkeypatch, tmp_path: Pat
     app.quit()
 
 
+def test_home_page_exposes_global_scene_cards(monkeypatch, tmp_path: Path):
+    app, window = _scene_test_window()
+
+    labels = [button.text() for button in window.home_page.scene_buttons]
+
+    assert {"日常", "游戏", "睡眠", "展示", "静音", "温度警告"} <= set(labels)
+    window.close()
+    app.quit()
+
+
+def test_home_scene_card_applies_scene(monkeypatch, tmp_path: Path):
+    app, window = _scene_test_window()
+    applied = []
+    window.home_page._apply_scene = lambda key: applied.append(key)
+
+    sleep_button = next(button for button in window.home_page.scene_buttons if button.text() == "睡眠")
+    sleep_button.click()
+
+    assert applied == ["sleep"]
+    window.close()
+    app.quit()
+
+
 def test_main_window_sleep_all_off_prevents_keepalive_restart(monkeypatch, tmp_path: Path):
     from PySide6.QtWidgets import QApplication
 

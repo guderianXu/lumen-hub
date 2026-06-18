@@ -430,6 +430,7 @@ class MainWindow(QMainWindow):
             lambda: self.fan_page.reload_fan_control(interactive_driver_probe=True),
             self.lighting_page.connect_openrgb,
             self.sleep_all_off,
+            self.apply_global_scene_by_key,
         )
         self.fan_page.status_changed.connect(self._fan_status_changed)
         self.lighting_page.status_changed.connect(self._lighting_status_changed)

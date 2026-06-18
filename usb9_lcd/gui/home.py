@@ -16,14 +16,16 @@ class ControlCenterPage(QWidget):
         load_fan_control: Callable[[], None],
         connect_lighting: Callable[[], None],
         sleep_all_off: Callable[[], None],
+        apply_scene: Callable[[str], object] | None = None,
     ) -> None:
         super().__init__()
         self._events: list[str] = []
+        self._apply_scene = apply_scene or (lambda _scene_key: None)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 24)
         layout.setSpacing(16)
 
-        layout.addWidget(self._hero_panel(sleep_all_off))
+        layout.addWidget(self._hero_panel())
         layout.addWidget(self._metric_grid())
         layout.addWidget(
             self._command_panel(
@@ -38,7 +40,7 @@ class ControlCenterPage(QWidget):
         layout.addStretch(1)
         self.add_event("控制中心已就绪")
 
-    def _hero_panel(self, sleep_all_off: Callable[[], None]) -> QFrame:
+    def _hero_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("HomeHeroPanel")
         layout = QGridLayout(panel)
@@ -62,25 +64,30 @@ class ControlCenterPage(QWidget):
         layout.addWidget(self.mode_value, 0, 3)
 
         self.mode_group = QButtonGroup(self)
-        modes = (
-            ("日常", "屏幕监控、风扇自动、灯效默认", None),
-            ("游戏", "性能优先，保留监控画面", None),
-            ("静音", "低噪声策略，降低灯光亮度", None),
-            ("睡眠", "黑屏并关闭所有灯光", sleep_all_off),
+        self.scene_buttons: list[QPushButton] = []
+        scenes = (
+            ("daily", "日常", "屏幕监控、风扇自动、灯效默认"),
+            ("gaming", "游戏", "性能优先，保留监控画面"),
+            ("quiet", "静音", "低噪声策略，降低灯光亮度"),
+            ("sleep", "睡眠", "黑屏并关闭所有灯光"),
+            ("showcase", "展示", "亮灯展示整机状态"),
+            ("temperature-warning", "温度警告", "红色警示灯效和高风扇曲线"),
         )
-        for index, (label, description, action) in enumerate(modes):
+        for index, (key, label, description) in enumerate(scenes):
             button = QPushButton(label)
             button.setCheckable(True)
             button.setObjectName("SegmentButton")
             button.setToolTip(description)
             button.setProperty("modeAction", label)
+            button.setProperty("sceneKey", key)
             if index == 0:
                 button.setChecked(True)
             button.clicked.connect(
-                lambda _checked=False, name=label, callback=action: self._set_mode(name, callback)
+                lambda _checked=False, name=label, scene_key=key: self._set_scene_mode(name, scene_key)
             )
+            self.scene_buttons.append(button)
             self.mode_group.addButton(button, index)
-            layout.addWidget(button, 1, index)
+            layout.addWidget(button, 1 + index // 4, index % 4)
         return panel
 
     def _metric_grid(self) -> QFrame:
@@ -116,6 +123,11 @@ class ControlCenterPage(QWidget):
         self.add_event(f"切换到{mode}模式")
         if action is not None:
             action()
+
+    def _set_scene_mode(self, mode: str, scene_key: str) -> None:
+        self.set_mode_indicator(mode)
+        self.add_event(f"切换到{mode}场景")
+        self._apply_scene(scene_key)
 
     def set_mode_indicator(self, mode: str) -> None:
         self.mode_value.setText(mode)
