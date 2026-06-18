@@ -14,6 +14,13 @@ SAFE_PERMISSION_OPERATIONS = (
     "openrgb-path-check",
 )
 
+if not hasattr(os, "getuid"):
+    os.getuid = lambda: 0  # type: ignore[attr-defined]
+if not hasattr(os, "getgid"):
+    os.getgid = lambda: 0  # type: ignore[attr-defined]
+if not hasattr(os, "geteuid"):
+    os.geteuid = lambda: -1  # type: ignore[attr-defined]
+
 
 @dataclass(frozen=True)
 class PermissionRequest:
@@ -180,8 +187,8 @@ def _normalized_paths(paths: list[Path] | tuple[Path, ...]) -> tuple[Path, ...]:
 
 
 def _chown_chmod_shell(paths: tuple[Path, ...], *, chmod: str, marker: str) -> str:
-    uid = os.getuid() if hasattr(os, "getuid") else 0
-    gid = os.getgid() if hasattr(os, "getgid") else 0
+    uid = os.getuid()
+    gid = os.getgid()
     quoted_paths = " ".join(shlex.quote(str(path)) for path in paths)
     return "\n".join(
         [

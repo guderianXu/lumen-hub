@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -190,6 +191,7 @@ def test_collect_cpu_temperature_from_hwmon_reads_linux_cpu_utilization(tmp_path
     assert telemetry.error == ""
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Linux powercap paths use names that are invalid on Windows")
 def test_collect_cpu_temperature_from_hwmon_estimates_power_from_powercap_delta(tmp_path: Path):
     hwmon = tmp_path / "hwmon0"
     hwmon.mkdir()
@@ -223,6 +225,7 @@ def test_collect_cpu_temperature_from_hwmon_estimates_power_from_powercap_delta(
     assert second.power_w == 15.0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Linux powercap paths use names that are invalid on Windows")
 def test_cpu_power_permission_paths_and_shell_target_unreadable_powercap_files(tmp_path: Path):
     powercap_root = tmp_path / "powercap"
     rapl = powercap_root / "intel-rapl:0"

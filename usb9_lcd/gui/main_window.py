@@ -1854,7 +1854,7 @@ class MainWindow(QMainWindow):
             self._refresh_home_permission_status()
             return
 
-        paths = ", ".join(str(path) for path in device.connection.paths) or "无路径"
+        paths = ", ".join(path.as_posix() for path in device.connection.paths) or "无路径"
         permissions = []
         permissions.append("可读" if device.connection.readable else "不可读")
         permissions.append("可写" if device.connection.writable else "不可写")

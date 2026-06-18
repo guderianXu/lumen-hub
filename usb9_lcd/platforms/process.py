@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import platform
+import os
 import subprocess
 from typing import Any
 
 
 def hidden_subprocess_kwargs(*, system: str | None = None) -> dict[str, Any]:
     """Return subprocess options that keep helper commands out of the desktop."""
-    resolved_system = system or platform.system()
+    resolved_system = system or ("Windows" if os.name == "nt" else "")
     if not resolved_system.lower().startswith("win"):
         return {}
 

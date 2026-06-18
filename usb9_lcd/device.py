@@ -54,7 +54,7 @@ def discover_from_sysfs(sys_root: Path = Path("/sys"), dev_root: Path = Path("/d
 
 
 def discover_from_hidapi(
-    enumerate_devices: Callable[[int, int], list[dict[str, Any]]] | None = None,
+    enumerate_devices: Callable[..., list[dict[str, Any]]] | None = None,
 ) -> list[HidInterface]:
     if enumerate_devices is None:
         try:
@@ -64,7 +64,7 @@ def discover_from_hidapi(
         enumerate_devices = hid.enumerate
 
     interfaces: list[HidInterface] = []
-    for item in enumerate_devices(TARGET_VENDOR_ID_INT, TARGET_PRODUCT_ID_INT):
+    for item in _hidapi_target_items(enumerate_devices):
         path_text = _hidapi_path_text(item.get("path"))
         if not path_text:
             continue
@@ -83,6 +83,17 @@ def discover_from_hidapi(
             )
         )
     return sorted(interfaces, key=lambda interface: (interface.report_size, interface.name, str(interface.path)))
+
+
+def _hidapi_target_items(enumerate_devices: Callable[..., list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    exact = list(enumerate_devices(TARGET_VENDOR_ID_INT, TARGET_PRODUCT_ID_INT))
+    if exact:
+        return exact
+    try:
+        all_devices = enumerate_devices()
+    except TypeError:
+        return []
+    return [item for item in all_devices if _is_hidapi_asus_lcd_candidate(item)]
 
 
 def choose_interfaces(interfaces: list[HidInterface]) -> tuple[HidInterface, HidInterface]:
@@ -125,6 +136,15 @@ def _hidapi_path_text(value: object) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return str(value or "")
+
+
+def _is_hidapi_asus_lcd_candidate(item: dict[str, Any]) -> bool:
+    if item.get("vendor_id") != TARGET_VENDOR_ID_INT:
+        return False
+    product = str(item.get("product_string") or "").lower()
+    path_text = _hidapi_path_text(item.get("path")).lower()
+    haystack = f"{product} {path_text}"
+    return "lcd" in haystack and ("tuf" in haystack or "lc iii" in haystack or "lc 3" in haystack)
 
 
 def _hidapi_interface_number(item: dict[str, Any]) -> int:

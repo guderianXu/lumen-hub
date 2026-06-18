@@ -127,6 +127,46 @@ def test_discover_from_hidapi_parses_interface_from_path_when_number_is_missing(
     assert [interface.report_size for interface in interfaces] == [440, 1024]
 
 
+def test_discover_from_hidapi_falls_back_to_asus_lcd_product_strings():
+    calls = []
+
+    def enumerate_devices(*args):  # noqa: ANN001
+        calls.append(args)
+        if args == (0x0B05, 0x1C7B):
+            return []
+        if args == ():
+            return [
+                {
+                    "vendor_id": 0x0B05,
+                    "product_id": 0x1C80,
+                    "path": "\\\\?\\HID#VID_0B05&PID_1C80&MI_00#a&control#{guid}",
+                    "product_string": "ASUS TUF GAMING LC 3 ARGB LCD",
+                },
+                {
+                    "vendor_id": 0x0B05,
+                    "product_id": 0x1C80,
+                    "path": "\\\\?\\HID#VID_0B05&PID_1C80&MI_01#a&data#{guid}",
+                    "product_string": "ASUS TUF GAMING LC 3 ARGB LCD",
+                },
+                {
+                    "vendor_id": 0x0B05,
+                    "product_id": 0x19AF,
+                    "path": "\\\\?\\HID#VID_0B05&PID_19AF&MI_00#a&other#{guid}",
+                    "product_string": "ASUS Motherboard",
+                },
+            ]
+        return []
+
+    interfaces = discover_from_hidapi(enumerate_devices=enumerate_devices)
+
+    assert calls == [(0x0B05, 0x1C7B), ()]
+    assert [interface.report_size for interface in interfaces] == [440, 1024]
+    assert [interface.name for interface in interfaces] == [
+        "ASUS TUF GAMING LC 3 ARGB LCD MI_00",
+        "ASUS TUF GAMING LC 3 ARGB LCD MI_01",
+    ]
+
+
 @pytest.mark.parametrize("report_sizes", [(16, 440), (440, 440), (1024, 1024)])
 def test_choose_interfaces_requires_control_and_data_report_sizes(tmp_path, report_sizes):
     interfaces = [

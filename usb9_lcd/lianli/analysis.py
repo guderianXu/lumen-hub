@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -434,7 +435,7 @@ def receiver_evidence_manifest(root: Path) -> list[dict[str, Any]]:
     for file_path in files:
         item = {
             "path": str(file_path),
-            "relative_path": str(file_path.relative_to(root)) if root.is_dir() else file_path.name,
+            "relative_path": file_path.relative_to(root).as_posix() if root.is_dir() else file_path.name,
             "size_bytes": file_path.stat().st_size,
             "sha256": _sha256_file(file_path),
         }
@@ -1149,7 +1150,7 @@ def _optional_json_object(path: Path) -> dict[str, Any]:
 
 def _relative_path(root: Path, path: Path) -> str:
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
         return str(path)
 
@@ -1929,6 +1930,8 @@ def receiver_safe_pwm_candidate(path: Path, mac: str, device: dict[str, Any]) ->
         "--confirm",
         "WRITE-LIANLI",
     ]
+    command_argv = [*argv]
+    command_argv[command_argv.index("--output-dir") + 1] = output_dir.as_posix()
     return {
         "mac": normalized_mac,
         "status": status,
@@ -1943,7 +1946,7 @@ def receiver_safe_pwm_candidate(path: Path, mac: str, device: dict[str, Any]) ->
         "snapshot_path": str(device.get("snapshot_path") or ""),
         "raw_hex_available": bool(device.get("raw_hex")),
         "safe_pwm_argv": argv,
-        "safe_pwm_command": _tool_command(*argv),
+        "safe_pwm_command": _tool_command(*command_argv),
     }
 
 
@@ -1976,7 +1979,7 @@ def receiver_safe_expansion_candidate(
             "--color",
             "0,0,0",
             "--output-dir",
-            str(path / "experiments" / f"safe-rgb-{token}"),
+            (path / "experiments" / f"safe-rgb-{token}").as_posix(),
             "--confirm",
             "WRITE-LIANLI",
         ]
@@ -1991,7 +1994,7 @@ def receiver_safe_expansion_candidate(
             "--interval-ms",
             "50",
             "--output-dir",
-            str(path / "experiments" / f"safe-rainbow-{token}"),
+            (path / "experiments" / f"safe-rainbow-{token}").as_posix(),
             "--confirm",
             "WRITE-LIANLI",
         ]
@@ -2005,7 +2008,7 @@ def receiver_safe_expansion_candidate(
             "--mac",
             normalized_mac,
             "--output-dir",
-            str(path / "experiments" / f"safe-unbind-{token}"),
+            (path / "experiments" / f"safe-unbind-{token}").as_posix(),
             "--confirm",
             "WRITE-LIANLI",
         ]
@@ -2021,7 +2024,7 @@ def receiver_safe_expansion_candidate(
             "--rx-type",
             str(device["rx_type"]),
             "--output-dir",
-            str(path / "experiments" / f"safe-bind-{token}"),
+            (path / "experiments" / f"safe-bind-{token}").as_posix(),
             "--confirm",
             "WRITE-LIANLI",
         ]
@@ -2053,7 +2056,22 @@ def _path_token(value: str) -> str:
 
 
 def _tool_command(*parts: str) -> str:
-    return "python tools/lianli_wireless_probe.py " + " ".join(shlex.quote(str(part)) for part in parts)
+    return _command_string(("python", "tools/lianli_wireless_probe.py", *parts))
+
+
+def _command_string(parts: tuple[object, ...]) -> str:
+    return " ".join(_command_part(part) for part in parts)
+
+
+def _command_part(part: object) -> str:
+    text = str(part)
+    if os.name != "nt":
+        return shlex.quote(text)
+    if text.startswith("<") and text.endswith(">"):
+        return shlex.quote(text)
+    if any(ch.isspace() for ch in text):
+        return '"' + text.replace('"', '\\"') + '"'
+    return text
 
 
 def hardware_validation_summary(

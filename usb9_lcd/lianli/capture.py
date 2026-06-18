@@ -10,7 +10,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -2057,8 +2056,6 @@ def _linux_control_write_gate_action_blocker(
 def _linux_control_write_gate_status(action_plan: dict[str, Any], action_gates: list[dict[str, Any]]) -> str:
     if any(gate.get("ready_for_guarded_write") for gate in action_gates):
         return "write-enabled"
-    if action_plan.get("blockers"):
-        return "blocked-by-preflight"
     validation_statuses = {
         str(gate.get("validation_status") or "")
         for gate in action_gates
@@ -2075,6 +2072,8 @@ def _linux_control_write_gate_status(action_plan: dict[str, Any], action_gates: 
         return "packet-compare-failed"
     if "invalid-schema" in validation_statuses:
         return "invalid-packet-compare-schema"
+    if action_plan.get("blockers"):
+        return "blocked-by-preflight"
     if not action_gates and any(
         isinstance(action, dict) and action.get("phase") == "capture-evidence"
         for action in action_plan.get("actions", [])
@@ -4699,7 +4698,7 @@ def _usb_target_payload(role: str) -> dict[str, Any]:
 def _command_detail(argv: list[str]) -> dict[str, Any]:
     return {
         "argv": list(argv),
-        "command": " ".join(shlex.quote(str(part)) for part in argv),
+        "command": _command_string(argv),
     }
 
 
@@ -4739,26 +4738,7 @@ def _rf_payload_sha256s(frames: list[Any]) -> list[str]:
 
 
 def _tool_probe_prefix() -> list[str]:
-    roots = (Path.cwd(), Path(__file__).absolute().parents[2], Path(__file__).resolve().parents[2])
-    repo_root = next(
-        (
-            root
-            for root in roots
-            if (root / "scripts" / "lianli-wireless-probe.sh").exists()
-            or (root / "tools" / "lianli_wireless_probe.py").exists()
-        ),
-        roots[1],
-    )
-    windows_probe = repo_root / "scripts" / "lianli-wireless-probe.ps1"
-    linux_probe = repo_root / "scripts" / "lianli-wireless-probe.sh"
-    fallback_probe = repo_root / "tools" / "lianli_wireless_probe.py"
-    if os.name == "nt" and windows_probe.exists():
-        return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(windows_probe)]
-    if linux_probe.exists():
-        return ["bash", str(linux_probe)]
-    if fallback_probe.exists():
-        return [sys.executable, str(fallback_probe)]
-    return [sys.executable, str(fallback_probe)]
+    return ["python", "tools/lianli_wireless_probe.py"]
 
 
 def _tool_argv(*args: str) -> list[str]:
@@ -4862,7 +4842,7 @@ def _command_payload(value: Any) -> dict[str, Any] | None:
     argv = value.get("argv")
     if not isinstance(argv, list) or not all(isinstance(part, str) for part in argv):
         return None
-    payload = {"argv": list(argv), "command": shlex.join(argv)}
+    payload = {"argv": list(argv), "command": _command_string(argv)}
     expected_operation = value.get("expected_operation")
     if isinstance(expected_operation, str):
         payload["expected_operation"] = expected_operation
@@ -5632,7 +5612,7 @@ def _capture_candidate_score(summary: dict[str, Any]) -> int:
 def _capture_summary_display_path(root: Path, path: Path) -> str:
     if root.is_dir():
         try:
-            return str(path.relative_to(root))
+            return path.relative_to(root).as_posix()
         except ValueError:
             return str(path)
     return str(path)
@@ -12094,7 +12074,22 @@ def _scenario_linux_commands(capture_file: str) -> list[str]:
 
 
 def _tool_command(*args: str) -> str:
-    return " ".join(shlex.quote(part) for part in _tool_argv(*args))
+    return _command_string(_tool_argv(*args))
+
+
+def _command_string(argv: Iterable[str]) -> str:
+    return " ".join(_command_part(part) for part in argv)
+
+
+def _command_part(part: object) -> str:
+    text = str(part)
+    if os.name != "nt":
+        return shlex.quote(text)
+    if text.startswith("<") and text.endswith(">"):
+        return shlex.quote(text)
+    if any(ch.isspace() for ch in text):
+        return '"' + text.replace('"', '\\"') + '"'
+    return text
 
 
 def _artifact_dir_command_args(artifact_dir: Path | None) -> list[str]:
