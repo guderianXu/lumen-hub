@@ -937,6 +937,41 @@ def test_tlv2_effect_capabilities_cover_all_specs_and_aliases():
     assert tlv2_effect_capability("gradient-rainbow").key == "rainbow-morph"
 
 
+def test_official_lianli_wireless_effect_catalog_matches_lconnect_w_list():
+    from usb9_lcd.lianli.effects import (
+        OFFICIAL_LIANLI_WIRELESS_EFFECT_OPTIONS,
+        OFFICIAL_LIANLI_WIRELESS_EFFECTS,
+        normalize_lianli_wireless_effect,
+    )
+
+    assert OFFICIAL_LIANLI_WIRELESS_EFFECT_OPTIONS == (
+        ("关灯", "off"),
+        ("彩虹 (W*)", "rainbow"),
+        ("渐变彩虹 (W*)", "gradient-rainbow"),
+        ("单色 (W*)", "static"),
+        ("呼吸 (W*)", "breathing"),
+        ("流星 (W*)", "meteor"),
+        ("跑道 (W*)", "runway"),
+        ("星空 (W*)", "starry"),
+        ("色彩循环 (W*)", "color-cycle"),
+        ("覆盖周期 (W*)", "cover-cycle"),
+        ("波浪 (W*)", "wave"),
+        ("流星雨 (W*)", "meteor-shower"),
+        ("迪斯科 (W*)", "disco"),
+        ("爆破 (W*)", "blow-up"),
+        ("心跳 (W*)", "heartbeat"),
+        ("警示 (W*)", "warning"),
+        ("海洋 (W*)", "ocean"),
+        ("涟漪 (W*)", "ripple"),
+        ("回声 (W*)", "echo"),
+    )
+    assert normalize_lianli_wireless_effect("gradient-rainbow") == "rainbow-morph"
+    assert normalize_lianli_wireless_effect("starry") == "twinkle"
+    assert {effect.key for effect in OFFICIAL_LIANLI_WIRELESS_EFFECTS} == {
+        value for _label, value in OFFICIAL_LIANLI_WIRELESS_EFFECT_OPTIONS
+    }
+
+
 def test_tlv2_effect_capabilities_describe_user_controls():
     assert tlv2_effect_capability("static").uses_primary_color is True
     assert tlv2_effect_capability("static").uses_palette is False
