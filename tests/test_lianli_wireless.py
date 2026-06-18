@@ -706,14 +706,10 @@ def test_tlv2_color_effect_index_tracks_generated_extra_effect_color_dependencie
     accent_a = (255, 255, 255)
     accent_b = (255, 214, 10)
     effect_fields = {
-        "door": ("primary",),
-        "reflect": ("primary", "accent"),
-        "tail-chasing": ("primary",),
-        "paint": ("primary",),
-        "ping-pong": ("primary",),
-        "racing": ("primary", "accent"),
-        "lottery": ("accent",),
-        "collide": ("primary", "accent"),
+        "blow-up": ("primary", "accent"),
+        "heartbeat": ("primary", "accent"),
+        "warning": ("primary", "accent"),
+        "echo": ("primary", "accent"),
     }
 
     for effect, fields in effect_fields.items():
@@ -762,13 +758,13 @@ def test_tlv2_effect_payload_explicit_index_tracks_used_colors():
     target = parse_wireless_snapshot(_snapshot_payload())[0]
     palette = ((12, 34, 56), (78, 90, 123), (210, 45, 67), (89, 201, 34))
     red_expected = tlv2_color_effect_index(
-        "door",
+        "heartbeat",
         (255, 45, 85),
         accent_color=(255, 255, 255),
         palette=palette,
     )
     blue_expected = tlv2_color_effect_index(
-        "door",
+        "heartbeat",
         (31, 209, 255),
         accent_color=(255, 255, 255),
         palette=palette,
@@ -776,7 +772,7 @@ def test_tlv2_effect_payload_explicit_index_tracks_used_colors():
 
     red_payloads = build_tlv2_effect_payloads(
         target,
-        "door",
+        "heartbeat",
         color=(255, 45, 85),
         accent_color=(255, 255, 255),
         palette=palette,
@@ -787,7 +783,7 @@ def test_tlv2_effect_payload_explicit_index_tracks_used_colors():
     )
     blue_payloads = build_tlv2_effect_payloads(
         target,
-        "door",
+        "heartbeat",
         color=(31, 209, 255),
         accent_color=(255, 255, 255),
         palette=palette,
@@ -805,7 +801,7 @@ def test_tlv2_effect_payload_explicit_index_tracks_used_colors():
 
 
 def test_tlv2_effect_raw_and_index_ignore_hidden_color_parameters():
-    for effect in ("rainbow", "rainbow-morph", "kaleidoscope"):
+    for effect in ("rainbow", "rainbow-morph"):
         raw_a, _ = generate_tlv2_effect_rgb_frames(
             effect,
             led_count=26,
@@ -897,9 +893,9 @@ def test_tlv2_effect_raw_and_index_ignore_hidden_color_parameters():
     assert index_accent_a != index_accent_b
 
 
-def test_tlv2_electric_current_accent_changes_raw_and_index():
+def test_tlv2_echo_accent_changes_raw_and_index():
     raw_white, _ = generate_tlv2_effect_rgb_frames(
-        "electric-current",
+        "echo",
         led_count=27,
         color=(255, 45, 85),
         accent_color=(255, 255, 255),
@@ -907,7 +903,7 @@ def test_tlv2_electric_current_accent_changes_raw_and_index():
         direction="left",
     )
     raw_yellow, _ = generate_tlv2_effect_rgb_frames(
-        "electric-current",
+        "echo",
         led_count=27,
         color=(255, 45, 85),
         accent_color=(255, 214, 10),
@@ -915,12 +911,12 @@ def test_tlv2_electric_current_accent_changes_raw_and_index():
         direction="left",
     )
     index_white = tlv2_color_effect_index(
-        "electric-current",
+        "echo",
         (255, 45, 85),
         accent_color=(255, 255, 255),
     )
     index_yellow = tlv2_color_effect_index(
-        "electric-current",
+        "echo",
         (255, 45, 85),
         accent_color=(255, 214, 10),
     )
@@ -935,6 +931,39 @@ def test_tlv2_effect_capabilities_cover_all_specs_and_aliases():
 
     assert tlv2_effect_capability("starry").key == "twinkle"
     assert tlv2_effect_capability("gradient-rainbow").key == "rainbow-morph"
+
+
+def test_tlv2_public_specs_match_official_lianli_wireless_catalog():
+    from usb9_lcd.lianli.effects import OFFICIAL_LIANLI_WIRELESS_BACKEND_KEYS
+
+    assert set(TLV2_EFFECT_SPECS) == OFFICIAL_LIANLI_WIRELESS_BACKEND_KEYS - {"off"}
+    assert set(TLV2_EFFECT_CAPABILITIES) == set(TLV2_EFFECT_SPECS)
+
+
+def test_tlv2_rejects_removed_generated_effects_from_public_api():
+    removed = (
+        "staggered",
+        "tide",
+        "mixing",
+        "voice",
+        "door",
+        "render",
+        "reflect",
+        "tail-chasing",
+        "paint",
+        "ping-pong",
+        "stack",
+        "racing",
+        "lottery",
+        "intertwine",
+        "collide",
+        "electric-current",
+    )
+    for effect in removed:
+        with pytest.raises(LianLiWirelessError):
+            tlv2_effect_capability(effect)
+        with pytest.raises(LianLiWirelessError):
+            generate_tlv2_effect_rgb_frames(effect, led_count=26)
 
 
 def test_official_lianli_wireless_effect_catalog_matches_lconnect_w_list():
@@ -1014,7 +1043,6 @@ def test_tlv2_effect_capabilities_describe_user_controls():
     assert tlv2_effect_capability("ocean").uses_palette is True
     assert tlv2_effect_capability("ocean").color_slots == 2
     assert tlv2_effect_capability("echo").color_slots == 2
-    assert tlv2_effect_capability("collide").key == "blow-up"
 
 
 def test_tlv2_runway_uses_accent_color_for_second_color_slot():
@@ -1104,34 +1132,31 @@ def test_tlv2_effect_capability_sets_include_expected_key_controls():
     assert {
         "rainbow",
         "rainbow-morph",
+        "runway",
+        "meteor",
         "ripple",
+        "cover-cycle",
         "wave",
-        "electric-current",
-        "kaleidoscope",
+        "disco",
+        "meteor-shower",
+        "blow-up",
+        "heartbeat",
+        "warning",
+        "ocean",
+        "echo",
     } <= direction_effects
     assert {
         "color-cycle",
-        "door",
-        "render",
         "ripple",
-        "reflect",
-        "tail-chasing",
-        "paint",
-        "ping-pong",
-        "racing",
-        "lottery",
+        "cover-cycle",
         "disco",
-        "ocean",
-        "collide",
+        "meteor-shower",
         "blow-up",
+        "ocean",
     } <= palette_effects
     assert {
+        "runway",
         "twinkle",
-        "electric-current",
-        "reflect",
-        "racing",
-        "lottery",
-        "collide",
         "blow-up",
         "heartbeat",
         "warning",
@@ -1243,31 +1268,20 @@ def test_tlv2_effect_payloads_use_captured_frame_metadata():
         "rainbow-morph": (127, 55),
         "static": (1, 60),
         "breathing": (170, 60),
-        "runway": (70, 60),
         "meteor": (36, 60),
+        "runway": (70, 60),
+        "twinkle": (200, 55),
         "color-cycle": (48, 60),
-        "staggered": (48, 60),
-        "tide": (60, 60),
-        "mixing": (72, 60),
-        "voice": (48, 55),
-        "door": (52, 60),
-        "render": (64, 60),
-        "ripple": (294, 90),
-        "reflect": (56, 60),
-        "tail-chasing": (72, 60),
-        "paint": (64, 60),
-        "ping-pong": (60, 55),
-        "stack": (64, 60),
         "cover-cycle": (72, 60),
         "wave": (24, 60),
-        "racing": (48, 45),
-        "lottery": (80, 55),
-        "intertwine": (72, 60),
         "meteor-shower": (48, 60),
-        "collide": (64, 60),
-        "electric-current": (80, 60),
-        "kaleidoscope": (24, 60),
-        "twinkle": (200, 55),
+        "disco": (48, 60),
+        "blow-up": (64, 60),
+        "heartbeat": (72, 60),
+        "warning": (48, 60),
+        "ocean": (80, 60),
+        "ripple": (294, 90),
+        "echo": (96, 60),
     }
 
     for effect, (frame_count, interval_ms) in expected.items():
@@ -1324,36 +1338,27 @@ def test_tlv2_effect_payloads_keep_first_packet_metadata_only_like_lconnect():
 
 
 def test_tlv2_dynamic_effect_generators_do_not_collapse_to_static_rgb():
-    dynamic_effects = {
+    official_effects = (
         "rainbow",
         "rainbow-morph",
+        "static",
         "breathing",
-        "runway",
         "meteor",
+        "runway",
+        "twinkle",
         "color-cycle",
-        "staggered",
-        "tide",
-        "mixing",
-        "voice",
-        "door",
-        "render",
-        "ripple",
-        "reflect",
-        "tail-chasing",
-        "paint",
-        "ping-pong",
-        "stack",
         "cover-cycle",
         "wave",
-        "racing",
-        "lottery",
-        "intertwine",
         "meteor-shower",
-        "collide",
-        "electric-current",
-        "kaleidoscope",
-        "twinkle",
-    }
+        "disco",
+        "blow-up",
+        "heartbeat",
+        "warning",
+        "ocean",
+        "ripple",
+        "echo",
+    )
+    dynamic_effects = set(official_effects) - {"static"}
 
     for effect in dynamic_effects:
         raw, spec = generate_tlv2_effect_rgb_frames(
@@ -1470,32 +1475,31 @@ def test_tlv2_direction_hidden_effects_do_not_change_when_direction_changes():
         assert left_raw == right_raw, effect
 
 
-def test_tlv2_generated_fallback_direction_capable_effects_change_when_direction_changes():
-    for effect in ("ripple", "electric-current"):
-        left_raw, _ = generate_tlv2_effect_rgb_frames(
-            effect,
-            led_count=27,
-            color=(255, 45, 85),
-            accent_color=(255, 255, 255),
-            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
-            brightness=80,
-            direction="left",
-        )
-        right_raw, _ = generate_tlv2_effect_rgb_frames(
-            effect,
-            led_count=27,
-            color=(255, 45, 85),
-            accent_color=(255, 255, 255),
-            palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
-            brightness=80,
-            direction="right",
-        )
-        assert left_raw != right_raw, effect
+def test_tlv2_ripple_changes_when_direction_changes():
+    left_raw, _ = generate_tlv2_effect_rgb_frames(
+        "ripple",
+        led_count=27,
+        color=(255, 45, 85),
+        accent_color=(255, 255, 255),
+        palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+        brightness=80,
+        direction="left",
+    )
+    right_raw, _ = generate_tlv2_effect_rgb_frames(
+        "ripple",
+        led_count=27,
+        color=(255, 45, 85),
+        accent_color=(255, 255, 255),
+        palette=((255, 45, 85), (31, 209, 255), (107, 255, 92), (255, 214, 10)),
+        brightness=80,
+        direction="right",
+    )
+    assert left_raw != right_raw
 
 
-def test_tlv2_electric_current_official_path_honors_accent_color():
+def test_tlv2_echo_honors_accent_color():
     raw_white, _ = generate_tlv2_effect_rgb_frames(
-        "electric-current",
+        "echo",
         led_count=26,
         color=(255, 45, 85),
         accent_color=(255, 255, 255),
@@ -1503,7 +1507,7 @@ def test_tlv2_electric_current_official_path_honors_accent_color():
         direction="left",
     )
     raw_yellow, _ = generate_tlv2_effect_rgb_frames(
-        "electric-current",
+        "echo",
         led_count=26,
         color=(255, 45, 85),
         accent_color=(255, 214, 10),
@@ -1553,8 +1557,6 @@ def test_tlv2_effect_generators_match_official_lconnect_decoded_hashes():
         "ripple": "a5eb837757c4384ac6814124a43261af3b9b833a35c62bdec1bbd1d91a5b009f",
         "wave": "61dba4b1ebcd62cf28fd12aa89145819f876bcd871a3a5e5c445e91f66f0399f",
         "meteor-shower": "b4c76c32a992422deb6ff83530a503c93dc5f2a25c79e5a1bf2f5fcc4b28d47d",
-        "electric-current": "87f3abcb91924372d2b605b1b3808ed08ab6162d1872a781c4cf148198944c1d",
-        "kaleidoscope": "57063be37a8377989e802aee22afd3decdb18bec206fc135da77ae50ad8065e5",
         "twinkle": "da4c7175f5dbe80f09af56583dc1bec9912790de8cf47f5fb5c77f6a183d6690",
     }
 
