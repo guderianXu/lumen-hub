@@ -42,6 +42,10 @@ from usb9_lcd.gui.settings import (
 from usb9_lcd.gui.wheel_guard import install_wheel_guard
 from usb9_lcd.lianli.analysis import analyze_live_log, diff_snapshot_files, summarize_experiment_dir
 from usb9_lcd.lianli.capture import linux_control_write_gate_report
+from usb9_lcd.lianli.effects import (
+    OFFICIAL_LIANLI_WIRELESS_EFFECT_OPTIONS,
+    lianli_wireless_effect,
+)
 from usb9_lcd.lianli.lcd import LianLiWirelessLcdBackend, create_pyusb_lcd_backend
 from usb9_lcd.lianli.wireless import (
     LianLiWirelessBackend,
@@ -65,27 +69,7 @@ from usb9_lcd.platforms.process import hidden_subprocess_kwargs
 
 LIANLI_WRITE_CONFIRM_TOKEN = "WRITE-LIANLI"
 LIANLI_DEFAULT_ROTATION_COLORS = ("#fe0000", "#00fe00", "#0000fe", "#ffd60a")
-LIANLI_OFFICIAL_EFFECT_OPTIONS = (
-    ("关灯", "off"),
-    ("彩虹 (W*)", "rainbow"),
-    ("渐变彩虹 (W*)", "gradient-rainbow"),
-    ("单色 (W*)", "static"),
-    ("呼吸 (W*)", "breathing"),
-    ("流星 (W*)", "meteor"),
-    ("跑道 (W*)", "runway"),
-    ("星空 (W*)", "starry"),
-    ("色彩循环 (W*)", "color-cycle"),
-    ("覆盖周期 (W*)", "cover-cycle"),
-    ("波浪 (W*)", "wave"),
-    ("流星雨 (W*)", "meteor-shower"),
-    ("迪斯科 (W*)", "disco"),
-    ("爆破 (W*)", "blow-up"),
-    ("心跳 (W*)", "heartbeat"),
-    ("警示 (W*)", "warning"),
-    ("海洋 (W*)", "ocean"),
-    ("涟漪 (W*)", "ripple"),
-    ("回声 (W*)", "echo"),
-)
+LIANLI_OFFICIAL_EFFECT_OPTIONS = OFFICIAL_LIANLI_WIRELESS_EFFECT_OPTIONS
 def _pages_override(name: str, fallback: Callable):
     pages_module = sys.modules.get("usb9_lcd.gui.pages")
     override = getattr(pages_module, name, None) if pages_module is not None else None
@@ -3127,6 +3111,8 @@ class LianLiWirelessPage(QWidget):
 
             self.lianli_rotation_colors_layout.addWidget(button)
 
+            button.show()
+
         self.lianli_rotation_colors_layout.addStretch(1)
 
 
@@ -3134,19 +3120,17 @@ class LianLiWirelessPage(QWidget):
 
         try:
 
-            effect = self._lianli_tlv2_effect_name(str(self.lianli_effect_combo.currentData()))
+            effect = lianli_wireless_effect(str(self.lianli_effect_combo.currentData()))
 
-            capability = tlv2_effect_capability(effect)
+        except ValueError:
 
-        except Exception:
+            return 0
 
-            return len(self._rotation_colors())
+        if effect.color_mode != "palette":
 
-        if capability.uses_palette:
+            return 0
 
-            return max(1, min(len(self._rotation_colors()), int(capability.color_slots or len(self._rotation_colors()))))
-
-        return 0
+        return max(1, min(len(self._rotation_colors()), int(effect.color_slots)))
 
 
 
@@ -3752,11 +3736,7 @@ class LianLiWirelessPage(QWidget):
 
 
     def _lianli_tlv2_effect_name(self, effect: str) -> str:
-        if effect == "starry":
-
-            return "twinkle"
-
-        return effect
+        return lianli_wireless_effect(effect).backend_key
 
 
 
@@ -3810,114 +3790,72 @@ class LianLiWirelessPage(QWidget):
 
             return backend.send_static_rgb(target, (0, 0, 0), led_count=led_count)
 
-        native_effects = {
-            "rainbow",
-            "gradient-rainbow",
-            "breathing",
-            "meteor",
-            "runway",
-            "wave",
-            "starry",
-            "color-cycle",
-            "ripple",
-            "staggered",
-            "tide",
-            "mixing",
-            "voice",
-            "door",
-            "render",
-            "reflect",
-            "tail-chasing",
-            "paint",
-            "ping-pong",
-            "stack",
-            "cover-cycle",
-            "meteor-shower",
-            "blow-up",
-            "collide",
-            "disco",
-            "racing",
-            "lottery",
-            "intertwine",
-            "heartbeat",
-            "warning",
-            "ocean",
-            "echo",
-            "rainbow-morph",
+        try:
+
+            effect_info = lianli_wireless_effect(effect)
+
+        except ValueError as error:
+
+            raise ValueError(str(error)) from error
+
+        if effect_info.backend_key in {"static", "off"}:
+
+            raise ValueError(f"unexpected catalog dispatch for {effect_info.backend_key}")
+
+        primary_color = self._hex_to_rgb(self.lianli_static_color)
+
+        accent_color = self._hex_to_rgb(self.lianli_accent_color)
+
+        palette = [self._hex_to_rgb(color) for color in self._rotation_colors()[: max(1, effect_info.color_slots)]]
+
+        effect_name = effect_info.backend_key
+
+        capability = tlv2_effect_capability(effect_name)
+
+        if capability.uses_palette:
+
+            if capability.uses_primary_color and palette:
+
+                primary_color = palette[0]
+
+            if capability.uses_accent_color and len(palette) > 1:
+
+                accent_color = palette[1]
+
+        direction = direction_override if direction_override in {"left", "right"} else str(self.lianli_direction_combo.currentData() or "left")
+
+        effect_index = tlv2_color_effect_index(
+
+            effect_name,
+
+            primary_color,
+
+            accent_color=accent_color,
+
+            palette=palette,
+
+            direction=direction,
+        )
+
+        kwargs: dict[str, object] = {
+            "brightness": self.lianli_brightness_slider.value(),
+            "led_count": led_count,
+            "effect_index": effect_index,
         }
 
-        if effect in native_effects:
+        if capability.uses_primary_color:
+            kwargs["color"] = primary_color
 
-            primary_color = self._hex_to_rgb(self.lianli_static_color)
+        if capability.uses_accent_color:
+            kwargs["accent_color"] = accent_color
 
-            accent_color = self._hex_to_rgb(self.lianli_accent_color)
+        if capability.uses_palette:
+            kwargs["palette"] = palette
 
-            palette = [self._hex_to_rgb(color) for color in self._rotation_colors()]
+        if capability.uses_direction:
+            kwargs["direction"] = direction
 
-            effect_name = self._lianli_tlv2_effect_name(effect)
-
-            capability = tlv2_effect_capability(effect_name)
-
-            if capability.uses_palette:
-
-                if capability.uses_primary_color and palette:
-
-                    primary_color = palette[0]
-
-                if capability.uses_accent_color and len(palette) > 1:
-
-                    accent_color = palette[1]
-
-            direction = direction_override if direction_override in {"left", "right"} else str(self.lianli_direction_combo.currentData() or "left")
-
-            effect_index = tlv2_color_effect_index(
-
-                effect_name,
-
-                primary_color,
-
-                accent_color=accent_color,
-
-                palette=palette,
-
-                direction=direction,
-            )
-
-            kwargs: dict[str, object] = {
-                "brightness": self.lianli_brightness_slider.value(),
-                "led_count": led_count,
-                "effect_index": effect_index,
-            }
-
-            if capability.uses_primary_color:
-                kwargs["color"] = primary_color
-
-            if capability.uses_accent_color:
-                kwargs["accent_color"] = accent_color
-
-            if capability.uses_palette:
-                kwargs["palette"] = palette
-
-            if capability.uses_direction:
-                kwargs["direction"] = direction
-
-            return backend.send_tlv2_effect(target, effect_name, **kwargs)
-
-        if effect in {"rotate", "overlap-cycle"}:
-
-            first = self._rotation_colors()[0]
-
-            return backend.send_static_rgb(
-
-                target,
-
-                self._hex_to_rgb(first),
-
-                led_count=led_count,
-
-            )
-
-        raise ValueError(f"灯效尚未实现：{effect}")
+        return backend.send_tlv2_effect(target, effect_name, **kwargs)
 
     def _speed_to_rainbow_refresh_s(self, speed: int) -> float:
 
@@ -4923,65 +4861,27 @@ class LianLiWirelessPage(QWidget):
 
         effect = str(self.lianli_effect_combo.currentData() or "off")
 
-        if effect == "off":
+        try:
 
-            has_speed = False
+            effect_info = lianli_wireless_effect(effect)
 
-            has_brightness = False
+        except ValueError:
 
-            has_color = False
+            effect_info = lianli_wireless_effect("off")
 
-            has_accent = False
+        has_speed = effect_info.uses_speed
 
-            has_rotation = False
+        has_brightness = effect_info.uses_brightness
 
-            has_direction = False
+        has_color = effect_info.color_mode in {"primary", "primary_accent"}
 
-        elif effect == "static":
+        has_accent = effect_info.color_mode == "primary_accent" and effect_info.color_slots >= 2
 
-            has_speed = False
+        has_rotation = effect_info.color_mode == "palette"
 
-            has_brightness = True
+        has_direction = effect_info.uses_direction
 
-            has_color = True
-
-            has_accent = False
-
-            has_rotation = False
-
-            has_direction = False
-
-        elif effect in {"rotate", "overlap-cycle"}:
-
-            has_speed = True
-
-            has_brightness = True
-
-            has_color = False
-
-            has_accent = False
-
-            has_rotation = True
-
-            has_direction = False
-
-        else:
-
-            capability = tlv2_effect_capability(self._lianli_tlv2_effect_name(effect))
-
-            has_speed = capability.uses_speed
-
-            has_brightness = capability.uses_brightness
-
-            has_color = capability.uses_primary_color and not capability.uses_palette
-
-            has_accent = capability.uses_accent_color and not capability.uses_palette
-
-            has_rotation = capability.uses_palette
-
-            has_direction = capability.uses_direction
-
-        has_hold = effect == "rotate"
+        has_hold = False
 
         for widget in (self.lianli_speed_label, self.lianli_speed_slider, self.lianli_speed_value):
 
@@ -5017,9 +4917,9 @@ class LianLiWirelessPage(QWidget):
 
             widget.setVisible(has_hold)
 
-        self.lianli_start_loop_button.setVisible(effect == "rotate")
+        self.lianli_start_loop_button.setVisible(False)
 
-        self.lianli_stop_loop_button.setVisible(effect == "rotate")
+        self.lianli_stop_loop_button.setVisible(False)
 
 
 

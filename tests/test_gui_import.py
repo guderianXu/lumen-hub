@@ -2103,13 +2103,13 @@ def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
 
     page._send_lianli_effect_with_backend(backend, target, "ripple")
     assert backend.calls[-1][0] == "ripple"
-    assert backend.calls[-1][1]["palette"] == [(1, 2, 3), (4, 5, 6), (7, 8, 9), (255, 214, 10)]
+    assert backend.calls[-1][1]["palette"] == [(1, 2, 3), (4, 5, 6)]
     assert backend.calls[-1][1]["direction"] == "right"
     assert backend.calls[-1][1]["effect_index"] == tlv2_color_effect_index(
         "ripple",
         (17, 34, 51),
         accent_color=(170, 187, 204),
-        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9), (255, 214, 10)],
+        palette=[(1, 2, 3), (4, 5, 6)],
         direction="right",
     )
 
@@ -2121,7 +2121,7 @@ def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
         "twinkle",
         (17, 34, 51),
         accent_color=(170, 187, 204),
-        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9), (255, 214, 10)],
+        palette=[(1, 2, 3), (4, 5, 6)],
         direction="right",
     )
 
@@ -2133,7 +2133,7 @@ def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
         "runway",
         (17, 34, 51),
         accent_color=(170, 187, 204),
-        palette=[(1, 2, 3), (4, 5, 6), (7, 8, 9), (255, 214, 10)],
+        palette=[(1, 2, 3), (4, 5, 6)],
         direction="right",
     )
     page._remember_lianli_effect_settings("ripple")
@@ -2231,19 +2231,15 @@ def test_lianli_wireless_page_uses_lconnect_style_direction_buttons():
     app.quit()
 
 
-def test_lianli_wireless_page_sends_remaining_effects_as_tlv2_frames():
+def test_lianli_wireless_page_rejects_removed_generated_effects():
     from PySide6.QtWidgets import QApplication
 
     from usb9_lcd.gui.pages import LianLiWirelessPage
     from usb9_lcd.lianli.wireless import WirelessDeviceInfo
 
     class FakeLianLiBackend:
-        def __init__(self):
-            self.effects: list[str] = []
-
-        def send_tlv2_effect(self, target, effect, *, led_count, brightness, **kwargs):
-            self.effects.append(effect)
-            return 12
+        def send_tlv2_effect(self, *args, **kwargs):
+            raise AssertionError("removed effects must not reach the backend")
 
     target = WirelessDeviceInfo(
         mac="aa:bb:cc:dd:ee:ff",
@@ -2257,33 +2253,12 @@ def test_lianli_wireless_page_sends_remaining_effects_as_tlv2_frames():
         command_sequence=7,
         raw=bytes(42),
     )
-    backend = FakeLianLiBackend()
     app = QApplication.instance() or QApplication([])
-    page = LianLiWirelessPage(backend_factory=lambda: backend)
+    page = LianLiWirelessPage(backend_factory=FakeLianLiBackend)
 
-    remaining = [
-        "staggered",
-        "tide",
-        "mixing",
-        "voice",
-        "door",
-        "render",
-        "reflect",
-        "tail-chasing",
-        "paint",
-        "ping-pong",
-        "stack",
-        "cover-cycle",
-        "racing",
-        "lottery",
-        "intertwine",
-        "collide",
-    ]
-
-    for effect in remaining:
-        page._send_lianli_effect_with_backend(backend, target, effect)
-
-    assert backend.effects == remaining
+    for effect in ("staggered", "tide", "mixing", "door", "racing", "lottery", "collide"):
+        with pytest.raises(ValueError, match="unsupported official LIAN LI wireless effect"):
+            page._send_lianli_effect_with_backend(FakeLianLiBackend(), target, effect)
 
     page.close()
     app.quit()
@@ -2327,36 +2302,47 @@ def test_lianli_wireless_page_only_exposes_official_lconnect_effects():
     from PySide6.QtWidgets import QApplication
 
     from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.lianli.effects import OFFICIAL_LIANLI_WIRELESS_EFFECT_OPTIONS
 
     app = QApplication.instance() or QApplication([])
     page = LianLiWirelessPage()
 
-    available = [
+    available = tuple(
         (page.lianli_effect_combo.itemText(index), str(page.lianli_effect_combo.itemData(index)))
         for index in range(page.lianli_effect_combo.count())
-    ]
+    )
 
-    assert available == [
-        ("关灯", "off"),
-        ("彩虹 (W*)", "rainbow"),
-        ("渐变彩虹 (W*)", "gradient-rainbow"),
-        ("单色 (W*)", "static"),
-        ("呼吸 (W*)", "breathing"),
-        ("流星 (W*)", "meteor"),
-        ("跑道 (W*)", "runway"),
-        ("星空 (W*)", "starry"),
-        ("色彩循环 (W*)", "color-cycle"),
-        ("覆盖周期 (W*)", "cover-cycle"),
-        ("波浪 (W*)", "wave"),
-        ("流星雨 (W*)", "meteor-shower"),
-        ("迪斯科 (W*)", "disco"),
-        ("爆破 (W*)", "blow-up"),
-        ("心跳 (W*)", "heartbeat"),
-        ("警示 (W*)", "warning"),
-        ("海洋 (W*)", "ocean"),
-        ("涟漪 (W*)", "ripple"),
-        ("回声 (W*)", "echo"),
-    ]
+    assert available == OFFICIAL_LIANLI_WIRELESS_EFFECT_OPTIONS
+
+    page.close()
+    app.quit()
+
+
+def test_lianli_wireless_page_swatches_match_official_slot_counts():
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.lianli.effects import OFFICIAL_LIANLI_WIRELESS_EFFECTS
+
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage()
+    page.show()
+    app.processEvents()
+
+    for effect in OFFICIAL_LIANLI_WIRELESS_EFFECTS:
+        index = page.lianli_effect_combo.findData(effect.key)
+        assert index >= 0, effect.key
+        page.lianli_effect_combo.setCurrentIndex(index)
+        page._update_lianli_effect_fields()
+
+        primary_visible = page.lianli_color_button.isVisible()
+        accent_visible = page.lianli_accent_color_button.isVisible()
+        palette_buttons = [
+            button for button in page.lianli_rotation_colors.findChildren(QPushButton)
+            if button.isVisible()
+        ]
+        visible_slots = int(primary_visible) + int(accent_visible) + len(palette_buttons)
+        assert visible_slots == effect.color_slots, effect.key
 
     page.close()
     app.quit()
