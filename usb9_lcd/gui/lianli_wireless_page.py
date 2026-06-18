@@ -3806,21 +3806,25 @@ class LianLiWirelessPage(QWidget):
 
         accent_color = self._hex_to_rgb(self.lianli_accent_color)
 
-        palette = [self._hex_to_rgb(color) for color in self._rotation_colors()[: max(1, effect_info.color_slots)]]
+        if effect_info.color_mode == "palette":
+
+            palette = [self._hex_to_rgb(color) for color in self._rotation_colors()[: max(1, effect_info.color_slots)]]
+
+        elif effect_info.color_mode == "primary_accent":
+
+            palette = [primary_color, accent_color][: max(1, effect_info.color_slots)]
+
+        elif effect_info.color_mode == "primary":
+
+            palette = [primary_color][: max(1, effect_info.color_slots)]
+
+        else:
+
+            palette = []
 
         effect_name = effect_info.backend_key
 
         capability = tlv2_effect_capability(effect_name)
-
-        if capability.uses_palette:
-
-            if capability.uses_primary_color and palette:
-
-                primary_color = palette[0]
-
-            if capability.uses_accent_color and len(palette) > 1:
-
-                accent_color = palette[1]
 
         direction = direction_override if direction_override in {"left", "right"} else str(self.lianli_direction_combo.currentData() or "left")
 

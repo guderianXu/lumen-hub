@@ -2144,6 +2144,50 @@ def test_lianli_wireless_page_sends_palette_and_accent_from_capabilities():
     app.quit()
 
 
+def test_lianli_wireless_page_blow_up_uses_visible_primary_and_accent_swatches():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def send_tlv2_effect(self, target, effect, *, led_count, brightness, **kwargs):
+            self.calls.append((effect, kwargs))
+            return 20
+
+    target = WirelessDeviceInfo(
+        mac="aa:bb:cc:dd:ee:ff",
+        master_mac="10:20:30:40:50:60",
+        channel=8,
+        rx_type=3,
+        device_type=2,
+        fan_count=3,
+        pwm_values=(80, 90, 100, 110),
+        fan_rpm=(1234, 1500, 0, 0),
+        command_sequence=7,
+        raw=bytes(42),
+    )
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(backend_factory=lambda: backend)
+    page.set_lianli_static_color("#112233")
+    page.set_lianli_accent_color("#aabbcc")
+    page._set_lianli_rotation_colors(["#010203", "#040506"])
+
+    page._send_lianli_effect_with_backend(backend, target, "blow-up")
+
+    assert backend.calls[-1][0] == "blow-up"
+    assert backend.calls[-1][1]["color"] == (17, 34, 51)
+    assert backend.calls[-1][1]["accent_color"] == (170, 187, 204)
+    assert backend.calls[-1][1]["palette"] == [(17, 34, 51), (170, 187, 204)]
+
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_edits_palette_as_color_swatches():
     from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton
 
