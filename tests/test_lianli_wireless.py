@@ -1112,6 +1112,81 @@ def test_tlv2_heartbeat_uses_two_separate_color_pulses_with_dark_rest():
     assert any(max(peak) <= 8 for peak in frame_peaks)
 
 
+def test_official_lianli_effect_visible_color_slots_change_output_or_index():
+    from usb9_lcd.lianli.effects import OFFICIAL_LIANLI_WIRELESS_EFFECTS
+
+    base_primary = (255, 0, 0)
+    base_accent = (0, 255, 0)
+    alternate_primary = (255, 0, 255)
+    alternate_accent = (0, 255, 255)
+    palette = ((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0))
+    alternate_palette = ((255, 0, 255), (0, 255, 255), (255, 255, 255), (255, 128, 0))
+
+    for effect in OFFICIAL_LIANLI_WIRELESS_EFFECTS:
+        if effect.backend_key == "off" or effect.color_slots == 0:
+            continue
+
+        raw_a, _ = generate_tlv2_effect_rgb_frames(
+            effect.backend_key,
+            led_count=26,
+            color=base_primary,
+            accent_color=base_accent,
+            palette=palette,
+            brightness=100,
+            direction="left",
+        )
+        index_a = tlv2_color_effect_index(
+            effect.backend_key,
+            base_primary,
+            accent_color=base_accent,
+            palette=palette,
+            direction="left",
+        )
+
+        if effect.color_mode == "primary":
+            mutations = (("primary", alternate_primary, base_accent, palette),)
+        elif effect.color_mode == "primary_accent":
+            mutations = (
+                ("primary", alternate_primary, base_accent, palette),
+                ("accent", base_primary, alternate_accent, palette),
+            )
+        elif effect.color_mode == "palette":
+            mutations = tuple(
+                (
+                    f"palette[{slot}]",
+                    base_primary,
+                    base_accent,
+                    tuple(
+                        alternate_palette[index] if index == slot else color
+                        for index, color in enumerate(palette)
+                    ),
+                )
+                for slot in range(effect.color_slots)
+            )
+        else:
+            raise AssertionError(f"unexpected color mode for visible slots: {effect.color_mode}")
+
+        for slot_name, changed_primary, changed_accent, changed_palette in mutations:
+            raw_b, _ = generate_tlv2_effect_rgb_frames(
+                effect.backend_key,
+                led_count=26,
+                color=changed_primary,
+                accent_color=changed_accent,
+                palette=changed_palette,
+                brightness=100,
+                direction="left",
+            )
+            index_b = tlv2_color_effect_index(
+                effect.backend_key,
+                changed_primary,
+                accent_color=changed_accent,
+                palette=changed_palette,
+                direction="left",
+            )
+
+            assert raw_a != raw_b or index_a != index_b, (effect.backend_key, slot_name)
+
+
 def test_tlv2_effect_capability_sets_include_expected_key_controls():
     direction_effects = {
         effect
