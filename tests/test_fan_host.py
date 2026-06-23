@@ -939,6 +939,59 @@ def test_fan_host_render_does_not_apply_curve_during_readonly_refresh(tmp_path):
     app.quit()
 
 
+def test_fan_host_enabling_curve_requests_fresh_snapshot_before_writing(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+
+    pwm_path = tmp_path / "pwm1"
+    pwm_path.write_text("0\n", encoding="utf-8")
+    settings = GuiSettings()
+    settings.host_fan.curve_points = [[40, 20], [80, 100]]
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="CPU Fan",
+                rpm=900,
+                pwm_path=pwm_path,
+                control_available=True,
+                control_reason="PWM writable",
+            )
+        ],
+        control_available=True,
+        control_reason="1 writable PWM channel(s) detected",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=lambda _settings: None,
+        snapshot_collector=lambda: snapshot,
+    )
+    reloads: list[dict[str, object]] = []
+    direct_applies: list[GenericFanSnapshot] = []
+    page._snapshot = snapshot
+    page.reload_fan_control = lambda *args, **kwargs: reloads.append(kwargs)  # type: ignore[method-assign]
+    page._apply_curve_to_snapshot = lambda snap, *, source: direct_applies.append(snap)  # type: ignore[method-assign]
+    page.curve_enable.blockSignals(True)
+    page.curve_enable.setChecked(True)
+    page.curve_enable.blockSignals(False)
+
+    page._curve_enabled_changed(True)
+
+    assert direct_applies == []
+    assert reloads == [{"interactive_driver_probe": False, "apply_curve_after_scan": True}]
+    assert "刷新温度" in page.status_label.text()
+
+    page.release()
+    page.close()
+    app.quit()
+
+
 def test_fan_host_applies_windows_control_percent(monkeypatch):
     from PySide6.QtWidgets import QApplication
 

@@ -1456,7 +1456,6 @@ class MainWindow(QMainWindow):
             save_settings(self.settings)
             if hasattr(self, "home_page"):
                 self.home_page.set_mode_indicator(scene.name)
-                self.home_page.add_event(f"场景已应用：{scene.name}")
         return SceneApplySummary(scene.key, scene.name, tuple(items))
 
     def _scene_availability(self) -> SceneAvailability:

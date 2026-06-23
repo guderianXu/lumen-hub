@@ -1266,8 +1266,9 @@ class FanControlHostPage(QWidget):
             self.settings.host_fan.curve_points = sanitize_fan_curve_points(self.curve_editor.points())
         self._save_host_fan_settings()
         self._update_curve_summary()
-        if self.curve_enable.isChecked() and self._snapshot is not None and self._snapshot.control_available:
-            self._apply_curve_to_snapshot(self._snapshot, source="曲线预设")
+        if self.curve_enable.isChecked():
+            self._reset_curve_policy_memory()
+            self._request_curve_apply_after_fresh_scan("风扇曲线预设已更新，正在刷新温度并按曲线写入")
         else:
             self._set_status(f"已选择风扇曲线预设：{self.curve_preset_combo.currentText()}")
 
@@ -1299,10 +1300,8 @@ class FanControlHostPage(QWidget):
         self._save_host_fan_settings()
         self._sync_curve_timer()
         if enabled:
-            if self._snapshot is not None and self._snapshot.control_available:
-                self._apply_curve_to_snapshot(self._snapshot, source="曲线启用")
-            else:
-                self._set_status("风扇曲线已启用，等待可写 PWM 通道")
+            self._reset_curve_policy_memory()
+            self._request_curve_apply_after_fresh_scan("风扇曲线已启用，正在刷新温度并按曲线写入")
         else:
             self._set_status("风扇曲线控制已暂停")
 
@@ -1402,6 +1401,14 @@ class FanControlHostPage(QWidget):
             self._apply_curve_after_scan = True
             return
         self.reload_fan_control(interactive_driver_probe=False, apply_curve_after_scan=True)
+
+    def _request_curve_apply_after_fresh_scan(self, status: str) -> None:
+        if self._scan_active:
+            self._apply_curve_after_scan = True
+            self._set_status("风扇曲线等待当前扫描完成后写入")
+            return
+        self.reload_fan_control(interactive_driver_probe=False, apply_curve_after_scan=True)
+        self._set_status(status)
 
     def _apply_curve_now(self) -> None:
         if self._snapshot is None or not self._snapshot.control_available:
