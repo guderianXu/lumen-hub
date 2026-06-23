@@ -870,12 +870,13 @@ class FanControlHostPage(QWidget):
         apply_curve_after_scan: bool = False,
         **kwargs,
     ) -> None:  # noqa: ARG002, ANN002, ANN003
+        curve_requested = bool(apply_curve_after_scan or self._curve_enabled_for_scan())
         if self._scan_active:
-            if apply_curve_after_scan:
+            if curve_requested:
                 self._apply_curve_after_scan = True
             self._set_status("普通风扇正在扫描中...")
             return
-        self._apply_curve_after_scan = bool(apply_curve_after_scan)
+        self._apply_curve_after_scan = curve_requested
         self._scan_active = True
         self.scan_button.setEnabled(False)
         self._set_status("正在扫描普通风扇...")
@@ -1086,17 +1087,18 @@ class FanControlHostPage(QWidget):
         if isinstance(snapshot, GenericFanSnapshot):
             self._snapshot = snapshot
             self._loaded = True
-            self._render_snapshot()
-            self._set_status(self.home_status_text())
+            curve_status_set = self._render_snapshot()
+            if not curve_status_set:
+                self._set_status(self.home_status_text())
 
     def release(self) -> None:
         self._live_timer.stop()
         self._curve_timer.stop()
         return None
 
-    def _render_snapshot(self) -> None:
+    def _render_snapshot(self) -> bool:
         if self._snapshot is None:
-            return
+            return False
         snapshot = self._snapshot_with_saved_roles(self._snapshot)
         self._snapshot = snapshot
         self.cpu_value.setText(_cpu_temperature_label(snapshot))
@@ -1115,6 +1117,8 @@ class FanControlHostPage(QWidget):
         self._apply_curve_after_scan = False
         if should_apply_curve and self.curve_enable.isChecked() and snapshot.control_available and not self._curve_applying:
             self._apply_curve_to_snapshot(snapshot, source="曲线自动")
+            return True
+        return False
 
     def _snapshot_with_saved_roles(self, snapshot: GenericFanSnapshot) -> GenericFanSnapshot:
         roles = self.settings.host_fan.channel_roles
@@ -1369,13 +1373,20 @@ class FanControlHostPage(QWidget):
     def _live_refresh_tick(self) -> None:
         if self._scan_active:
             return
-        self.reload_fan_control(interactive_driver_probe=False, apply_curve_after_scan=False)
+        self.reload_fan_control(
+            interactive_driver_probe=False,
+            apply_curve_after_scan=self._curve_enabled_for_scan(),
+        )
 
     def _update_live_status(self, snapshot: GenericFanSnapshot) -> None:
         if not hasattr(self, "live_value"):
             return
         mode = f"自动刷新 {self.live_interval.value()}s" if self.live_refresh.isChecked() else "自动刷新已暂停"
-        self.live_value.setText(f"更新 {_snapshot_update_time(snapshot)}\n{mode} · 只读显示")
+        if self._curve_enabled_for_scan():
+            curve_mode = "曲线控制中" if snapshot.control_available else "曲线已启用但无可写 PWM"
+        else:
+            curve_mode = "只读显示"
+        self.live_value.setText(f"更新 {_snapshot_update_time(snapshot)}\n{mode} · {curve_mode}")
 
     def _sync_permission_controls(self) -> None:
         if not hasattr(self, "permission_button"):
@@ -1401,6 +1412,9 @@ class FanControlHostPage(QWidget):
             self._apply_curve_after_scan = True
             return
         self.reload_fan_control(interactive_driver_probe=False, apply_curve_after_scan=True)
+
+    def _curve_enabled_for_scan(self) -> bool:
+        return bool(hasattr(self, "curve_enable") and self.curve_enable.isChecked())
 
     def _request_curve_apply_after_fresh_scan(self, status: str) -> None:
         if self._scan_active:

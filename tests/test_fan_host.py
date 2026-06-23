@@ -885,6 +885,44 @@ def test_fan_host_live_refresh_and_curve_tick_are_separated():
     app.quit()
 
 
+def test_fan_host_live_refresh_applies_curve_when_enabled():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+
+    settings = GuiSettings()
+    settings.host_fan.curve_enabled = True
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="CPU Fan",
+                rpm=900,
+                control_available=True,
+                control_reason="PWM writable",
+            )
+        ],
+        control_available=True,
+        control_reason="1 writable PWM channel(s) detected",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False, settings=settings)
+    calls: list[dict[str, object]] = []
+    page.reload_fan_control = lambda *args, **kwargs: calls.append(kwargs)  # type: ignore[method-assign]
+    page._snapshot = snapshot
+
+    page._live_refresh_tick()
+
+    assert calls == [{"interactive_driver_probe": False, "apply_curve_after_scan": True}]
+
+    page.release()
+    page.close()
+    app.quit()
+
+
 def test_fan_host_render_does_not_apply_curve_during_readonly_refresh(tmp_path):
     from PySide6.QtWidgets import QApplication
 
@@ -933,6 +971,52 @@ def test_fan_host_render_does_not_apply_curve_during_readonly_refresh(tmp_path):
 
     assert pwm_enable_path.read_text(encoding="utf-8") == "1\n"
     assert pwm_path.read_text(encoding="utf-8") == "112\n"
+
+    page.release()
+    page.close()
+    app.quit()
+
+
+def test_fan_host_scan_status_keeps_curve_write_result(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+
+    pwm_path = tmp_path / "pwm1"
+    pwm_path.write_text("0\n", encoding="utf-8")
+    settings = GuiSettings()
+    settings.host_fan.curve_enabled = True
+    settings.host_fan.curve_points = [[40, 20], [80, 100]]
+    snapshot = GenericFanSnapshot(
+        platform_name="Linux",
+        telemetry=_telemetry(),
+        channels=[
+            GenericFanChannel(
+                name="CPU Fan",
+                rpm=900,
+                pwm_path=pwm_path,
+                control_available=True,
+                control_reason="PWM writable",
+            )
+        ],
+        control_available=True,
+        control_reason="1 writable PWM channel(s) detected",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=lambda _settings: None,
+        snapshot_collector=lambda: snapshot,
+    )
+    page._apply_curve_after_scan = True
+
+    page._on_scan_finished(snapshot, None)
+
+    assert page.status_label.text() == "风扇曲线已写入 PWM 44%"
+    assert "test" not in page.status_label.text()
 
     page.release()
     page.close()
