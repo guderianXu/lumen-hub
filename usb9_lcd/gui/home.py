@@ -511,17 +511,20 @@ class ControlCenterPage(QWidget):
             self.add_event("打开自定义风扇曲线")
             self._navigate("fan")
             return
+        self.set_fan_strategy(key, enabled=True)
+        event_count = len(self._events)
         try:
             applied = self._apply_fan_preset(key)
         except Exception as error:  # noqa: BLE001 - keep dashboard interaction responsive.
-            self.add_event(f"风扇策略应用失败：{error}")
+            self.update_fan_strategy_status(f"风扇曲线 PWM 写入失败：{error}")
             return
-        self.set_fan_strategy(key, enabled=True)
-        label = fan_curve_preset_label(key)
-        self.add_event(f"风扇策略已切换：{label}" if applied is not False else f"已选择{label}，等待可控风扇")
+        if len(self._events) == event_count:
+            status = "正在刷新温度并应用" if applied is not False else "正在检测可写风扇并应用"
+            self.update_fan_strategy_status(status)
 
     def set_fan_strategy(self, preset: object, *, enabled: bool = True) -> None:
         key = normalize_fan_curve_preset(preset)
+        self._fan_strategy_key = key
         label = fan_curve_preset_label(key)
         summaries = {
             "quiet": "低噪声自动曲线",
@@ -534,6 +537,27 @@ class ControlCenterPage(QWidget):
         self.fan_strategy_summary.setText(summaries[key])
         for preset_key, button in self.fan_strategy_buttons.items():
             button.setChecked(preset_key == key)
+
+    def update_fan_strategy_status(self, text: str) -> None:
+        status = str(text or "").strip()
+        if not status:
+            return
+        key = getattr(self, "_fan_strategy_key", "normal")
+        label = fan_curve_preset_label(key)
+        if "已写入 PWM" in status:
+            self.fan_strategy_value.setText(f"{label} · 已应用")
+            self.fan_strategy_summary.setText(status)
+            self.add_event(status)
+            return
+        if any(marker in status for marker in ("写入失败", "没有可写 PWM", "无可写 PWM", "扫描失败")):
+            self.fan_strategy_value.setText(f"{label} · 未应用")
+            self.fan_strategy_summary.setText(status)
+            self.add_event(status)
+            return
+        if any(marker in status for marker in ("正在扫描", "等待当前扫描", "正在刷新", "正在检测", "扫描并应用")):
+            self.fan_strategy_value.setText(f"{label} · 应用中")
+            self.fan_strategy_summary.setText(status)
+            self.add_event(status)
 
     def add_event(self, message: str) -> None:
         self._events.insert(0, message)

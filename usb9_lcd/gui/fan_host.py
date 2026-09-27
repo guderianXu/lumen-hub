@@ -1115,8 +1115,11 @@ class FanControlHostPage(QWidget):
         self.details.setPlainText(_snapshot_details(snapshot))
         should_apply_curve = self._apply_curve_after_scan
         self._apply_curve_after_scan = False
-        if should_apply_curve and self.curve_enable.isChecked() and snapshot.control_available and not self._curve_applying:
-            self._apply_curve_to_snapshot(snapshot, source="曲线自动")
+        if should_apply_curve and self.curve_enable.isChecked() and not self._curve_applying:
+            if snapshot.control_available:
+                self._apply_curve_to_snapshot(snapshot, source="曲线自动")
+            else:
+                self._set_status("风扇曲线未应用：当前没有可写 PWM 通道")
             return True
         return False
 

@@ -1050,6 +1050,40 @@ def test_fan_host_scan_status_keeps_curve_write_result(tmp_path):
     app.quit()
 
 
+def test_fan_host_scan_reports_enabled_curve_without_writable_channel():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+
+    settings = GuiSettings()
+    settings.host_fan.curve_enabled = True
+    snapshot = GenericFanSnapshot(
+        platform_name="Windows",
+        telemetry=_telemetry(),
+        channels=[GenericFanChannel(name="CPU Fan", rpm=900, control_available=False)],
+        control_available=False,
+        control_reason="No writable motherboard/controller fan channel is available",
+    )
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(
+        auto_load=False,
+        settings=settings,
+        settings_saver=lambda _settings: None,
+        snapshot_collector=lambda: snapshot,
+    )
+    page.curve_enable.setChecked(True)
+    page._apply_curve_after_scan = True
+
+    page._on_scan_finished(snapshot, None)
+
+    assert page.status_label.text() == "风扇曲线未应用：当前没有可写 PWM 通道"
+
+    page.release()
+    page.close()
+    app.quit()
+
+
 def test_fan_host_enabling_curve_requests_fresh_snapshot_before_writing(tmp_path):
     from PySide6.QtWidgets import QApplication
 

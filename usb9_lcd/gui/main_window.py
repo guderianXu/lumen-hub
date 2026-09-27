@@ -520,6 +520,7 @@ class MainWindow(QMainWindow):
 
     def _fan_status_changed(self, text: str) -> None:
         self.home_page.update_fan_status(text)
+        self.home_page.update_fan_strategy_status(text)
         self._refresh_home_permission_status()
 
     def _lighting_status_changed(self, text: str) -> None:

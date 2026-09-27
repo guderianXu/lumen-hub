@@ -28,6 +28,7 @@ def test_pyinstaller_args_use_gui_entry_and_bundle_assets():
 
     assert "--onedir" in args
     assert "--windowed" in args
+    assert "--uac-admin" in args
     assert "--clean" in args
     assert args[args.index("--name") + 1] == "LumenHub"
     assert not _arg_pair_exists(args, "--collect-all", "PySide6")
@@ -38,6 +39,13 @@ def test_pyinstaller_args_use_gui_entry_and_bundle_assets():
     assert not _arg_pair_exists(args, "--hidden-import", "Cryptodome.Cipher.AES")
     assert str(Path("E:/repo/lumen-hub") / "packaging" / "pyinstaller_lumen_hub_entry.py") in args
     assert any(item.endswith("assets;assets") for item in args)
+
+
+def test_linux_pyinstaller_args_do_not_request_windows_elevation():
+    module = _load_build_module()
+    config = module.BuildConfig(repo_root=Path("/repo/lumen-hub"), system="Linux")
+
+    assert "--uac-admin" not in module.build_pyinstaller_args(config)
 
 
 def test_windows_pyinstaller_args_bundle_libusb_backend(monkeypatch, tmp_path):

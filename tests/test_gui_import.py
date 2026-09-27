@@ -581,9 +581,40 @@ def test_home_page_quick_fan_strategy_applies_preset():
     page.fan_strategy_buttons["high"].click()
 
     assert applied == ["high"]
-    assert page.fan_strategy_value.text() == "高速"
+    assert page.fan_strategy_value.text() == "高速 · 应用中"
     assert page.fan_strategy_buttons["high"].isChecked()
-    assert page.recent_events()[0] == "风扇策略已切换：高速"
+    assert page.recent_events()[0] == "正在刷新温度并应用"
+
+    page.update_fan_strategy_status("风扇曲线已写入 PWM 72%")
+
+    assert page.fan_strategy_value.text() == "高速 · 已应用"
+    assert page.fan_strategy_summary.text() == "风扇曲线已写入 PWM 72%"
+    assert page.recent_events()[0] == "风扇曲线已写入 PWM 72%"
+
+    page.close()
+    app.quit()
+
+
+def test_home_page_quick_fan_strategy_reports_unavailable_write_channel():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.home import ControlCenterPage
+
+    app = QApplication.instance() or QApplication([])
+    page = ControlCenterPage(
+        lambda _page: None,
+        lambda: None,
+        lambda: None,
+        lambda: None,
+        lambda: None,
+        apply_fan_preset=lambda _preset: False,
+    )
+
+    page.fan_strategy_buttons["quiet"].click()
+    page.update_fan_strategy_status("风扇曲线未应用：当前没有可写 PWM 通道")
+
+    assert page.fan_strategy_value.text() == "安静 · 未应用"
+    assert "没有可写 PWM" in page.fan_strategy_summary.text()
 
     page.close()
     app.quit()
