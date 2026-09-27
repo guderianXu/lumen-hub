@@ -82,6 +82,10 @@ except Exception as fan_host_import_error:  # noqa: BLE001 - keep the GUI usable
         def reload_fan_control(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
             self.load_fan_control(*args, **kwargs)
 
+        def apply_curve_preset(self, _preset: object, *, enable_curve: bool = True) -> bool:
+            self.status_changed.emit("Fan control is unavailable on this platform")
+            return False
+
         def release(self) -> None:
             return None
 from usb9_lcd.gui.home import ControlCenterPage
@@ -434,6 +438,11 @@ class MainWindow(QMainWindow):
             self.lighting_page.connect_openrgb,
             self.sleep_all_off,
             self.apply_global_scene_by_key,
+            self.apply_host_fan_preset,
+        )
+        self.home_page.set_fan_strategy(
+            self.settings.host_fan.curve_preset,
+            enabled=self.settings.host_fan.curve_enabled,
         )
         self.fan_page.status_changed.connect(self._fan_status_changed)
         self.lighting_page.status_changed.connect(self._lighting_status_changed)
@@ -1428,6 +1437,12 @@ class MainWindow(QMainWindow):
     def apply_global_scene_payload(self, scene_key: str, payload: dict[str, Any]) -> SceneApplySummary:
         return self._apply_global_scene(normalize_scene_payload(payload, key=scene_key))
 
+    def apply_host_fan_preset(self, preset: object, *, enable_curve: bool = True) -> bool:
+        applied = self.fan_page.apply_curve_preset(preset, enable_curve=enable_curve)
+        if hasattr(self, "home_page"):
+            self.home_page.set_fan_strategy(preset, enabled=enable_curve)
+        return applied
+
     def _apply_global_scene(self, scene: SceneProfile) -> SceneApplySummary:
         if scene.key == "sleep":
             self.sleep_all_off()
@@ -1499,6 +1514,12 @@ class MainWindow(QMainWindow):
             return
         if subsystem == "lianli_lighting" and mode == "off":
             self.lianli_page.turn_off_all_lighting()
+            return
+        if subsystem == "host_fan" and mode == "preset":
+            self.apply_host_fan_preset(
+                payload.get("preset", "normal"),
+                enable_curve=bool(payload.get("auto_curve_enabled", True)),
+            )
             return
         if subsystem in {"host_fan", "lianli_fan", "openrgb", "lianli_lighting", "screen"}:
             return

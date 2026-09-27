@@ -87,11 +87,14 @@ def gui_stylesheet() -> str:
     }
 
     QLabel#MetricValue { font-size: 30px; font-weight: 800; color: #f5fbf8; }
-    QLabel#HomeMetricValue { font-size: 18px; font-weight: 800; color: #f5fbf8; }
+    QLabel#HomeMetricTitle { font-size: 15px; font-weight: 900; color: #f4f8f7; }
+    QLabel#HomeMetricValue { font-size: 14px; font-weight: 700; color: #e5eeeb; }
+    QLabel#HomeCompactValue { font-size: 12px; font-weight: 700; color: #b9c8c3; }
     QLabel#FanSummaryValue { font-size: 16px; font-weight: 800; color: #f5fbf8; }
 
     QFrame#MetricCard,
     QFrame#HomeStatusCard,
+    QFrame#HomeFanProfilePanel,
     QFrame#HomeCommandDock,
     QFrame#HomeTimelinePanel,
     QFrame#FanDashboardPanel,
@@ -110,7 +113,7 @@ def gui_stylesheet() -> str:
     QFrame#ScreenPreviewCard {
         background: #12191d;
         border: 1px solid #27343b;
-        border-radius: 14px;
+        border-radius: 8px;
     }
     QFrame#MetricCard:hover,
     QFrame#HomeStatusCard:hover,
@@ -132,25 +135,45 @@ def gui_stylesheet() -> str:
         background: #151f23;
     }
     QFrame#HomeHeroPanel {
-        min-height: 116px;
-        background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 #10211f, stop: 0.58 #12222a, stop: 1 #0e171a);
-        border: 1px solid #2d6f65;
-        border-radius: 18px;
+        min-height: 96px;
+        background: #11181c;
+        border: 1px solid #303b41;
+        border-left: 3px solid #e45b65;
+        border-radius: 8px;
     }
     QFrame#HomeMetricGrid { background: transparent; border: 0; }
-    QFrame#HomeStatusCard[statusRole="screen"] { border-color: #2d6f65; }
-    QFrame#HomeStatusCard[statusRole="cpu"] { border-color: #274f59; }
-    QFrame#HomeStatusCard[statusRole="gpu"] { border-color: #2b4d62; }
-    QFrame#HomeStatusCard[statusRole="fan"] { border-color: #2f5e55; }
+    QFrame#HomeSubsystemStrip { background: transparent; border: 0; }
+    QFrame#HomeStatusCard[statusRole="screen"] { border-top: 2px solid #59b7a5; }
+    QFrame#HomeStatusCard[statusRole="cpu"] { border-top: 2px solid #e45b65; }
+    QFrame#HomeStatusCard[statusRole="gpu"] { border-top: 2px solid #6d8ee8; }
+    QFrame#HomeStatusCard[statusRole="fan"] { border-top: 2px solid #65c6a6; }
     QFrame#HomeStatusCard[statusRole="lighting"] { border-color: #5d5635; }
     QFrame#HomeStatusCard[statusRole="lianli"] { border-color: #365c58; }
     QFrame#HomeStatusCard[statusRole="device-tree"] { border-color: #394b5f; }
     QFrame#HomeStatusCard[statusRole="permission"] { border-color: #5f4930; }
+    QFrame#HomeFanProfilePanel {
+        background: #10171a;
+        border: 1px solid #334148;
+        border-left: 3px solid #65c6a6;
+    }
+    QProgressBar#HomeMetricBar {
+        background: #263139;
+        border: 0;
+        border-radius: 2px;
+    }
+    QProgressBar#HomeMetricBar[metricRole="temperature"]::chunk {
+        background: #e45b65;
+        border-radius: 2px;
+    }
+    QProgressBar#HomeMetricBar[metricRole="load"]::chunk {
+        background: #6d8ee8;
+        border-radius: 2px;
+    }
     QFrame#HomeCommandDock QPushButton { min-height: 30px; }
-    QFrame#HomeTimelinePanel { min-height: 160px; }
+    QFrame#HomeTimelinePanel { min-height: 128px; }
     QLabel#TimelineItem {
         color: #9fb0b7;
-        padding: 6px 0 6px 12px;
+        padding: 3px 0 3px 9px;
         border-left: 2px solid #2d6f65;
     }
 
@@ -328,6 +351,22 @@ def gui_stylesheet() -> str:
         background: #17382f;
         border-color: #6ee7d8;
         color: #f4fffb;
+        font-weight: 900;
+    }
+    QFrame#HomeHeroPanel QPushButton#SegmentButton {
+        min-height: 26px;
+        padding: 5px 8px;
+        text-align: center;
+    }
+    QPushButton#FanStrategyButton {
+        min-height: 32px;
+        padding: 6px 10px;
+        text-align: center;
+    }
+    QPushButton#FanStrategyButton:checked {
+        background: #1f4037;
+        border-color: #65c6a6;
+        color: #f6fffc;
         font-weight: 900;
     }
     QPushButton#ColorSwatch {

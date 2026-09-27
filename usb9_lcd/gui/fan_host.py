@@ -1260,21 +1260,51 @@ class FanControlHostPage(QWidget):
         if self._updating_curve_preset:
             return
         preset = normalize_fan_curve_preset(self.curve_preset_combo.currentData())
-        self.settings.host_fan.curve_preset = preset
-        if preset != FAN_CURVE_CUSTOM_PRESET:
-            self._reset_curve_policy_memory()
-            points = fan_curve_preset_points(preset)
-            self.settings.host_fan.curve_points = points
-            self.curve_editor.set_points(points)
-        else:
+        if preset == FAN_CURVE_CUSTOM_PRESET:
+            self.settings.host_fan.curve_preset = preset
             self.settings.host_fan.curve_points = sanitize_fan_curve_points(self.curve_editor.points())
-        self._save_host_fan_settings()
+            self._save_host_fan_settings()
+            self._update_curve_summary()
+            self._set_status("已选择自定义风扇曲线")
+            return
+        self.apply_curve_preset(preset, enable_curve=self.curve_enable.isChecked())
+
+    def apply_curve_preset(self, preset: object, *, enable_curve: bool = True) -> bool:
+        key = normalize_fan_curve_preset(preset)
+        if key == FAN_CURVE_CUSTOM_PRESET:
+            raise ValueError("自定义风扇曲线需要在风扇页中编辑")
+
+        self._reset_curve_policy_memory()
+        points = fan_curve_preset_points(key)
+        self.settings.host_fan.curve_preset = key
+        self.settings.host_fan.curve_points = points
+        self.settings.host_fan.curve_enabled = bool(enable_curve)
+        self._set_curve_preset_combo(key)
+        self.curve_editor.set_points(points)
+
+        previous = self.curve_enable.blockSignals(True)
+        try:
+            self.curve_enable.setChecked(bool(enable_curve))
+        finally:
+            self.curve_enable.blockSignals(previous)
+
+        saved = self._save_host_fan_settings()
         self._update_curve_summary()
-        if self.curve_enable.isChecked():
-            self._reset_curve_policy_memory()
-            self._request_curve_apply_after_fresh_scan("风扇曲线预设已更新，正在刷新温度并按曲线写入")
-        else:
-            self._set_status(f"已选择风扇曲线预设：{self.curve_preset_combo.currentText()}")
+        self._sync_curve_controls()
+        if not saved:
+            return False
+        label = self.curve_preset_combo.currentText()
+        if not enable_curve:
+            self._set_status(f"已选择风扇曲线预设：{label}")
+            return True
+        if self._snapshot is None:
+            self._request_curve_apply_after_fresh_scan(f"已选择{label}风扇策略，正在扫描并应用")
+            return False
+        if not self._snapshot.control_available:
+            self._set_status(f"已选择{label}风扇策略，但当前没有可写 PWM 通道")
+            return False
+        self._request_curve_apply_after_fresh_scan(f"已选择{label}风扇策略，正在刷新温度并写入")
+        return True
 
     def _curve_interval_changed(self, value: int) -> None:
         self.settings.host_fan.curve_interval_seconds = max(1, min(60, int(value)))

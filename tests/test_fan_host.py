@@ -439,6 +439,33 @@ def test_fan_host_curve_preset_updates_points_and_custom_state():
     app.quit()
 
 
+def test_fan_host_public_preset_enables_curve_and_requests_fresh_scan():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_curve_model import fan_curve_preset_points
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    settings = GuiSettings()
+    reloads: list[dict[str, object]] = []
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False, settings=settings, settings_saver=lambda _value: None)
+    page.reload_fan_control = lambda *args, **kwargs: reloads.append(kwargs)  # type: ignore[method-assign]
+
+    applied = page.apply_curve_preset("high")
+
+    assert applied is False
+    assert settings.host_fan.curve_enabled is True
+    assert settings.host_fan.curve_preset == "high"
+    assert settings.host_fan.curve_points == fan_curve_preset_points("high")
+    assert page.curve_enable.isChecked()
+    assert page.curve_preset_combo.currentData() == "high"
+    assert reloads == [{"interactive_driver_probe": False, "apply_curve_after_scan": True}]
+
+    page.close()
+    app.quit()
+
+
 def test_fan_host_curve_change_persists_to_settings_file(tmp_path):
     from PySide6.QtWidgets import QApplication
 

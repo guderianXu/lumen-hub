@@ -53,8 +53,6 @@ def build_pyinstaller_args(config: BuildConfig) -> list[str]:
         str(build_dir / "work"),
         "--specpath",
         str(spec_dir),
-        "--collect-all",
-        "PySide6",
         "--hidden-import",
         "usb9_lcd.gui.app",
         "--hidden-import",
@@ -127,14 +125,25 @@ def output_executable_path(config: BuildConfig) -> Path:
 
 
 def run_build(config: BuildConfig) -> Path:
-    python_exe = sys.executable if config.skip_install else _prepare_build_venv(config)
-    _run([python_exe, "-m", "PyInstaller", *build_pyinstaller_args(config)], cwd=config.repo_root)
+    python_exe = _existing_build_python(config) if config.skip_install else _prepare_build_venv(config)
+    _run(
+        [python_exe, "-m", "PyInstaller", *build_pyinstaller_args(config)],
+        cwd=config.repo_root,
+        env=_build_environment(config),
+    )
     _normalize_output_name(config)
     output = output_executable_path(config)
     if not output.exists():
         raise SystemExit(f"Expected packaged executable was not created: {output}")
     print(f"Packaged executable: {output}")
     return output
+
+
+def _existing_build_python(config: BuildConfig) -> str:
+    python_exe = _venv_python(config)
+    if Path(python_exe).is_file():
+        return python_exe
+    return sys.executable
 
 
 def _prepare_build_venv(config: BuildConfig) -> str:
@@ -178,9 +187,27 @@ def _data_separator(system: str) -> str:
     return ";" if system.lower().startswith("win") else ":"
 
 
-def _run(command: list[str], *, cwd: Path) -> None:
+def _build_environment(config: BuildConfig) -> dict[str, str]:
+    env = os.environ.copy()
+    if not config.is_windows:
+        return env
+
+    system_root = Path(env.get("SystemRoot") or env.get("SYSTEMROOT") or r"C:\Windows")
+    system32 = (system_root / "System32").resolve()
+    clean_path: list[str] = []
+    for entry in env.get("PATH", "").split(";"):
+        candidate = Path(entry.strip('"')) / "icuuc.dll"
+        if candidate.is_file() and candidate.parent.resolve() != system32:
+            print(f"Ignoring non-system ICU directory while packaging: {candidate.parent}")
+            continue
+        clean_path.append(entry)
+    env["PATH"] = ";".join(clean_path)
+    return env
+
+
+def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> None:
     print("+ " + " ".join(_quote(part) for part in command))
-    subprocess.run(command, cwd=str(cwd), check=True)
+    subprocess.run(command, cwd=str(cwd), check=True, env=env)
 
 
 def _quote(value: str) -> str:
@@ -193,7 +220,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a double-clickable Lumen Hub desktop executable.")
     parser.add_argument("--onefile", action="store_true", help="Build a single-file executable instead of the default directory bundle.")
     parser.add_argument("--clean", action="store_true", help="Ask PyInstaller to remove cached build state before packaging.")
-    parser.add_argument("--skip-install", action="store_true", help="Use the current Python environment instead of creating/updating .build/package-venv.")
+    parser.add_argument(
+        "--skip-install",
+        action="store_true",
+        help="Reuse an existing package virtual environment without updating it; fall back to the current Python.",
+    )
     parser.add_argument("--venv-dir", type=Path, default=None, help="Custom build virtual environment directory.")
     parser.add_argument("--system", default=None, help="Override platform detection for testing.")
     return parser.parse_args(argv)

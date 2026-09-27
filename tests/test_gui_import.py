@@ -464,6 +464,7 @@ def test_control_center_exposes_hardware_dashboard_sections():
     required_frames = (
         "HomeHeroPanel",
         "HomeMetricGrid",
+        "HomeFanProfilePanel",
         "HomeCommandDock",
         "HomeTimelinePanel",
     )
@@ -556,6 +557,57 @@ def test_home_page_shows_permission_status_and_operation_feedback():
     assert "CPU 功耗" in page.permission_value.text()
     assert page.event_labels[0].text() == "OpenRGB 应用成功：3 个目标"
     assert page.recent_events()[0] == "OpenRGB 应用成功：3 个目标"
+
+    page.close()
+    app.quit()
+
+
+def test_home_page_quick_fan_strategy_applies_preset():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.home import ControlCenterPage
+
+    app = QApplication.instance() or QApplication([])
+    applied: list[str] = []
+    page = ControlCenterPage(
+        lambda _page: None,
+        lambda: None,
+        lambda: None,
+        lambda: None,
+        lambda: None,
+        apply_fan_preset=lambda preset: applied.append(preset) or True,
+    )
+
+    page.fan_strategy_buttons["high"].click()
+
+    assert applied == ["high"]
+    assert page.fan_strategy_value.text() == "高速"
+    assert page.fan_strategy_buttons["high"].isChecked()
+    assert page.recent_events()[0] == "风扇策略已切换：高速"
+
+    page.close()
+    app.quit()
+
+
+def test_home_page_custom_fan_strategy_opens_fan_page():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.home import ControlCenterPage
+
+    app = QApplication.instance() or QApplication([])
+    pages: list[str] = []
+    page = ControlCenterPage(
+        pages.append,
+        lambda: None,
+        lambda: None,
+        lambda: None,
+        lambda: None,
+    )
+
+    page.fan_strategy_buttons["custom"].click()
+
+    assert pages == ["fan"]
+    assert page.fan_strategy_value.text() == "自定义"
 
     page.close()
     app.quit()
@@ -830,6 +882,22 @@ def test_main_window_applies_sleep_scene_through_existing_sleep_path(monkeypatch
     assert calls == ["sleep"]
     assert result.scene_key == "sleep"
     assert any(item.status == "applied" for item in result.items)
+    window.close()
+    app.processEvents()
+
+
+def test_main_window_scene_action_applies_host_fan_preset():
+    app, window = _scene_test_window()
+    applied: list[tuple[object, bool]] = []
+    window.apply_host_fan_preset = lambda preset, *, enable_curve=True: applied.append((preset, enable_curve)) or True
+
+    window._execute_scene_action(
+        "host_fan",
+        "preset",
+        {"preset": "high", "auto_curve_enabled": True},
+    )
+
+    assert applied == [("high", True)]
     window.close()
     app.processEvents()
 

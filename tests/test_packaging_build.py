@@ -30,7 +30,7 @@ def test_pyinstaller_args_use_gui_entry_and_bundle_assets():
     assert "--windowed" in args
     assert "--clean" in args
     assert args[args.index("--name") + 1] == "LumenHub"
-    assert args[args.index("--collect-all") + 1] == "PySide6"
+    assert not _arg_pair_exists(args, "--collect-all", "PySide6")
     assert _arg_pair_exists(args, "--hidden-import", "usb9_lcd.gui.app")
     assert _arg_pair_exists(args, "--hidden-import", "usb9_lcd.gui.gif_preview")
     assert _arg_pair_exists(args, "--hidden-import", "hid")
@@ -154,6 +154,63 @@ def test_prepare_build_venv_recreates_wrong_platform_layout(tmp_path, monkeypatc
     assert not (venv_dir / "Scripts" / "python.exe").exists()
     assert (venv_dir / "bin" / "python").exists()
     assert commands[0][:3] == [python_exe, "-m", "pip"]
+
+
+def test_skip_install_prefers_existing_package_venv(tmp_path, monkeypatch):
+    module = _load_build_module()
+    venv_dir = tmp_path / "package-venv"
+    python_exe = venv_dir / "Scripts" / "python.exe"
+    python_exe.parent.mkdir(parents=True)
+    python_exe.write_text("windows placeholder", encoding="utf-8")
+    config = module.BuildConfig(
+        repo_root=tmp_path,
+        system="Windows",
+        skip_install=True,
+        venv_dir=venv_dir,
+    )
+
+    assert module._existing_build_python(config) == str(python_exe)
+
+
+def test_skip_install_falls_back_to_current_python_without_package_venv(tmp_path, monkeypatch):
+    module = _load_build_module()
+    config = module.BuildConfig(
+        repo_root=tmp_path,
+        system="Windows",
+        skip_install=True,
+        venv_dir=tmp_path / "missing-venv",
+    )
+    monkeypatch.setattr(module.sys, "executable", "C:/Python/python.exe")
+
+    assert module._existing_build_python(config) == "C:/Python/python.exe"
+
+
+def test_windows_build_environment_ignores_foreign_icu_runtime(tmp_path, monkeypatch):
+    module = _load_build_module()
+    system_root = tmp_path / "Windows"
+    system32 = system_root / "System32"
+    foreign = tmp_path / "foreign-runtime"
+    ordinary = tmp_path / "ordinary-tools"
+    system32.mkdir(parents=True)
+    foreign.mkdir()
+    ordinary.mkdir()
+    (system32 / "icuuc.dll").write_bytes(b"system")
+    (foreign / "icuuc.dll").write_bytes(b"foreign")
+    monkeypatch.setenv("SystemRoot", str(system_root))
+    monkeypatch.setenv("PATH", f"{foreign};{system32};{ordinary}")
+    config = module.BuildConfig(repo_root=tmp_path, system="Windows")
+
+    env = module._build_environment(config)
+
+    assert env["PATH"].split(";") == [str(system32), str(ordinary)]
+
+
+def test_linux_build_environment_preserves_path(tmp_path, monkeypatch):
+    module = _load_build_module()
+    monkeypatch.setenv("PATH", "/opt/tools:/usr/bin")
+    config = module.BuildConfig(repo_root=tmp_path, system="Linux")
+
+    assert module._build_environment(config)["PATH"] == "/opt/tools:/usr/bin"
 
 
 def test_windows_release_script_builds_zip_bundle():
