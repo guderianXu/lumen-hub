@@ -452,8 +452,11 @@ def test_set_windows_fan_control_percent_rejects_unsafe_low_values():
     assert calls == []
 
 
-def test_set_windows_fan_control_percent_targets_identifier_with_software_mode():
+def test_set_windows_fan_control_percent_targets_identifier_with_software_mode(monkeypatch, tmp_path):
     calls = []
+    dll_path = tmp_path / "LibreHardwareMonitorLib.dll"
+    dll_path.write_bytes(b"dll")
+    monkeypatch.setattr(windows_monitoring, "_resolve_lhm_dll_path", lambda: dll_path)
 
     def runner(script, *, timeout=8):
         calls.append((script, timeout))
@@ -463,6 +466,40 @@ def test_set_windows_fan_control_percent_targets_identifier_with_software_mode()
 
     assert len(calls) == 1
     script, timeout = calls[0]
-    assert timeout == 20
+    assert timeout == 12
     assert "/lpc/nct6799d/control/0" in script
     assert "SetSoftware(44)" in script
+    assert str(dll_path) in script
+    assert "-Recurse" not in script
+
+
+def test_lhm_sensor_probe_uses_cached_absolute_dll_path(monkeypatch, tmp_path):
+    dll_path = tmp_path / "LibreHardwareMonitorLib.dll"
+    dll_path.write_bytes(b"dll")
+    calls = []
+    data = [
+        {
+            "Name": "CPU Fan",
+            "SensorType": "Fan",
+            "Value": 1200,
+            "HardwareName": "Nuvoton",
+            "HardwareType": "SuperIO",
+        }
+    ]
+    monkeypatch.setattr(windows_monitoring, "_resolve_lhm_dll_path", lambda: dll_path)
+    monkeypatch.setattr(
+        windows_monitoring,
+        "_run_powershell_json",
+        lambda script, *, timeout=8: calls.append((script, timeout)) or data,
+    )
+    monkeypatch.setattr(windows_monitoring, "_LHM_SENSOR_CACHE", (0.0, []))
+
+    first = windows_monitoring._direct_lhm_sensor_data()
+    second = windows_monitoring._direct_lhm_sensor_data()
+
+    assert first == second == data
+    assert len(calls) == 1
+    script, timeout = calls[0]
+    assert timeout == 12
+    assert str(dll_path) in script
+    assert "-Recurse" not in script

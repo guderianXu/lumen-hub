@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from usb9_lcd.gui.fan_curve import FanCurveEditor
+from usb9_lcd.gui.debug import log_event
 from usb9_lcd.gui.fan_curve_model import (
     FAN_CURVE_CUSTOM_PRESET,
     FAN_CURVE_PRESETS,
@@ -1386,7 +1387,14 @@ class FanControlHostPage(QWidget):
             return
         interval_ms = max(1, int(self.live_interval.value())) * 1000
         self._live_timer.setInterval(interval_ms)
-        should_run = bool(self.live_refresh.isChecked() and self._snapshot is not None)
+        # A full Windows hardware probe is comparatively expensive. Repeating it
+        # after an empty result leaves the dashboard stuck in a scanning state.
+        # Empty snapshots are refreshed explicitly with the scan button instead.
+        should_run = bool(
+            self.live_refresh.isChecked()
+            and self._snapshot is not None
+            and self._snapshot.channels
+        )
         if should_run and not self._live_timer.isActive():
             self._live_timer.start()
         elif not should_run and self._live_timer.isActive():
@@ -1554,6 +1562,7 @@ class FanControlHostPage(QWidget):
         self._set_status("已请求管理员重启")
 
     def _set_status(self, text: str) -> None:
+        log_event("fan_status_changed", status=text)
         self.status_label.setText(text)
         self.status_changed.emit(text)
 

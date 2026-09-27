@@ -933,6 +933,28 @@ def test_main_window_scene_action_applies_host_fan_preset():
     app.processEvents()
 
 
+def test_main_window_routes_dashboard_fan_preset_to_lianli_when_host_pwm_is_unavailable():
+    app, window = _scene_test_window()
+    host_calls: list[tuple[object, bool]] = []
+    lianli_calls: list[tuple[object, bool]] = []
+    window.fan_page._snapshot = type("Snapshot", (), {"control_available": False})()
+    window.fan_page.apply_curve_preset = (
+        lambda preset, *, enable_curve=True: host_calls.append((preset, enable_curve)) or True
+    )
+    window.lianli_page._lianli_targets = [object()]
+    window.lianli_page.apply_fan_preset = (
+        lambda preset, *, enable_curve=True: lianli_calls.append((preset, enable_curve)) or True
+    )
+
+    applied = window.apply_host_fan_preset("high")
+
+    assert applied is True
+    assert host_calls == []
+    assert lianli_calls == [("high", True)]
+    window.close()
+    app.processEvents()
+
+
 def test_main_window_lianli_scene_requires_write_gate(monkeypatch, tmp_path: Path):
     app, window = _scene_test_window()
     window.lianli_page._lianli_targets = [object()]
@@ -1441,6 +1463,79 @@ def test_lianli_wireless_page_applies_preset_curve_from_cpu_temperature():
     assert page.lianli_rpm_value.value() == 1200
     assert settings.lianli_wireless.fan_mode == "quiet"
 
+    page.close()
+    app.quit()
+
+
+def test_lianli_dashboard_preset_writes_all_bound_fan_groups():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import GuiSettings, LianLiWirelessTargetSettings
+    from usb9_lcd.lianli.wireless import WirelessDeviceInfo, WirelessSnapshot
+
+    devices = [
+        WirelessDeviceInfo(
+            mac=mac,
+            master_mac="10:20:30:40:50:60",
+            channel=channel,
+            rx_type=3,
+            device_type=2,
+            fan_count=3,
+            pwm_values=(0, 0, 0, 0),
+            fan_rpm=(900, 900, 0, 0),
+            command_sequence=7,
+            raw=bytes(42),
+        )
+        for mac, channel in (("aa:bb:cc:dd:ee:01", 8), ("aa:bb:cc:dd:ee:02", 9))
+    ]
+
+    class FakeLianLiBackend:
+        def __init__(self):
+            self.sent_pwm: list[tuple[str, list[int]]] = []
+
+        def list_devices(self):
+            return WirelessSnapshot(raw=b"snapshot", devices=devices)
+
+        def send_pwm(self, target, pwm_values):
+            self.sent_pwm.append((target.mac, list(pwm_values)))
+            return 4
+
+    settings = GuiSettings()
+    for device in devices:
+        settings.lianli_wireless.targets[device.mac] = LianLiWirelessTargetSettings(
+            mac=device.mac,
+            master_mac=device.master_mac,
+            channel=device.channel,
+            rx_type=device.rx_type,
+            device_type=device.device_type,
+            fan_count=device.fan_count,
+        )
+    settings.lianli_wireless.active_target_mac = devices[0].mac
+    backend = FakeLianLiBackend()
+    app = QApplication.instance() or QApplication([])
+    page = LianLiWirelessPage(
+        backend_factory=lambda: backend,
+        settings=settings,
+        background_refresh=False,
+    )
+    page._lianli_latest_telemetry = SystemTelemetry(
+        cpu=CpuTelemetry(package_temperature_c=60.0, available=True),
+        gpu=GpuTelemetry(available=False),
+        captured_at=datetime(2026, 5, 20, 12, 3, 0),
+    )
+
+    applied = page.apply_fan_preset("normal")
+
+    assert applied is True
+    assert _process_events_until(app, lambda: len(backend.sent_pwm) == 2)
+    assert backend.sent_pwm == [
+        (devices[0].mac, [156]),
+        (devices[1].mac, [156]),
+    ]
+    assert settings.lianli_wireless.fan_mode == "normal"
+    assert settings.lianli_wireless.auto_curve_enabled is True
+    assert page.lianli_write_enable.isChecked()
     page.close()
     app.quit()
 
@@ -3540,6 +3635,28 @@ def test_fan_page_exposes_control_center_layout_before_loading():
     assert page.workspace_tabs.currentWidget() is page.overview_tab
     assert "长期方案" in page.permission_wizard_text.toPlainText()
 
+    page.close()
+    app.quit()
+
+
+def test_fan_page_stops_live_polling_after_empty_scan():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanSnapshot
+
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False)
+    page._snapshot = GenericFanSnapshot(
+        platform_name="Windows",
+        telemetry=_fake_telemetry(),
+        channels=[],
+        control_available=False,
+        control_reason="未发现普通风扇",
+    )
+
+    page._sync_live_timer()
+
+    assert not page._live_timer.isActive()
     page.close()
     app.quit()
 

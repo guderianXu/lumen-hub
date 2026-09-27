@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from usb9_lcd.platforms.process import hidden_subprocess_kwargs
@@ -11,6 +17,10 @@ from .models import CpuTelemetry, FanTelemetry
 
 
 POWERSHELL = "powershell.exe"
+_LHM_SENSOR_TYPES = ("Temperature", "Power", "Fan", "Control")
+_LHM_CACHE_SECONDS = 2.5
+_LHM_PROBE_LOCK = threading.Lock()
+_LHM_SENSOR_CACHE: tuple[float, list[dict[str, Any]]] = (0.0, [])
 
 
 @dataclass(frozen=True)
@@ -86,27 +96,23 @@ $items | ConvertTo-Json -Depth 4
 """
 
 
-def _libre_hardware_monitor_sensor_script(sensor_types: tuple[str, ...], name_pattern: str = "") -> str:
+def _libre_hardware_monitor_sensor_script(
+    sensor_types: tuple[str, ...],
+    name_pattern: str = "",
+    *,
+    dll_path: Path | None = None,
+) -> str:
     type_items = ", ".join(f"'{item}'" for item in sensor_types)
     pattern = name_pattern.replace("'", "''")
+    escaped_dll_path = str(dll_path or "").replace("'", "''")
     return f"""
-$roots = @(
-  (Join-Path $env:LOCALAPPDATA 'Microsoft\\WinGet\\Packages'),
-  $env:ProgramFiles,
-  ${{env:ProgramFiles(x86)}}
-) | Where-Object {{ $_ -and (Test-Path $_) }}
-$dll = $null
-foreach ($root in $roots) {{
-  $dll = Get-ChildItem -Path $root -Recurse -Filter LibreHardwareMonitorLib.dll -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-  if ($dll) {{ break }}
-}}
-if (-not $dll) {{
+$dllPath = '{escaped_dll_path}'
+if (-not $dllPath -or -not (Test-Path -LiteralPath $dllPath)) {{
   @() | ConvertTo-Json -Depth 4
   exit 0
 }}
 
-Add-Type -Path $dll.FullName
+Add-Type -LiteralPath $dllPath
 $computer = [LibreHardwareMonitor.Hardware.Computer]::new()
 $computer.IsCpuEnabled = $true
 $computer.IsGpuEnabled = $true
@@ -143,6 +149,69 @@ $items | ConvertTo-Json -Depth 4
 """
 
 
+@lru_cache(maxsize=1)
+def _resolve_lhm_dll_path() -> Path | None:
+    program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    program_files_x86 = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
+    local_app_data = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local")))
+    candidates = [
+        Path(value)
+        for value in (
+            os.environ.get("LIBREHARDWAREMONITOR_DLL", ""),
+            str(program_files / "LibreHardwareMonitor/LibreHardwareMonitorLib.dll"),
+            str(program_files_x86 / "LibreHardwareMonitor/LibreHardwareMonitorLib.dll"),
+            str(program_files_x86 / "ASUS/GameFirst/LibreHardwareMonitorLib.dll"),
+            str(local_app_data / "Programs/LibreHardwareMonitor/LibreHardwareMonitorLib.dll"),
+        )
+        if value
+    ]
+    winget_root = local_app_data / "Microsoft/WinGet/Packages"
+    if winget_root.is_dir():
+        candidates.extend(winget_root.glob("*/LibreHardwareMonitorLib.dll"))
+    return next((path.resolve() for path in candidates if path.is_file()), None)
+
+
+def _direct_lhm_sensor_data() -> list[dict[str, Any]]:
+    global _LHM_SENSOR_CACHE
+
+    with _LHM_PROBE_LOCK:
+        cached_at, cached_items = _LHM_SENSOR_CACHE
+        now = time.monotonic()
+        if cached_items and now - cached_at <= _LHM_CACHE_SECONDS:
+            return list(cached_items)
+        dll_path = _resolve_lhm_dll_path()
+        if dll_path is None:
+            return []
+        data = _run_powershell_json(
+            _libre_hardware_monitor_sensor_script(_LHM_SENSOR_TYPES, dll_path=dll_path),
+            timeout=12,
+        )
+        items = [item for item in _as_list(data) if isinstance(item, dict)]
+        _LHM_SENSOR_CACHE = (time.monotonic(), items)
+        return list(items)
+
+
+def _filter_sensor_data(
+    items: list[dict[str, Any]],
+    sensor_types: tuple[str, ...],
+    name_pattern: str,
+) -> list[dict[str, Any]]:
+    wanted = set(sensor_types)
+    pattern = re.compile(name_pattern, re.IGNORECASE) if name_pattern else None
+    matches: list[dict[str, Any]] = []
+    for item in items:
+        if str(item.get("SensorType") or "") not in wanted:
+            continue
+        if pattern is not None:
+            text = " ".join(
+                str(item.get(key) or "") for key in ("Name", "HardwareName", "HardwareType")
+            )
+            if pattern.search(text) is None:
+                continue
+        matches.append(item)
+    return matches
+
+
 def _as_list(data: Any) -> list[Any]:
     if data is None:
         return []
@@ -152,6 +221,13 @@ def _as_list(data: Any) -> list[Any]:
 
 
 def _hardware_sensor_data(sensor_types: tuple[str, ...], name_pattern: str = "") -> list[dict[str, Any]]:
+    try:
+        direct_items = _filter_sensor_data(_direct_lhm_sensor_data(), sensor_types, name_pattern)
+    except Exception:  # noqa: BLE001 - WMI remains a useful fallback when the local driver is busy.
+        direct_items = []
+    if direct_items:
+        return direct_items
+
     items: list[dict[str, Any]] = []
     for sensor_type in sensor_types:
         try:
@@ -164,11 +240,7 @@ def _hardware_sensor_data(sensor_types: tuple[str, ...], name_pattern: str = "")
     if items:
         return items
 
-    try:
-        data = _run_powershell_json(_libre_hardware_monitor_sensor_script(sensor_types, name_pattern), timeout=20)
-    except Exception:  # noqa: BLE001 - callers return a readable unavailable message.
-        return []
-    return [item for item in _as_list(data) if isinstance(item, dict)]
+    return items
 
 
 def collect_windows_fan_channels(
@@ -249,24 +321,19 @@ def set_windows_fan_control_percent(
     if not resolved_control_id:
         raise ValueError("Windows fan control requires a LibreHardwareMonitor control identifier")
 
+    dll_path = _resolve_lhm_dll_path()
+    if dll_path is None:
+        raise RuntimeError("LibreHardwareMonitorLib.dll was not found")
+
     escaped_id = resolved_control_id.replace("'", "''")
+    escaped_dll_path = str(dll_path).replace("'", "''")
     script = f"""
-$roots = @(
-  (Join-Path $env:LOCALAPPDATA 'Microsoft\\WinGet\\Packages'),
-  $env:ProgramFiles,
-  ${{env:ProgramFiles(x86)}}
-) | Where-Object {{ $_ -and (Test-Path $_) }}
-$dll = $null
-foreach ($root in $roots) {{
-  $dll = Get-ChildItem -Path $root -Recurse -Filter LibreHardwareMonitorLib.dll -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-  if ($dll) {{ break }}
-}}
-if (-not $dll) {{
+$dllPath = '{escaped_dll_path}'
+if (-not (Test-Path -LiteralPath $dllPath)) {{
   throw 'LibreHardwareMonitorLib.dll was not found'
 }}
 
-Add-Type -Path $dll.FullName
+Add-Type -LiteralPath $dllPath
 $computer = [LibreHardwareMonitor.Hardware.Computer]::new()
 $computer.IsMotherboardEnabled = $true
 $computer.IsControllerEnabled = $true
@@ -299,7 +366,10 @@ $target.Control.SetSoftware({resolved_percent})
 $computer.Close()
 [pscustomobject]@{{ ok = $true; identifier = '{escaped_id}'; percent = {resolved_percent} }} | ConvertTo-Json
 """
-    runner(script, timeout=20)
+    global _LHM_SENSOR_CACHE
+    with _LHM_PROBE_LOCK:
+        runner(script, timeout=12)
+        _LHM_SENSOR_CACHE = (0.0, [])
 
 
 def _is_gpu_hardware(hardware_type: str, hardware_name: str) -> bool:

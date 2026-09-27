@@ -544,17 +544,41 @@ class ControlCenterPage(QWidget):
             return
         key = getattr(self, "_fan_strategy_key", "normal")
         label = fan_curve_preset_label(key)
-        if "已写入 PWM" in status:
+        if "已写入 PWM" in status or "联力风扇写入完成" in status:
             self.fan_strategy_value.setText(f"{label} · 已应用")
             self.fan_strategy_summary.setText(status)
             self.add_event(status)
             return
-        if any(marker in status for marker in ("写入失败", "没有可写 PWM", "无可写 PWM", "扫描失败")):
+        if any(
+            marker in status
+            for marker in (
+                "写入失败",
+                "没有可写 PWM",
+                "无可写 PWM",
+                "扫描失败",
+                "策略未应用",
+                "没有识别到已绑定风扇组",
+                "写入门禁未通过",
+            )
+        ):
             self.fan_strategy_value.setText(f"{label} · 未应用")
             self.fan_strategy_summary.setText(status)
             self.add_event(status)
             return
-        if any(marker in status for marker in ("正在扫描", "等待当前扫描", "正在刷新", "正在检测", "扫描并应用")):
+        if any(
+            marker in status
+            for marker in (
+                "正在扫描",
+                "等待当前扫描",
+                "正在刷新",
+                "正在检测",
+                "扫描并应用",
+                "正在识别联力控制器",
+                "策略等待联力控制器",
+                "正在应用联力",
+                "正在自动连接联力无线控制器",
+            )
+        ):
             self.fan_strategy_value.setText(f"{label} · 应用中")
             self.fan_strategy_summary.setText(status)
             self.add_event(status)

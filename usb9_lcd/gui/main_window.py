@@ -528,6 +528,18 @@ class MainWindow(QMainWindow):
 
     def _lianli_status_changed(self, text: str) -> None:
         self.home_page.update_lianli_status(text)
+        if any(
+            marker in text
+            for marker in (
+                "联力风扇",
+                "联力控制器",
+                "策略等待",
+                "策略未应用",
+                "正在应用联力",
+                "正在自动连接联力无线控制器",
+            )
+        ):
+            self.home_page.update_fan_strategy_status(text)
 
     def _refresh_home_permission_status(self) -> None:
         if not hasattr(self, "home_page"):
@@ -1439,7 +1451,23 @@ class MainWindow(QMainWindow):
         return self._apply_global_scene(normalize_scene_payload(payload, key=scene_key))
 
     def apply_host_fan_preset(self, preset: object, *, enable_curve: bool = True) -> bool:
-        applied = self.fan_page.apply_curve_preset(preset, enable_curve=enable_curve)
+        snapshot = getattr(self.fan_page, "_snapshot", None)
+        host_available = bool(snapshot is not None and getattr(snapshot, "control_available", False))
+        lianli_available = self._has_lianli_scene_targets()
+        lianli_apply = getattr(self.lianli_page, "apply_fan_preset", None)
+        applied = False
+
+        if host_available:
+            applied = bool(self.fan_page.apply_curve_preset(preset, enable_curve=enable_curve))
+
+        # Route the dashboard preset to the wireless controller when motherboard
+        # PWM is unavailable. If both backends exist, keep them on the same mode.
+        if callable(lianli_apply) and (lianli_available or not host_available):
+            applied = bool(lianli_apply(preset, enable_curve=enable_curve)) or applied
+
+        if not host_available and not callable(lianli_apply):
+            applied = bool(self.fan_page.apply_curve_preset(preset, enable_curve=enable_curve))
+
         if hasattr(self, "home_page"):
             self.home_page.set_fan_strategy(preset, enabled=enable_curve)
         return applied

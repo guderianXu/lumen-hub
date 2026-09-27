@@ -582,6 +582,8 @@ class LianLiWirelessPage(QWidget):
 
         self._pending_lianli_effect: str | None = None
 
+        self._pending_lianli_fan_preset: tuple[str, bool] | None = None
+
         self._lianli_live_rpm_by_mac: dict[str, tuple[int, int, int, int]] = {}
 
         self._lianli_last_valid_rpm_by_mac: dict[str, tuple[int, int, int, int]] = {}
@@ -4417,6 +4419,136 @@ class LianLiWirelessPage(QWidget):
 
 
 
+    def apply_fan_preset(self, preset: object, *, enable_curve: bool = True) -> bool:
+
+        mode = str(preset or "normal").strip().lower()
+
+        mode = {
+
+            "silent": "quiet",
+
+            "balanced": "normal",
+
+            "performance": "high",
+
+            "turbo": "full",
+
+        }.get(mode, mode)
+
+        if mode not in {"quiet", "normal", "high", "full"}:
+
+            raise ValueError(f"不支持的联力风扇预设：{preset}")
+
+        label = self._lianli_fan_mode_label(mode)
+
+        curve_enabled = bool(enable_curve and mode != "full")
+
+        self._set_lianli_fan_mode_combo(mode)
+
+        self.settings.lianli_wireless.fan_mode = mode
+
+        self.settings.lianli_wireless.auto_curve_enabled = curve_enabled
+
+        if hasattr(self, "lianli_auto_curve_enable"):
+
+            blocked = self.lianli_auto_curve_enable.blockSignals(True)
+
+            try:
+
+                self.lianli_auto_curve_enable.setChecked(curve_enabled)
+
+            finally:
+
+                self.lianli_auto_curve_enable.blockSignals(blocked)
+
+        self._reset_lianli_curve_write_cache()
+
+        self._set_lianli_curve_editor_points(mode)
+
+        self._update_lianli_curve_hint()
+
+        save_settings(self.settings)
+
+        if not self.settings.lianli_wireless.targets:
+
+            self._pending_lianli_fan_preset = (mode, bool(enable_curve))
+
+            if self._operation_active:
+
+                self._set_lianli_status(f"{label}策略等待联力控制器识别完成")
+
+            else:
+
+                self._set_lianli_status(f"正在识别联力控制器，识别完成后应用{label}策略...")
+
+                self.auto_connect_lianli()
+
+            return False
+
+        if not self._write_gate_unlocked():
+
+            self._set_lianli_status(f"{label}策略未应用：写入门禁未通过，请先重新识别联力控制器")
+
+            return False
+
+        # The dashboard click is an explicit write request. A live, bound target
+        # must still pass the write gate before writes are enabled for the session.
+        if hasattr(self, "lianli_write_enable") and not self.lianli_write_enable.isChecked():
+
+            self.lianli_write_enable.setChecked(True)
+
+        if not self._write_unlocked():
+
+            self._set_lianli_status(f"{label}策略未应用：{self._write_blocked_text()}")
+
+            return False
+
+        temperature_c = None
+
+        if self._lianli_latest_telemetry is not None:
+
+            temperature_c = self._lianli_latest_telemetry.cpu.package_temperature_c
+
+        rpm = self._lianli_fan_mode_rpm(mode) or 1000
+
+        if curve_enabled and temperature_c is not None:
+
+            curve_rpm = self._lianli_curve_rpm_for_temperature(float(temperature_c))
+
+            if curve_rpm is not None:
+
+                rpm = curve_rpm
+
+        pwm = self._lianli_rpm_to_pwm(rpm)
+
+        self._set_lianli_target_rpm_display(rpm)
+
+        self.settings.lianli_wireless.fan_rpm = rpm
+
+        self.settings.lianli_wireless.pwm = pwm
+
+        save_settings(self.settings)
+
+        self._lianli_curve_last_rpm = rpm
+
+        self._lianli_curve_last_pwm = pwm
+
+        self._lianli_curve_pending_pwm = pwm
+
+        temperature_text = f"，CPU {float(temperature_c):.0f}°C" if temperature_c is not None else ""
+
+        self._run_lianli_operation(
+
+            f"正在应用联力{label}策略{temperature_text}：{rpm} RPM...",
+
+            lambda: self._send_lianli_direct_pwm_all(pwm),
+
+        )
+
+        return True
+
+
+
     def _lianli_target_rpm_changed(self, value: int) -> None:
 
         if self._updating_lianli_fan_controls:
@@ -4773,7 +4905,7 @@ class LianLiWirelessPage(QWidget):
 
         def operation() -> dict[str, object]:
 
-            result = self._send_lianli_direct_pwm(pwm)
+            result = self._send_lianli_direct_pwm_all(pwm)
 
             result["curve_source"] = "cpu"
 
@@ -6349,7 +6481,15 @@ class LianLiWirelessPage(QWidget):
 
                 self._reset_lianli_curve_write_cache()
 
-            self._set_lianli_status(f"{message}：{result}")
+            if self._pending_lianli_fan_preset is not None:
+
+                self._pending_lianli_fan_preset = None
+
+                self._set_lianli_status(f"联力风扇策略未应用：{result}")
+
+            else:
+
+                self._set_lianli_status(f"{message}：{result}")
 
             return
 
@@ -6416,6 +6556,32 @@ class LianLiWirelessPage(QWidget):
                     lambda: self._send_lianli_lighting_effect(effect),
                 ),
             )
+
+        if self._pending_lianli_fan_preset is not None and not self._operation_active:
+
+            pending_preset = self._pending_lianli_fan_preset
+
+            self._pending_lianli_fan_preset = None
+
+            if self.settings.lianli_wireless.targets:
+
+                QTimer.singleShot(
+
+                    0,
+
+                    lambda pending=pending_preset: self.apply_fan_preset(
+
+                        pending[0],
+
+                        enable_curve=pending[1],
+
+                    ),
+
+                )
+
+            else:
+
+                self._set_lianli_status("联力风扇策略未应用：没有识别到已绑定风扇组")
 
 
 
