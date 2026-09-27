@@ -25,12 +25,13 @@ def test_hardware_dashboard_theme_exposes_core_selectors():
     assert missing == []
 
 
-def test_hardware_dashboard_theme_uses_approved_palette_not_generic_purple():
+def test_hardware_dashboard_theme_uses_armoury_crimson_palette():
     qss = gui_stylesheet().lower()
 
-    assert "#6ee7d8" in qss or "#67d8c5" in qss
+    assert "#f12b3f" in qss
+    assert "#2a1719" in qss
+    assert "#0b0b0c" in qss
     assert "#f0b35a" in qss or "#d99a3d" in qss
-    assert "#d76f7a" in qss or "#b85c66" in qss
     assert "#7c3aed" not in qss
     assert "#a855f7" not in qss
 
@@ -41,6 +42,8 @@ def test_hardware_dashboard_theme_styles_dashboard_roles_and_complex_pages():
     required_selectors = (
         'QFrame#HomeStatusCard[statusRole="screen"]',
         'QFrame#HomeStatusCard[statusRole="device-tree"]',
+        "QFrame#HomeMonitorSection",
+        "QFrame#HomeDeviceOverview",
         "QFrame#FanDashboardPanel",
         "QFrame#FanChartPanel",
         "QFrame#FanStatusCard",

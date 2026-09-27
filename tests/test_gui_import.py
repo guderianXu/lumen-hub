@@ -387,13 +387,13 @@ def test_main_window_constructs_with_dark_dashboard_pages():
 
     window.refresh_telemetry()
 
-    assert window.windowTitle() == "usb9-lcd"
+    assert window.windowTitle() == "Lumen Hub"
     assert [window.navigation.item(index).text() for index in range(window.navigation.count())] == [
-        "首页",
+        "控制面板",
         "屏幕",
         "风扇",
         "灯效",
-        "场景",
+        "情境设定",
         "设备",
         "联力无线",
         "设置",
@@ -6838,7 +6838,7 @@ def test_main_window_can_construct_without_startup_refresh_work():
         auto_refresh=False,
     )
 
-    assert window.windowTitle() == "usb9-lcd"
+    assert window.windowTitle() == "Lumen Hub"
 
     window.close()
     app.quit()

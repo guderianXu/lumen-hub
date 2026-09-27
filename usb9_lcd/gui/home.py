@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import platform
+import sys
 from collections.abc import Callable
+from pathlib import Path
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -43,19 +48,16 @@ class ControlCenterPage(QWidget):
         self._fan_rpm_text = ""
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(28, 22, 30, 6)
+        layout.setSpacing(14)
         layout.addWidget(self._hero_panel())
-        layout.addWidget(self._metric_grid())
-        layout.addWidget(self._fan_strategy_panel())
-        layout.addWidget(self._subsystem_strip())
 
-        lower = QGridLayout()
-        lower.setContentsMargins(0, 0, 0, 0)
-        lower.setHorizontalSpacing(12)
-        lower.addWidget(
-            self._command_panel(
-                navigate,
+        dashboard = QGridLayout()
+        dashboard.setContentsMargins(0, 0, 0, 0)
+        dashboard.setHorizontalSpacing(34)
+        dashboard.setVerticalSpacing(16)
+        dashboard.addWidget(
+            self._device_column(
                 upload_monitor,
                 load_fan_control,
                 connect_lighting,
@@ -63,42 +65,42 @@ class ControlCenterPage(QWidget):
             ),
             0,
             0,
-            1,
             2,
+            1,
         )
-        lower.addWidget(self._event_panel(), 0, 2)
-        lower.setColumnStretch(0, 1)
-        lower.setColumnStretch(1, 1)
-        lower.setColumnStretch(2, 1)
-        layout.addLayout(lower)
-        layout.addStretch(1)
+        dashboard.addWidget(self._metric_grid(), 0, 1)
+        dashboard.addWidget(self._fan_strategy_panel(), 1, 1)
+        dashboard.setColumnMinimumWidth(0, 300)
+        dashboard.setColumnStretch(0, 0)
+        dashboard.setColumnStretch(1, 1)
+        dashboard.setRowStretch(0, 1)
+        layout.addLayout(dashboard, 1)
         self.add_event("控制中心已就绪")
 
     def _hero_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("HomeHeroPanel")
-        layout = QGridLayout(panel)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setHorizontalSpacing(12)
-        layout.setVerticalSpacing(9)
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 10)
+        layout.setSpacing(12)
 
-        title = QLabel("系统控制面板")
+        title_box = QVBoxLayout()
+        title_box.setSpacing(4)
+        title = QLabel("控制面板")
         title.setObjectName("PageTitle")
         self.telemetry_time_value = QLabel("等待硬件遥测")
         self.telemetry_time_value.setObjectName("PageSubtitle")
-        self.mode_value = QLabel("日常")
-        self.mode_value.setObjectName("StatusPill")
-
-        title_box = QVBoxLayout()
-        title_box.setSpacing(2)
         title_box.addWidget(title)
         title_box.addWidget(self.telemetry_time_value)
-        layout.addLayout(title_box, 0, 0, 1, 5)
-        layout.addWidget(self.mode_value, 0, 5)
+        layout.addLayout(title_box)
+        layout.addStretch(1)
 
-        scene_label = QLabel("全局场景")
-        scene_label.setObjectName("SectionLabel")
-        layout.addWidget(scene_label, 1, 0)
+        scene_caption = QLabel("当前情境")
+        scene_caption.setObjectName("HomeHeaderCaption")
+        self.mode_value = QLabel("日常")
+        self.mode_value.setObjectName("StatusPill")
+        layout.addWidget(scene_caption)
+        layout.addWidget(self.mode_value)
 
         self.mode_group = QButtonGroup(self)
         self.mode_group.setExclusive(True)
@@ -112,23 +114,84 @@ class ControlCenterPage(QWidget):
             ("temperature-warning", "温度警告", "红色警示灯效和高风扇曲线"),
         )
         for index, (key, label, description) in enumerate(scenes):
-            button = QPushButton(label)
+            button = QPushButton(label, panel)
             button.setCheckable(True)
-            button.setObjectName("SegmentButton")
             button.setToolTip(description)
             button.setProperty("modeAction", label)
             button.setProperty("sceneKey", key)
-            if index == 0:
-                button.setChecked(True)
+            button.setChecked(index == 0)
             button.clicked.connect(
                 lambda _checked=False, name=label, scene_key=key: self._set_scene_mode(name, scene_key)
             )
+            button.hide()
             self.scene_buttons.append(button)
             self.mode_group.addButton(button, index)
-            layout.addWidget(button, 1, index + 1)
-        layout.setColumnStretch(0, 0)
-        for column in range(1, 7):
-            layout.setColumnStretch(column, 1)
+        return panel
+
+    def _device_column(
+        self,
+        upload_monitor: Callable[[], None],
+        load_fan_control: Callable[[], None],
+        connect_lighting: Callable[[], None],
+        sleep_all_off: Callable[[], None],
+    ) -> QWidget:
+        column = QWidget()
+        column.setObjectName("HomeDeviceColumn")
+        layout = QVBoxLayout(column)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        layout.addWidget(self._device_overview_panel(), 1)
+        layout.addWidget(
+            self._command_panel(
+                self._navigate,
+                upload_monitor,
+                load_fan_control,
+                connect_lighting,
+                sleep_all_off,
+            )
+        )
+        layout.addWidget(self._event_panel())
+        return column
+
+    def _device_overview_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("HomeDeviceOverview")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(10, 4, 10, 6)
+        layout.setSpacing(5)
+
+        image = QLabel()
+        image.setObjectName("HomeHardwareImage")
+        image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image.setFixedHeight(178)
+        pixmap = QPixmap(str(self._dashboard_asset("monitor_backgrounds", "rog_red_grid.png")))
+        if pixmap.isNull():
+            image.setText("LCD")
+        else:
+            image.setPixmap(
+                pixmap.scaled(
+                    170,
+                    170,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        layout.addWidget(image)
+
+        product = QLabel("LUMEN HUB")
+        product.setObjectName("HomeDeviceProduct")
+        product.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(product)
+        self.device_value = QLabel("未发现 LCD 设备")
+        self.device_value.setObjectName("HomeDeviceIdentity")
+        self.device_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.device_value.setWordWrap(True)
+        layout.addWidget(self.device_value)
+
+        platform_value = QLabel(f"{platform.system()}  /  {platform.machine()}")
+        platform_value.setObjectName("HomePlatformIdentity")
+        platform_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(platform_value)
         return panel
 
     def _metric_grid(self) -> QFrame:
@@ -136,46 +199,152 @@ class ControlCenterPage(QWidget):
         wrapper.setObjectName("HomeMetricGrid")
         overview = QGridLayout(wrapper)
         overview.setContentsMargins(0, 0, 0, 0)
-        overview.setSpacing(10)
+        overview.setHorizontalSpacing(28)
+        overview.setVerticalSpacing(22)
+
+        monitor_label = QLabel("///  系统监控")
+        monitor_label.setObjectName("HomeMonitorKicker")
+        overview.addWidget(monitor_label, 0, 0, 1, 6)
 
         self.cpu_value = QLabel("温度 --\n负载 --\n功耗 --")
+        self.cpu_value.hide()
         self.gpu_value = QLabel("温度 --\n负载 --\n功耗 --\n频率 --")
+        self.gpu_value.hide()
+        overview.addWidget(self.cpu_value, 0, 0)
+        overview.addWidget(self.gpu_value, 0, 0)
+
+        self.gpu_clock_display = self._metric_value("-- MHz")
+        self.gpu_memory_display = self._metric_value("-- / -- MB")
+        self.refresh_display = self._metric_value("等待遥测")
+        frequency = self._monitor_section(
+            "频率",
+            (
+                ("GPU Clock", self.gpu_clock_display, None),
+                ("GPU Memory", self.gpu_memory_display, None),
+                ("采样状态", self.refresh_display, None),
+            ),
+            "cpu",
+        )
+        overview.addWidget(frequency, 1, 0, 1, 3)
+
+        self.cpu_temp_display = self._metric_value("-- °C")
+        self.gpu_temp_display = self._metric_value("-- °C")
+        self.lcd_status_display = self._metric_value("未发现")
+        self.cpu_temp_bar = self._metric_bar("cpu")
+        self.gpu_temp_bar = self._metric_bar("gpu")
+        temperature = self._monitor_section(
+            "温度",
+            (
+                ("CPU Package", self.cpu_temp_display, self.cpu_temp_bar),
+                ("GPU", self.gpu_temp_display, self.gpu_temp_bar),
+                ("LCD", self.lcd_status_display, None),
+            ),
+            "temperature",
+        )
+        overview.addWidget(temperature, 1, 3, 1, 3)
+
+        self.cpu_load_display = self._metric_value("-- %")
+        self.gpu_load_display = self._metric_value("-- %")
+        self.vram_usage_display = self._metric_value("-- %")
+        self.cpu_load_bar = self._metric_bar("cpu")
+        self.gpu_load_bar = self._metric_bar("gpu")
+        self.vram_usage_bar = self._metric_bar("vram")
+        usage = self._monitor_section(
+            "使用率",
+            (
+                ("CPU", self.cpu_load_display, self.cpu_load_bar),
+                ("GPU", self.gpu_load_display, self.gpu_load_bar),
+                ("VRAM", self.vram_usage_display, self.vram_usage_bar),
+            ),
+            "usage",
+        )
+        overview.addWidget(usage, 2, 0, 1, 2)
+
         self.fan_value = QLabel(self._fan_status_text)
-        self.device_value = QLabel("未发现设备")
+        self.fan_value.setObjectName("HomeFanListValue")
+        self.fan_value.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.fan_value.setWordWrap(True)
+        fan_section = self._monitor_text_section("风扇", self.fan_value, "fan")
+        overview.addWidget(fan_section, 2, 2, 1, 2)
 
-        self.cpu_temp_bar = self._metric_bar("temperature")
-        self.cpu_load_bar = self._metric_bar("load")
-        self.gpu_temp_bar = self._metric_bar("temperature")
-        self.gpu_load_bar = self._metric_bar("load")
+        self.cpu_power_display = self._metric_value("-- W")
+        self.gpu_power_display = self._metric_value("-- W")
+        self.total_power_display = self._metric_value("-- W")
+        power = self._monitor_section(
+            "功耗",
+            (
+                ("CPU Package", self.cpu_power_display, None),
+                ("GPU", self.gpu_power_display, None),
+                ("合计", self.total_power_display, None),
+            ),
+            "power",
+        )
+        overview.addWidget(power, 2, 4, 1, 2)
 
-        overview.addWidget(
-            self._telemetry_card("CPU", self.cpu_value, "cpu", (self.cpu_temp_bar, self.cpu_load_bar)), 0, 0
-        )
-        overview.addWidget(
-            self._telemetry_card("GPU", self.gpu_value, "gpu", (self.gpu_temp_bar, self.gpu_load_bar)), 0, 1
-        )
-        overview.addWidget(self._telemetry_card("风扇转速", self.fan_value, "fan"), 0, 2)
-        overview.addWidget(self._telemetry_card("显示设备", self.device_value, "screen"), 0, 3)
-        for column in range(4):
+        for column in range(6):
             overview.setColumnStretch(column, 1)
+        overview.setRowStretch(1, 1)
+        overview.setRowStretch(2, 1)
         return wrapper
+
+    def _monitor_section(
+        self,
+        title: str,
+        rows: tuple[tuple[str, QLabel, QProgressBar | None], ...],
+        role: str,
+    ) -> QFrame:
+        section = QFrame()
+        section.setObjectName("HomeMonitorSection")
+        section.setProperty("monitorRole", role)
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(7)
+        heading = QLabel(title)
+        heading.setObjectName("HomeMonitorTitle")
+        layout.addWidget(heading)
+        for label, value, bar in rows:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            name = QLabel(label)
+            name.setObjectName("HomeMetricName")
+            row.addWidget(name)
+            row.addStretch(1)
+            row.addWidget(value)
+            layout.addLayout(row)
+            if bar is not None:
+                layout.addWidget(bar)
+        layout.addStretch(1)
+        return section
+
+    def _monitor_text_section(self, title: str, value: QLabel, role: str) -> QFrame:
+        section = QFrame()
+        section.setObjectName("HomeMonitorSection")
+        section.setProperty("monitorRole", role)
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        heading = QLabel(title)
+        heading.setObjectName("HomeMonitorTitle")
+        layout.addWidget(heading)
+        layout.addWidget(value, 1)
+        return section
 
     def _fan_strategy_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("HomeFanProfilePanel")
         layout = QGridLayout(panel)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setHorizontalSpacing(8)
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setHorizontalSpacing(10)
         layout.setVerticalSpacing(8)
 
-        title = QLabel("风扇策略")
-        title.setObjectName("SectionLabel")
-        self.fan_strategy_summary = QLabel("标准自动曲线")
+        title = QLabel("///  风扇模式")
+        title.setObjectName("HomeMonitorKicker")
+        self.fan_strategy_summary = QLabel("日常均衡自动曲线")
         self.fan_strategy_summary.setObjectName("FieldHint")
         self.fan_strategy_value = QLabel("标准")
-        self.fan_strategy_value.setObjectName("StatusPill")
+        self.fan_strategy_value.setObjectName("HomeFanModeState")
         layout.addWidget(title, 0, 0)
-        layout.addWidget(self.fan_strategy_summary, 0, 1, 1, 4)
+        layout.addWidget(self.fan_strategy_summary, 0, 1, 1, 3)
         layout.addWidget(self.fan_strategy_value, 0, 5)
 
         self.fan_strategy_group = QButtonGroup(self)
@@ -184,7 +353,7 @@ class ControlCenterPage(QWidget):
         strategies = (
             ("quiet", "安静", "低噪声温控曲线"),
             ("normal", "标准", "日常均衡温控曲线"),
-            ("high", "高速", "高负载散热曲线"),
+            ("high", "加速", "高负载散热曲线"),
             ("full", "全速", "固定 100% 输出"),
             (FAN_CURVE_CUSTOM_PRESET, "自定义", "进入风扇页编辑曲线"),
         )
@@ -199,7 +368,7 @@ class ControlCenterPage(QWidget):
             self.fan_strategy_buttons[key] = button
             layout.addWidget(button, 1, index)
         details = QPushButton("曲线设置")
-        details.setObjectName("SecondaryButton")
+        details.setObjectName("HomeFanSettingsButton")
         details.setProperty("moduleAction", "打开风扇")
         details.setProperty("commandGroup", "fan")
         details.clicked.connect(lambda: self._navigate("fan"))
@@ -209,27 +378,119 @@ class ControlCenterPage(QWidget):
         self.set_fan_strategy("normal", enabled=False)
         return panel
 
-    def _subsystem_strip(self) -> QFrame:
-        wrapper = QFrame()
-        wrapper.setObjectName("HomeSubsystemStrip")
-        layout = QGridLayout(wrapper)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+    def _command_panel(
+        self,
+        navigate: Callable[[str], None],
+        upload_monitor: Callable[[], None],
+        load_fan_control: Callable[[], None],
+        connect_lighting: Callable[[], None],
+        sleep_all_off: Callable[[], None],
+    ) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("HomeCommandDock")
+        layout = QGridLayout(panel)
+        layout.setContentsMargins(0, 5, 0, 5)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(6)
+        title = QLabel("///  设备")
+        title.setObjectName("HomeMonitorKicker")
+        layout.addWidget(title, 0, 0, 1, 2)
 
+        self.device_tile_value = QLabel("未发现")
         self.lighting_value = QLabel("默认关闭")
         self.lianli_value = QLabel("未连接")
-        self.permission_value = QLabel("权限未检查")
-        self.device_tree_value = QLabel("设备树未生成")
-        cards = (
-            ("灯效", self.lighting_value, "lighting"),
-            ("联力无线", self.lianli_value, "lianli"),
-            ("设备状态", self.device_tree_value, "device-tree"),
-            ("权限", self.permission_value, "permission"),
+        self.fan_tile_value = QLabel("未扫描")
+        actions: tuple[tuple[str, str, str, QLabel, Callable[[], None]], ...] = (
+            ("screen", "LCD 屏幕", "打开屏幕", self.device_tile_value, lambda: navigate("screen")),
+            ("fan", "风扇控制", "打开风扇", self.fan_tile_value, lambda: navigate("fan")),
+            ("lighting", "灯效同步", "打开灯效", self.lighting_value, lambda: navigate("lighting")),
+            ("lianli", "联力无线", "打开联力", self.lianli_value, lambda: navigate("lianli")),
         )
-        for index, (title, value, role) in enumerate(cards):
-            layout.addWidget(self._compact_status_card(title, value, role), 0, index)
-            layout.setColumnStretch(index, 1)
-        return wrapper
+        for index, (group, label, module_action, status, action) in enumerate(actions):
+            tile = self._device_tile(group, label, module_action, status, action)
+            layout.addWidget(tile, 1 + index // 2, index % 2)
+
+        sleep_button = QPushButton("睡眠全关")
+        sleep_button.setObjectName("HomeSleepButton")
+        sleep_button.setProperty("moduleAction", "睡眠全关")
+        sleep_button.setProperty("commandGroup", "safety")
+        sleep_button.clicked.connect(sleep_all_off)
+        layout.addWidget(sleep_button, 3, 0)
+        monitor_button = QPushButton("发送监控")
+        monitor_button.setObjectName("HomeDeviceAction")
+        monitor_button.setProperty("moduleAction", "发送监控")
+        monitor_button.setProperty("commandGroup", "screen")
+        monitor_button.clicked.connect(upload_monitor)
+        layout.addWidget(monitor_button, 3, 1)
+
+        scan_button = QPushButton("扫描风扇", panel)
+        scan_button.setProperty("moduleAction", "扫描风扇")
+        scan_button.setProperty("commandGroup", "fan")
+        scan_button.clicked.connect(load_fan_control)
+        scan_button.hide()
+        connect_button = QPushButton("连接灯效", panel)
+        connect_button.setProperty("moduleAction", "连接灯效")
+        connect_button.setProperty("commandGroup", "lighting")
+        connect_button.clicked.connect(connect_lighting)
+        connect_button.hide()
+        assets_button = QPushButton("素材库", panel)
+        assets_button.setProperty("moduleAction", "素材库")
+        assets_button.setProperty("commandGroup", "screen")
+        assets_button.clicked.connect(lambda: navigate("assets"))
+        assets_button.hide()
+        return panel
+
+    def _device_tile(
+        self,
+        group: str,
+        title: str,
+        module_action: str,
+        value: QLabel,
+        action: Callable[[], None],
+    ) -> QFrame:
+        tile = QFrame()
+        tile.setObjectName("HomeDeviceTile")
+        layout = QVBoxLayout(tile)
+        layout.setContentsMargins(7, 5, 7, 5)
+        layout.setSpacing(1)
+        button = QPushButton(title)
+        button.setObjectName("HomeDeviceButton")
+        button.setProperty("moduleAction", module_action)
+        button.setProperty("commandGroup", group)
+        button.clicked.connect(action)
+        value.setObjectName("HomeDeviceTileStatus")
+        value.setWordWrap(True)
+        layout.addWidget(button)
+        layout.addWidget(value)
+        return tile
+
+    def _event_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("HomeTimelinePanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(3)
+        header = QHBoxLayout()
+        title = QLabel("最近状态")
+        title.setObjectName("HomeMinorTitle")
+        self.permission_value = QLabel("权限未检查")
+        self.permission_value.setObjectName("HomeInlineStatus")
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(self.permission_value)
+        layout.addLayout(header)
+        self.device_tree_value = QLabel("设备树未生成")
+        self.device_tree_value.setObjectName("HomeInlineStatus")
+        self.device_tree_value.setWordWrap(True)
+        layout.addWidget(self.device_tree_value)
+        self.event_labels: list[QLabel] = []
+        for _index in range(3):
+            label = QLabel("等待操作")
+            label.setObjectName("TimelineItem")
+            label.setWordWrap(True)
+            self.event_labels.append(label)
+            layout.addWidget(label)
+        return panel
 
     def _set_scene_mode(self, mode: str, scene_key: str) -> None:
         self.set_mode_indicator(mode)
@@ -252,7 +513,7 @@ class ControlCenterPage(QWidget):
             return
         try:
             applied = self._apply_fan_preset(key)
-        except Exception as error:  # noqa: BLE001 - surface backend failures without breaking the dashboard.
+        except Exception as error:  # noqa: BLE001 - keep dashboard interaction responsive.
             self.add_event(f"风扇策略应用失败：{error}")
             return
         self.set_fan_strategy(key, enabled=True)
@@ -274,68 +535,6 @@ class ControlCenterPage(QWidget):
         for preset_key, button in self.fan_strategy_buttons.items():
             button.setChecked(preset_key == key)
 
-    def _command_panel(
-        self,
-        navigate: Callable[[str], None],
-        upload_monitor: Callable[[], None],
-        load_fan_control: Callable[[], None],
-        connect_lighting: Callable[[], None],
-        sleep_all_off: Callable[[], None],
-    ) -> QFrame:
-        panel = QFrame()
-        panel.setObjectName("HomeCommandDock")
-        layout = QGridLayout(panel)
-        layout.setContentsMargins(14, 11, 14, 11)
-        layout.setHorizontalSpacing(7)
-        layout.setVerticalSpacing(7)
-        title = QLabel("快捷操作")
-        title.setObjectName("SectionLabel")
-        columns = 5
-        layout.addWidget(title, 0, 0, 1, columns)
-        actions: tuple[tuple[str, str, Callable[[], None], bool], ...] = (
-            ("safety", "睡眠全关", sleep_all_off, False),
-            ("screen", "发送监控", upload_monitor, True),
-            ("screen", "打开屏幕", lambda: navigate("screen"), True),
-            ("screen", "素材库", lambda: navigate("assets"), False),
-            ("fan", "扫描风扇", load_fan_control, False),
-            ("fan", "打开风扇", lambda: navigate("fan"), True),
-            ("lighting", "打开灯效", lambda: navigate("lighting"), True),
-            ("lighting", "连接灯效", connect_lighting, False),
-            ("lianli", "打开联力", lambda: navigate("lianli"), True),
-            ("lianli", "读取联力状态", lambda: navigate("lianli"), False),
-        )
-        for index, (group, label, action, primary) in enumerate(actions):
-            button = QPushButton(label)
-            button.setProperty("moduleAction", label)
-            button.setProperty("commandGroup", group)
-            if label == "睡眠全关":
-                button.setObjectName("DangerButton")
-            elif primary:
-                button.setObjectName("PrimaryButton")
-            else:
-                button.setObjectName("SecondaryButton")
-            button.clicked.connect(action)
-            layout.addWidget(button, 1 + index // columns, index % columns)
-        return panel
-
-    def _event_panel(self) -> QFrame:
-        panel = QFrame()
-        panel.setObjectName("HomeTimelinePanel")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 11, 14, 11)
-        layout.setSpacing(4)
-        title = QLabel("最近事件")
-        title.setObjectName("SectionLabel")
-        layout.addWidget(title)
-        self.event_labels = []
-        for _index in range(4):
-            label = QLabel("等待操作")
-            label.setObjectName("TimelineItem")
-            label.setWordWrap(True)
-            self.event_labels.append(label)
-            layout.addWidget(label)
-        return panel
-
     def add_event(self, message: str) -> None:
         self._events.insert(0, message)
         self._events = self._events[:6]
@@ -347,35 +546,86 @@ class ControlCenterPage(QWidget):
     def update_device(self, device: DisplayDevice | None) -> None:
         if device is None:
             self.device_value.setText("未发现 LCD 设备")
+            self.device_tile_value.setText("未发现")
+            self.lcd_status_display.setText("未发现")
             return
         writable = "可写" if device.connection.writable else "只读"
-        self.device_value.setText(f"{device.display_name}\n{device.width}x{device.height} · {writable}")
+        self.device_value.setText(f"{device.display_name}\n{device.width}x{device.height}  /  {writable}")
+        self.device_tile_value.setText(f"{device.width}x{device.height}  {writable}")
+        self.lcd_status_display.setText(writable)
 
     def update_telemetry(self, telemetry: SystemTelemetry | None) -> None:
         if telemetry is None:
             self.cpu_value.setText("温度 --\n负载 --\n功耗 --")
             self.gpu_value.setText("温度 --\n负载 --\n功耗 --\n频率 --")
             self.telemetry_time_value.setText("硬件遥测不可用")
-            for bar in (self.cpu_temp_bar, self.cpu_load_bar, self.gpu_temp_bar, self.gpu_load_bar):
+            self.refresh_display.setText("不可用")
+            for display in (
+                self.cpu_temp_display,
+                self.gpu_temp_display,
+                self.cpu_load_display,
+                self.gpu_load_display,
+                self.vram_usage_display,
+                self.cpu_power_display,
+                self.gpu_power_display,
+                self.total_power_display,
+            ):
+                display.setText("--")
+            self.gpu_clock_display.setText("-- MHz")
+            self.gpu_memory_display.setText("-- / -- MB")
+            for bar in (
+                self.cpu_temp_bar,
+                self.gpu_temp_bar,
+                self.cpu_load_bar,
+                self.gpu_load_bar,
+                self.vram_usage_bar,
+            ):
                 bar.setValue(0)
             self._fan_rpm_text = ""
             self._refresh_fan_value()
             return
-        cpu = "--" if telemetry.cpu.package_temperature_c is None else f"{telemetry.cpu.package_temperature_c:.0f}°C"
-        cpu_load = "--" if telemetry.cpu.utilization_percent is None else f"{telemetry.cpu.utilization_percent:.0f}%"
-        cpu_power = "--" if telemetry.cpu.power_w is None else f"{telemetry.cpu.power_w:.0f}W"
-        gpu = "--" if telemetry.gpu.temperature_c is None else f"{telemetry.gpu.temperature_c:.0f}°C"
-        gpu_load = "--" if telemetry.gpu.utilization_percent is None else f"{telemetry.gpu.utilization_percent:.0f}%"
-        gpu_power = "--" if telemetry.gpu.power_w is None else f"{telemetry.gpu.power_w:.0f}W"
-        gpu_clock = "--" if telemetry.gpu.graphics_clock_mhz is None else f"{telemetry.gpu.graphics_clock_mhz}MHz"
+
+        cpu_temp = self._display_value(telemetry.cpu.package_temperature_c, "°C", digits=0)
+        cpu_load = self._display_value(telemetry.cpu.utilization_percent, "%", digits=0)
+        cpu_power = self._display_value(telemetry.cpu.power_w, "W", digits=0)
+        gpu_temp = self._display_value(telemetry.gpu.temperature_c, "°C", digits=0)
+        gpu_load = self._display_value(telemetry.gpu.utilization_percent, "%", digits=0)
+        gpu_power = self._display_value(telemetry.gpu.power_w, "W", digits=0)
+        gpu_clock = "--" if telemetry.gpu.graphics_clock_mhz is None else str(telemetry.gpu.graphics_clock_mhz)
         gpu_fan = self._gpu_fan_summary(telemetry)
-        self.cpu_value.setText(f"温度 {cpu}\n负载 {cpu_load}\n功耗 {cpu_power}")
-        self.gpu_value.setText(f"温度 {gpu}\n负载 {gpu_load}\n功耗 {gpu_power}\n频率 {gpu_clock}\n风扇 {gpu_fan}")
+
+        self.cpu_value.setText(f"温度 {cpu_temp}\n负载 {cpu_load}\n功耗 {cpu_power}")
+        self.gpu_value.setText(
+            f"温度 {gpu_temp}\n负载 {gpu_load}\n功耗 {gpu_power}\n频率 {gpu_clock}MHz\n风扇 {gpu_fan}"
+        )
+        self.cpu_temp_display.setText(cpu_temp)
+        self.gpu_temp_display.setText(gpu_temp)
+        self.cpu_load_display.setText(cpu_load)
+        self.gpu_load_display.setText(gpu_load)
+        self.cpu_power_display.setText(cpu_power)
+        self.gpu_power_display.setText(gpu_power)
+        self.gpu_clock_display.setText(f"{gpu_clock} MHz")
+
+        memory_used = telemetry.gpu.memory_used_mb
+        memory_total = telemetry.gpu.memory_total_mb
+        if memory_used is None or memory_total in {None, 0}:
+            self.gpu_memory_display.setText("-- / -- MB")
+            self.vram_usage_display.setText("-- %")
+            self.vram_usage_bar.setValue(0)
+        else:
+            memory_percent = round(memory_used / memory_total * 100)
+            self.gpu_memory_display.setText(f"{memory_used} / {memory_total} MB")
+            self.vram_usage_display.setText(f"{memory_percent}%")
+            self.vram_usage_bar.setValue(self._bar_value(memory_percent))
+
+        known_power = [value for value in (telemetry.cpu.power_w, telemetry.gpu.power_w) if value is not None]
+        self.total_power_display.setText(f"{sum(known_power):.0f} W" if known_power else "-- W")
         self.cpu_temp_bar.setValue(self._bar_value(telemetry.cpu.package_temperature_c))
-        self.cpu_load_bar.setValue(self._bar_value(telemetry.cpu.utilization_percent))
         self.gpu_temp_bar.setValue(self._bar_value(telemetry.gpu.temperature_c))
+        self.cpu_load_bar.setValue(self._bar_value(telemetry.cpu.utilization_percent))
         self.gpu_load_bar.setValue(self._bar_value(telemetry.gpu.utilization_percent))
-        self.telemetry_time_value.setText(f"实时硬件状态 · 更新于 {telemetry.captured_at:%H:%M:%S}")
+        self.refresh_display.setText(telemetry.captured_at.strftime("%H:%M:%S"))
+        self.telemetry_time_value.setText(f"实时硬件状态  /  更新于 {telemetry.captured_at:%H:%M:%S}")
         self._fan_rpm_text = self._fan_rpm_summary(telemetry)
         self._refresh_fan_value()
 
@@ -387,18 +637,20 @@ class ControlCenterPage(QWidget):
         lines = [self._fan_status_text]
         if self._fan_rpm_text:
             lines.append(self._fan_rpm_text)
-        self.fan_value.setText("\n".join(line for line in lines if line))
+        value = "\n".join(line for line in lines if line)
+        self.fan_value.setText(value)
+        self.fan_tile_value.setText(self._fan_status_text.splitlines()[0] if self._fan_status_text else "未扫描")
 
     def _fan_rpm_summary(self, telemetry: SystemTelemetry) -> str:
         fans = [fan for fan in telemetry.fans if fan.available and fan.rpm is not None]
         if not fans:
             return "转速 --"
         parts: list[str] = []
-        for fan in fans[:4]:
+        for fan in fans[:5]:
             percent = "" if fan.percent is None else f" · {fan.percent:.0f}%"
             parts.append(f"{fan.name} {fan.rpm} RPM{percent}")
-        if len(fans) > 4:
-            parts.append(f"另有 {len(fans) - 4} 个风扇")
+        if len(fans) > 5:
+            parts.append(f"另有 {len(fans) - 5} 个风扇")
         return "\n".join(parts)
 
     def _gpu_fan_summary(self, telemetry: SystemTelemetry) -> str:
@@ -434,46 +686,11 @@ class ControlCenterPage(QWidget):
     def recent_events(self) -> list[str]:
         return list(self._events)
 
-    def _telemetry_card(
-        self,
-        title: str,
-        value: QLabel,
-        role: str,
-        bars: tuple[QProgressBar, ...] = (),
-    ) -> QFrame:
-        card = QFrame()
-        card.setObjectName("HomeStatusCard")
-        card.setProperty("statusRole", role)
-        card.setMinimumHeight(154)
-        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(14, 12, 14, 12)
-        card_layout.setSpacing(6)
-        title_label = QLabel(title)
-        title_label.setObjectName("HomeMetricTitle")
+    def _metric_value(self, text: str) -> QLabel:
+        value = QLabel(text)
         value.setObjectName("HomeMetricValue")
-        value.setWordWrap(True)
-        card_layout.addWidget(title_label)
-        card_layout.addWidget(value, 1)
-        for bar in bars:
-            card_layout.addWidget(bar)
-        return card
-
-    def _compact_status_card(self, title: str, value: QLabel, role: str) -> QFrame:
-        card = QFrame()
-        card.setObjectName("HomeStatusCard")
-        card.setProperty("statusRole", role)
-        card.setMinimumHeight(74)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(12, 10, 12, 10)
-        card_layout.setSpacing(4)
-        title_label = QLabel(title)
-        title_label.setObjectName("SectionLabel")
-        value.setObjectName("HomeCompactValue")
-        value.setWordWrap(True)
-        card_layout.addWidget(title_label)
-        card_layout.addWidget(value, 1)
-        return card
+        value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        return value
 
     def _metric_bar(self, role: str) -> QProgressBar:
         bar = QProgressBar()
@@ -482,10 +699,19 @@ class ControlCenterPage(QWidget):
         bar.setRange(0, 100)
         bar.setValue(0)
         bar.setTextVisible(False)
-        bar.setFixedHeight(5)
+        bar.setFixedHeight(3)
         return bar
 
     def _bar_value(self, value: float | int | None) -> int:
         if value is None:
             return 0
         return max(0, min(100, round(float(value))))
+
+    def _display_value(self, value: float | int | None, suffix: str, *, digits: int) -> str:
+        if value is None:
+            return f"-- {suffix}" if suffix else "--"
+        return f"{float(value):.{digits}f}{suffix}"
+
+    def _dashboard_asset(self, *parts: str) -> Path:
+        root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+        return root.joinpath("assets", *parts)

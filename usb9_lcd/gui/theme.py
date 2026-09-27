@@ -538,4 +538,366 @@ def gui_stylesheet() -> str:
     QLabel[status="warning"], QLabel#WarningText { color: #f0b35a; }
     QLabel[status="danger"], QLabel#DangerText { color: #d76f7a; }
     QLabel[status="ok"], QLabel#OkText { color: #6ee7d8; }
+
+    /* Armoury-style neutral shell and crimson interaction palette. */
+    QMainWindow, QWidget {
+        background: #0b0b0c;
+        color: #eeeeef;
+    }
+    QScrollArea#PageScrollArea,
+    QScrollArea#PageScrollArea > QWidget > QWidget,
+    QFrame#AppShell { background: #0b0b0c; }
+    QFrame#TopBar {
+        background: #121212;
+        border-bottom: 1px solid #202022;
+    }
+    QFrame#MainContentShell {
+        background: #0d0d0e;
+        border-left: 0;
+    }
+    QLabel#AppTitle {
+        color: #f5f5f5;
+        font-size: 14px;
+        font-weight: 800;
+    }
+    QLabel#AppSubtitle {
+        color: #f12b3f;
+        font-size: 10px;
+        font-weight: 800;
+    }
+    QLabel#DeviceBadge {
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        color: #b6b6b8;
+        padding: 5px 9px;
+        font-weight: 700;
+    }
+    QLabel#StatusPill {
+        background: #251416;
+        border: 1px solid #67242c;
+        border-radius: 2px;
+        color: #f2c7cc;
+        padding: 5px 14px;
+        font-weight: 800;
+    }
+    QLabel#PageTitle {
+        color: #f4f4f5;
+        font-size: 26px;
+        font-weight: 900;
+    }
+    QLabel#PageSubtitle { color: #7f7f82; font-size: 12px; }
+    QLabel#FieldHint { color: #77777a; }
+
+    QListWidget#SideNav {
+        background: #181819;
+        border: 0;
+        border-right: 1px solid #202022;
+        border-radius: 0;
+        padding: 10px 0;
+    }
+    QListWidget#SideNav::item {
+        min-height: 34px;
+        padding: 8px 20px;
+        border-radius: 0;
+        color: #a0a0a3;
+        margin: 2px 0;
+        font-weight: 600;
+    }
+    QListWidget#SideNav::item:hover {
+        background: #202021;
+        color: #efeff0;
+    }
+    QListWidget#SideNav::item:selected {
+        background: #2a1719;
+        color: #f5f5f5;
+        border-left: 3px solid #f12b3f;
+    }
+
+    QFrame#HomeHeroPanel {
+        min-height: 58px;
+        background: transparent;
+        border: 0;
+        border-bottom: 1px solid #222224;
+        border-radius: 0;
+    }
+    QLabel#HomeHeaderCaption {
+        color: #77777a;
+        font-size: 11px;
+        font-weight: 700;
+    }
+    QWidget#HomeDeviceColumn,
+    QFrame#HomeDeviceOverview,
+    QFrame#HomeMetricGrid,
+    QFrame#HomeCommandDock,
+    QFrame#HomeTimelinePanel,
+    QFrame#HomeFanProfilePanel {
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+    }
+    QFrame#HomeDeviceOverview {
+        border-bottom: 1px solid #29292b;
+    }
+    QLabel#HomeHardwareImage {
+        background: #0d0d0e;
+        border: 1px solid #262628;
+        border-radius: 0;
+    }
+    QLabel#HomeDeviceProduct {
+        color: #f3f3f4;
+        font-size: 16px;
+        font-weight: 900;
+    }
+    QLabel#HomeDeviceIdentity {
+        color: #a1a1a4;
+        font-size: 12px;
+        font-weight: 700;
+    }
+    QLabel#HomePlatformIdentity {
+        color: #66666a;
+        font-size: 10px;
+    }
+    QLabel#HomeMonitorKicker {
+        color: #f12b3f;
+        font-size: 12px;
+        font-weight: 900;
+    }
+    QFrame#HomeMonitorSection {
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        min-height: 128px;
+    }
+    QLabel#HomeMonitorTitle {
+        color: #e9e9ea;
+        font-size: 22px;
+        font-weight: 500;
+        padding: 0 0 5px 0;
+    }
+    QLabel#HomeMetricName {
+        color: #838386;
+        font-size: 11px;
+    }
+    QLabel#HomeMetricValue {
+        color: #a9a9ac;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    QLabel#HomeFanListValue {
+        color: #a9a9ac;
+        font-size: 11px;
+        line-height: 1.3;
+    }
+    QProgressBar#HomeMetricBar {
+        background: #2c2c2f;
+        border: 0;
+        border-radius: 0;
+    }
+    QProgressBar#HomeMetricBar[metricRole="cpu"]::chunk {
+        background: #f12b3f;
+        border-radius: 0;
+    }
+    QProgressBar#HomeMetricBar[metricRole="gpu"]::chunk {
+        background: #d4248c;
+        border-radius: 0;
+    }
+    QProgressBar#HomeMetricBar[metricRole="vram"]::chunk {
+        background: #7138ff;
+        border-radius: 0;
+    }
+
+    QFrame#HomeFanProfilePanel {
+        border-top: 1px solid #29292b;
+    }
+    QLabel#HomeFanModeState {
+        color: #f12b3f;
+        font-size: 11px;
+        font-weight: 800;
+    }
+    QPushButton#FanStrategyButton {
+        min-height: 42px;
+        background: transparent;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        border-radius: 0;
+        color: #9a9a9d;
+        padding: 5px 10px;
+        text-align: center;
+    }
+    QPushButton#FanStrategyButton:hover {
+        background: #171718;
+        color: #f0f0f1;
+    }
+    QPushButton#FanStrategyButton:checked {
+        background: #171718;
+        border: 0;
+        border-bottom: 2px solid #f12b3f;
+        color: #ffffff;
+        font-weight: 900;
+    }
+    QPushButton#HomeFanSettingsButton {
+        min-height: 42px;
+        background: transparent;
+        border: 1px solid #333336;
+        border-radius: 2px;
+        color: #b8b8ba;
+    }
+
+    QFrame#HomeDeviceTile {
+        background: #111112;
+        border: 1px solid #28282a;
+        border-radius: 2px;
+    }
+    QPushButton#HomeDeviceButton {
+        min-height: 20px;
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        color: #e5e5e6;
+        padding: 2px 0;
+        text-align: left;
+        font-weight: 800;
+    }
+    QPushButton#HomeDeviceButton:hover { color: #f12b3f; }
+    QLabel#HomeDeviceTileStatus {
+        color: #77777a;
+        font-size: 10px;
+    }
+    QPushButton#HomeSleepButton,
+    QPushButton#HomeDeviceAction {
+        min-height: 24px;
+        border-radius: 2px;
+        padding: 5px 8px;
+    }
+    QPushButton#HomeSleepButton {
+        background: #281719;
+        border: 1px solid #66252c;
+        color: #e8b6bc;
+    }
+    QLabel#HomeMinorTitle {
+        color: #b4b4b6;
+        font-size: 11px;
+        font-weight: 800;
+    }
+    QLabel#HomeInlineStatus {
+        color: #66666a;
+        font-size: 10px;
+    }
+    QLabel#TimelineItem {
+        color: #747477;
+        padding: 2px 0 2px 8px;
+        border-left: 1px solid #6b222b;
+        font-size: 10px;
+    }
+
+    QFrame#MetricCard,
+    QFrame#HomeStatusCard,
+    QFrame#FanDashboardPanel,
+    QFrame#FanChartPanel,
+    QFrame#FanStatusCard,
+    QFrame#FanRoleMetricCard,
+    QFrame#FanCurveEditorPanel,
+    QFrame#FanPermissionPanel,
+    QFrame#FanPermissionDetailPanel,
+    QFrame#FanStressCard,
+    QFrame#LightingTargetPanel,
+    QFrame#LightingPresetPanel,
+    QFrame#LightingActionPanel,
+    QFrame#LightingSyncPanel,
+    QFrame#LightingScenePanel,
+    QFrame#ScreenPreviewCard {
+        background: #131314;
+        border: 1px solid #2b2b2d;
+        border-radius: 3px;
+    }
+    QFrame#FanCommandPanel,
+    QFrame#FanControlToolbar,
+    QFrame#FanBindingToolbar,
+    QFrame#FanControlGroup,
+    QFrame#FanBindingGroup,
+    QFrame#FanControlRow,
+    QFrame#FanBindingRow,
+    QFrame#FanChannelEditorSection,
+    QFrame#FanChannelEvidenceSection,
+    QFrame#FanPermissionStatusChip {
+        background: #121213;
+        border: 1px solid #2b2b2d;
+        border-radius: 3px;
+    }
+    QFrame#FanTrendChart,
+    QWidget#FanCurveCanvas,
+    QLabel#LcdPreview,
+    QLabel#AssetPreview {
+        background: #101011;
+        border-color: #2c2c2f;
+        border-radius: 3px;
+    }
+
+    QPushButton {
+        background: #1a1a1b;
+        border: 1px solid #38383b;
+        border-radius: 3px;
+        color: #e8e8e9;
+    }
+    QPushButton:hover {
+        background: #232325;
+        border-color: #67676b;
+    }
+    QPushButton:pressed { background: #2b2b2e; border-color: #8a8a8e; }
+    QPushButton:checked,
+    QPushButton#PrimaryButton {
+        background: #8b1f2b;
+        border-color: #f12b3f;
+        color: #ffffff;
+    }
+    QPushButton#SecondaryButton {
+        background: #19191a;
+        border-color: #3a3a3d;
+        color: #c8c8ca;
+    }
+    QPushButton#DangerButton {
+        background: #2a1719;
+        border-color: #722832;
+        color: #efc6cb;
+    }
+    QPushButton#SegmentButton:checked {
+        background: #2a1719;
+        border-color: #f12b3f;
+        color: #ffffff;
+    }
+    QComboBox,
+    QLineEdit,
+    QTextEdit,
+    QSpinBox,
+    QDoubleSpinBox {
+        background: #141415;
+        border-color: #343437;
+        border-radius: 3px;
+        selection-background-color: #8b1f2b;
+    }
+    QComboBox:focus,
+    QLineEdit:focus,
+    QTextEdit:focus,
+    QSpinBox:focus,
+    QDoubleSpinBox:focus {
+        border-color: #f12b3f;
+        background: #181819;
+    }
+    QSlider::groove:horizontal { background: #303033; }
+    QSlider::handle:horizontal {
+        background: #f12b3f;
+        border-color: #ffd1d6;
+    }
+    QProgressBar { background: #303033; }
+    QProgressBar::chunk { background: #f12b3f; }
+    QCheckBox::indicator { background: #141415; border-color: #5b5b5f; }
+    QCheckBox::indicator:checked { background: #b42434; border-color: #f12b3f; }
+    QTabWidget::pane { background: #131314; border-color: #2b2b2d; border-radius: 3px; }
+    QTabBar::tab { background: #141415; border-color: #2b2b2d; border-radius: 0; }
+    QTabBar::tab:selected { background: #2a1719; border-color: #f12b3f; color: #ffffff; }
+    QScrollBar:vertical, QScrollBar:horizontal { background: #0b0b0c; }
+    QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #3b3b3e; }
+    QStatusBar { background: #0b0b0c; border-top-color: #242426; color: #77777a; }
+    QLabel[status="ok"], QLabel#OkText { color: #62ba8b; }
     """

@@ -341,14 +341,15 @@ class MainWindow(QMainWindow):
         self._platform_diagnostics_dialog: PlatformDiagnosticsDialog | None = None
         stop_existing_keepalive()
 
-        self.setWindowTitle("usb9-lcd")
-        self.resize(1180, 760)
+        self.setWindowTitle("Lumen Hub")
+        self.resize(1440, 860)
+        self.setMinimumSize(1080, 700)
         self._apply_theme()
 
         self.navigation = QListWidget()
         self.navigation.setObjectName("SideNav")
-        self.navigation.setFixedWidth(196)
-        for label in ("首页", "屏幕", "风扇", "灯效", "场景", "设备", "联力无线", "设置"):
+        self.navigation.setFixedWidth(188)
+        for label in ("控制面板", "屏幕", "风扇", "灯效", "情境设定", "设备", "联力无线", "设置"):
             self.navigation.addItem(QListWidgetItem(label))
 
         self.pages = QStackedWidget()
@@ -648,17 +649,16 @@ class MainWindow(QMainWindow):
         top_bar = QFrame()
         top_bar.setObjectName("TopBar")
         layout = QHBoxLayout(top_bar)
-        layout.setContentsMargins(20, 12, 20, 12)
+        layout.setContentsMargins(16, 8, 16, 8)
+        layout.setSpacing(10)
 
-        title_box = QVBoxLayout()
-        title_box.setSpacing(2)
-        app_title = QLabel("USB9 LCD Control Center")
+        app_title = QLabel("Lumen Hub")
         app_title.setObjectName("AppTitle")
-        app_subtitle = QLabel("屏幕内容、硬件监控、风扇曲线、灯效与联力无线")
-        app_subtitle.setObjectName("PageSubtitle")
-        title_box.addWidget(app_title)
-        title_box.addWidget(app_subtitle)
-        layout.addLayout(title_box, 1)
+        layout.addWidget(app_title)
+        app_subtitle = QLabel("CONTROL CENTER")
+        app_subtitle.setObjectName("AppSubtitle")
+        layout.addWidget(app_subtitle)
+        layout.addStretch(1)
 
         self.device_summary_label = QLabel("未发现设备")
         self.device_summary_label.setObjectName("DeviceBadge")
