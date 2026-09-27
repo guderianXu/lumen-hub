@@ -664,7 +664,7 @@ class LianLiWirelessPage(QWidget):
 
         if self.background_refresh and self.settings.lianli_wireless.auto_connect:
 
-            QTimer.singleShot(0, self.auto_connect_lianli)
+            QTimer.singleShot(0, self._restore_lianli_startup_binding)
 
 
 
@@ -722,21 +722,27 @@ class LianLiWirelessPage(QWidget):
 
 
 
-        self.lianli_direct_mac_input = QLineEdit()
+        self.lianli_direct_mac_input = QLineEdit("14:55:f9:62:32:e1")
 
-        self.lianli_direct_master_input = QLineEdit()
+        self.lianli_direct_master_input = QLineEdit("24:69:dd:62:32:dc")
 
         self.lianli_direct_led_count = QSpinBox()
 
         self.lianli_direct_led_count.setRange(1, 255)
 
+        self.lianli_direct_led_count.setValue(26)
+
         self.lianli_direct_channel = QSpinBox()
 
         self.lianli_direct_channel.setRange(0, 255)
 
+        self.lianli_direct_channel.setValue(8)
+
         self.lianli_direct_rx_type = QSpinBox()
 
         self.lianli_direct_rx_type.setRange(0, 255)
+
+        self.lianli_direct_rx_type.setValue(1)
 
         # Legacy experiment helpers still use these attribute names for auto-fill.
         self.lianli_mac_input = self.lianli_direct_mac_input
@@ -1869,6 +1875,58 @@ class LianLiWirelessPage(QWidget):
 
 
 
+    def _restore_lianli_startup_binding(self) -> None:
+
+        if self.settings.lianli_wireless.targets:
+
+            target = self._cached_lianli_target() or next(iter(self.settings.lianli_wireless.targets.values()))
+
+        else:
+
+            target = self._seed_lianli_target_from_direct_inputs()
+
+        if target is None:
+
+            self.auto_connect_lianli()
+
+            return
+
+        self._populate_cached_lianli_targets()
+
+        captured_target = WirelessDeviceInfo(
+
+            mac=target.mac,
+
+            master_mac=target.master_mac,
+
+            channel=target.channel,
+
+            rx_type=target.rx_type,
+
+            device_type=target.device_type,
+
+            fan_count=target.fan_count,
+
+            pwm_values=(0, 0, 0, 0),
+
+            fan_rpm=(0, 0, 0, 0),
+
+            command_sequence=0,
+
+            raw=bytes(42),
+
+        )
+
+        self._mark_lianli_live_write_gate([captured_target], source="validated-capture-cache")
+
+        self._update_write_controls()
+
+        self._update_daily_controls()
+
+        self._set_lianli_status("已恢复经抓包验证的联力风扇绑定；需要刷新硬件时点击“重新识别”")
+
+
+
     def _auto_connect_lianli_payload(self) -> dict[str, object]:
 
         service_actions: list[str] = []
@@ -1994,7 +2052,7 @@ class LianLiWirelessPage(QWidget):
 
             device_type=0,
 
-            fan_count=4,
+            fan_count=1,
 
             led_count=int(self.lianli_direct_led_count.value()) if hasattr(self, "lianli_direct_led_count") else 26,
 

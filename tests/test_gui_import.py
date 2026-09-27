@@ -1540,6 +1540,33 @@ def test_lianli_dashboard_preset_writes_all_bound_fan_groups():
     app.quit()
 
 
+def test_lianli_startup_restores_validated_capture_without_receiver_scan():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.pages import LianLiWirelessPage
+    from usb9_lcd.gui.settings import GuiSettings
+
+    backend_calls: list[str] = []
+    app = QApplication.instance() or QApplication([])
+    settings = GuiSettings()
+    page = LianLiWirelessPage(
+        backend_factory=lambda: backend_calls.append("backend") or None,
+        settings=settings,
+        require_write_gate=True,
+        background_refresh=False,
+    )
+
+    page._restore_lianli_startup_binding()
+
+    assert backend_calls == []
+    assert settings.lianli_wireless.active_target_mac == "14:55:f9:62:32:e1"
+    assert settings.lianli_wireless.targets["14:55:f9:62:32:e1"].fan_count == 1
+    assert page._write_gate_unlocked() is True
+    assert "已恢复经抓包验证" in page.lianli_status_label.text()
+    page.close()
+    app.quit()
+
+
 def test_lianli_wireless_page_requires_write_gate_when_configured():
     from PySide6.QtWidgets import QApplication
 
