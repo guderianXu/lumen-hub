@@ -43,7 +43,12 @@ from usb9_lcd.gui.fan_curve_model import (
 from usb9_lcd.gui.settings import GuiSettings, save_settings
 from usb9_lcd.monitoring.models import FanTelemetry, SystemTelemetry
 from usb9_lcd.monitoring.service import collect_system_telemetry
-from usb9_lcd.monitoring.windows import WindowsFanChannel, collect_windows_fan_channels, set_windows_fan_control_percent
+from usb9_lcd.monitoring.windows import (
+    WindowsFanChannel,
+    apply_asus_fan_profile,
+    collect_windows_fan_channels,
+    set_windows_fan_control_percent,
+)
 from usb9_lcd.platforms.process import hidden_subprocess_kwargs
 from usb9_lcd.service.permissions import (
     PermissionRequest,
@@ -633,6 +638,7 @@ class FanControlHostPage(QWidget):
         self._loaded = False
         self._scan_active = False
         self._curve_applying = False
+        self._latest_telemetry: SystemTelemetry | None = None
         self._last_curve_temperature_c: float | None = None
         self._last_curve_percent: int | None = None
         self._updating_curve_preset = False
@@ -818,8 +824,11 @@ class FanControlHostPage(QWidget):
         self.admin_button.clicked.connect(self._restart_as_admin)
         self.admin_button.setVisible(sys.platform.startswith("win") and not _is_windows_admin())
         self.live_refresh = QCheckBox("实时刷新")
-        self.live_refresh.setChecked(True)
-        self.live_refresh.setToolTip("只刷新 CPU 温度和风扇 RPM/PWM 显示，不写入 PWM。")
+        self.live_refresh.setChecked(not sys.platform.startswith("win"))
+        self.live_refresh.setToolTip(
+            "只刷新 CPU 温度和风扇 RPM/PWM 显示，不写入 PWM。Windows ASUS 服务默认关闭轮询，"
+            "避免与主板控制服务频繁争用。"
+        )
         self.live_refresh.toggled.connect(self._live_refresh_changed)
         self.live_interval = QSpinBox()
         self.live_interval.setRange(1, 30)
@@ -860,6 +869,15 @@ class FanControlHostPage(QWidget):
         if writable:
             return f"{len(self._snapshot.channels)} 个传感器 / {writable} 可控"
         return f"{len(self._snapshot.channels)} 个传感器 / {rpm}"
+
+    def update_telemetry(self, telemetry: SystemTelemetry | None) -> None:
+        self._latest_telemetry = telemetry
+        if telemetry is None or self._snapshot is None:
+            return
+        self._snapshot = replace(self._snapshot, telemetry=telemetry)
+        self.cpu_value.setText(_cpu_temperature_label(self._snapshot))
+        self.cpu_value.setStyleSheet(f"color: {_cpu_temperature_color(self._snapshot)};")
+        self._update_live_status(self._snapshot)
 
     def load_fan_control(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         self.reload_fan_control(*args, **kwargs)
@@ -1118,7 +1136,7 @@ class FanControlHostPage(QWidget):
         self._apply_curve_after_scan = False
         if should_apply_curve and self.curve_enable.isChecked() and not self._curve_applying:
             if snapshot.control_available:
-                self._apply_curve_to_snapshot(snapshot, source="曲线自动")
+                self._apply_selected_curve(snapshot, source="曲线自动")
             else:
                 self._set_status("风扇曲线未应用：当前没有可写 PWM 通道")
             return True
@@ -1442,6 +1460,7 @@ class FanControlHostPage(QWidget):
             self.curve_enable.isChecked()
             and self._snapshot is not None
             and self._snapshot.control_available
+            and not self._uses_asus_native_profile(self._snapshot)
         )
         if should_run and not self._curve_timer.isActive():
             self._curve_timer.start()
@@ -1449,8 +1468,10 @@ class FanControlHostPage(QWidget):
             self._curve_timer.stop()
 
     def _curve_tick(self) -> None:
-        if self._scan_active:
-            self._apply_curve_after_scan = True
+        if self._scan_active or self._curve_applying:
+            return
+        if self._snapshot is not None and self._snapshot.control_available:
+            self._apply_selected_curve(self._snapshot_with_latest_telemetry(), source="曲线自动")
             return
         self.reload_fan_control(interactive_driver_probe=False, apply_curve_after_scan=True)
 
@@ -1462,14 +1483,67 @@ class FanControlHostPage(QWidget):
             self._apply_curve_after_scan = True
             self._set_status("风扇曲线等待当前扫描完成后写入")
             return
+        if self._snapshot is not None and self._snapshot.control_available:
+            self._apply_selected_curve(self._snapshot_with_latest_telemetry(), source="曲线自动")
+            return
         self.reload_fan_control(interactive_driver_probe=False, apply_curve_after_scan=True)
         self._set_status(status)
+
+    def _snapshot_with_latest_telemetry(self) -> GenericFanSnapshot:
+        if self._snapshot is None:
+            raise RuntimeError("普通风扇尚未扫描")
+        if self._latest_telemetry is None:
+            return self._snapshot
+        return replace(self._snapshot, telemetry=self._latest_telemetry)
 
     def _apply_curve_now(self) -> None:
         if self._snapshot is None or not self._snapshot.control_available:
             self._explain_control_limit()
             return
-        self._apply_curve_to_snapshot(self._snapshot, source="曲线手动")
+        self._apply_selected_curve(self._snapshot_with_latest_telemetry(), source="曲线手动")
+
+    def _uses_asus_native_profile(self, snapshot: GenericFanSnapshot) -> bool:
+        writable = [channel for channel in snapshot.channels if channel.control_available]
+        return bool(writable) and all(channel.windows_control_id.startswith("asus-fan://") for channel in writable)
+
+    def _apply_selected_curve(self, snapshot: GenericFanSnapshot, *, source: str) -> None:
+        preset = normalize_fan_curve_preset(self.settings.host_fan.curve_preset)
+        if preset != FAN_CURVE_CUSTOM_PRESET and self._uses_asus_native_profile(snapshot):
+            try:
+                applied = apply_asus_fan_profile(preset)
+            except Exception as exc:  # noqa: BLE001 - hardware service errors belong in the UI.
+                fallback_percent = {"quiet": 40, "normal": 55, "high": 75, "full": 100}[preset]
+                written, errors = self._write_pwm_percent_to_channels(fallback_percent)
+                log_event(
+                    "asus_fan_profile_fallback",
+                    preset=preset,
+                    percent=fallback_percent,
+                    native_error=str(exc),
+                    written=len(written),
+                    errors=errors,
+                )
+                if errors:
+                    self.details.append(
+                        f"\n{source}应用 ASUS Fan Xpert 预设失败：{exc}\n" + "\n".join(errors)
+                    )
+                    self._set_status("ASUS 风扇兼容预设应用失败")
+                    return
+                self._last_curve_temperature_c = None
+                self._last_curve_percent = fallback_percent
+                self.details.append(
+                    f"\n{source}：主板没有可用的 {preset} 原生配置，"
+                    f"已兼容写入 PWM {fallback_percent}%：" + ", ".join(written)
+                )
+                self._set_status(f"已应用 ASUS 兼容预设：{self.curve_preset_combo.currentText()}")
+                self._sync_curve_timer()
+                return
+            self._last_curve_temperature_c = None
+            self._last_curve_percent = None
+            self.details.append(f"\n{source}：已应用 ASUS Fan Xpert {preset} 原生曲线到 {applied} 个通道")
+            self._set_status(f"已应用 ASUS Fan Xpert 原生曲线：{self.curve_preset_combo.currentText()}")
+            self._sync_curve_timer()
+            return
+        self._apply_curve_to_snapshot(snapshot, source=source)
 
     def _apply_curve_to_snapshot(self, snapshot: GenericFanSnapshot, *, source: str) -> None:
         policy = apply_fan_curve_policy(
@@ -1484,6 +1558,10 @@ class FanControlHostPage(QWidget):
             minimum_percent=self.settings.host_fan.curve_minimum_percent,
         )
         percent = policy.percent
+        if self._last_curve_percent == percent:
+            self._last_curve_temperature_c = policy.temperature_c
+            self._set_status(f"风扇曲线保持 PWM {percent}%")
+            return
         previous_snapshot = self._snapshot
         self._snapshot = snapshot
         self._curve_applying = True
@@ -1526,7 +1604,8 @@ class FanControlHostPage(QWidget):
         self.details.append(
             "\n控制限制说明:\n"
             f"{reason}\n"
-            "Windows 普通主板风扇没有统一系统 API，通常只能通过 LibreHardwareMonitor/OpenHardwareMonitor 读取。"
+            "Windows 普通主板风扇没有统一系统 API；ASUS 主板会优先使用本机 Fan Xpert 服务，"
+            "其他主板回退到 LibreHardwareMonitor/OpenHardwareMonitor。"
             "Linux 下如果 hwmon 暴露 pwm* 但不可写，请点击“授权 PWM 权限”；授权后本页会自动重扫并启用手动 PWM/曲线控制。"
             f"{diagnostics}"
         )

@@ -36,6 +36,8 @@ def test_pyinstaller_args_use_gui_entry_and_bundle_assets():
     assert _arg_pair_exists(args, "--hidden-import", "usb9_lcd.gui.gif_preview")
     assert _arg_pair_exists(args, "--hidden-import", "hid")
     assert _arg_pair_exists(args, "--hidden-import", "Cryptodome.Cipher.DES")
+    assert _arg_pair_exists(args, "--hidden-import", "comtypes.client")
+    assert _arg_pair_exists(args, "--hidden-import", "comtypes.automation")
     assert not _arg_pair_exists(args, "--hidden-import", "Cryptodome.Cipher.AES")
     assert str(Path("E:/repo/lumen-hub") / "packaging" / "pyinstaller_lumen_hub_entry.py") in args
     assert any(item.endswith("assets;assets") for item in args)

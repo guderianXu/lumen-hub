@@ -963,6 +963,7 @@ class MainWindow(QMainWindow):
         self.latest_telemetry = telemetry
         self.monitor_page.update_telemetry(telemetry)
         self.home_page.update_telemetry(telemetry)
+        self.fan_page.update_telemetry(telemetry)
         self._forward_telemetry_to_lianli_page(telemetry)
         self._refresh_home_permission_status()
         self.update_monitor_preview()
@@ -1050,6 +1051,7 @@ class MainWindow(QMainWindow):
         self.latest_telemetry = telemetry
         self.monitor_page.update_telemetry(telemetry)
         self.home_page.update_telemetry(telemetry)
+        self.fan_page.update_telemetry(telemetry)
         self._forward_telemetry_to_lianli_page(telemetry)
         self._refresh_home_permission_status()
         self.update_monitor_preview()
@@ -1451,22 +1453,16 @@ class MainWindow(QMainWindow):
         return self._apply_global_scene(normalize_scene_payload(payload, key=scene_key))
 
     def apply_host_fan_preset(self, preset: object, *, enable_curve: bool = True) -> bool:
-        snapshot = getattr(self.fan_page, "_snapshot", None)
-        host_available = bool(snapshot is not None and getattr(snapshot, "control_available", False))
         lianli_available = self._has_lianli_scene_targets()
         lianli_apply = getattr(self.lianli_page, "apply_fan_preset", None)
-        applied = False
+        # Always give the motherboard-fan backend the preset. It can queue a
+        # scan when discovery is still in progress, so a stale wireless binding
+        # cannot swallow dashboard clicks intended for ordinary fans.
+        applied = bool(self.fan_page.apply_curve_preset(preset, enable_curve=enable_curve))
 
-        if host_available:
-            applied = bool(self.fan_page.apply_curve_preset(preset, enable_curve=enable_curve))
-
-        # Route the dashboard preset to the wireless controller when motherboard
-        # PWM is unavailable. If both backends exist, keep them on the same mode.
-        if callable(lianli_apply) and (lianli_available or not host_available):
+        # When a wireless controller is present, keep it on the same preset.
+        if callable(lianli_apply) and lianli_available:
             applied = bool(lianli_apply(preset, enable_curve=enable_curve)) or applied
-
-        if not host_available and not callable(lianli_apply):
-            applied = bool(self.fan_page.apply_curve_preset(preset, enable_curve=enable_curve))
 
         if hasattr(self, "home_page"):
             self.home_page.set_fan_strategy(preset, enabled=enable_curve)

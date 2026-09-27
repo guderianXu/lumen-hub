@@ -912,6 +912,112 @@ def test_fan_host_live_refresh_and_curve_tick_are_separated():
     app.quit()
 
 
+def test_fan_host_curve_tick_reuses_latest_telemetry_without_rescan():
+    from PySide6.QtWidgets import QApplication
+
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+
+    snapshot = GenericFanSnapshot(
+        platform_name="Windows",
+        telemetry=_telemetry(),
+        channels=[GenericFanChannel(name="CPU Fan", windows_control_id="/lpc/fan/0", control_available=True)],
+        control_available=True,
+        control_reason="ASUS Fan Xpert control available",
+    )
+    latest = SystemTelemetry(
+        cpu=CpuTelemetry(package_temperature_c=67.0, available=True),
+        gpu=GpuTelemetry(available=False),
+        captured_at=datetime(2026, 5, 30, 12, 0, 3),
+    )
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False)
+    reloads: list[dict[str, object]] = []
+    applied: list[GenericFanSnapshot] = []
+    page.reload_fan_control = lambda *args, **kwargs: reloads.append(kwargs)  # type: ignore[method-assign]
+    page._apply_curve_to_snapshot = lambda target, *, source: applied.append(target)  # type: ignore[method-assign]
+    page._snapshot = snapshot
+
+    page.update_telemetry(latest)
+    page._curve_tick()
+
+    assert reloads == []
+    assert applied[0].telemetry is latest
+
+    page.release()
+    page.close()
+    app.quit()
+
+
+def test_fan_host_uses_asus_native_profile_for_dashboard_preset(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+
+    settings = GuiSettings()
+    settings.host_fan.curve_preset = "normal"
+    snapshot = GenericFanSnapshot(
+        platform_name="Windows",
+        telemetry=_telemetry(),
+        channels=[GenericFanChannel(name="CPU Fan", windows_control_id="asus-fan://0", control_available=True)],
+        control_available=True,
+        control_reason="ASUS Fan Xpert control available",
+    )
+    applied: list[str] = []
+    monkeypatch.setattr(fan_host, "apply_asus_fan_profile", lambda preset: applied.append(preset) or 1)
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False, settings=settings, settings_saver=lambda _settings: None)
+    page._snapshot = snapshot
+
+    page._apply_selected_curve(snapshot, source="test")
+
+    assert applied == ["normal"]
+    assert "Fan Xpert" in page.status_label.text()
+    assert not page._curve_timer.isActive()
+
+    page.release()
+    page.close()
+    app.quit()
+
+
+def test_fan_host_falls_back_to_safe_asus_static_preset(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
+    from usb9_lcd.gui.settings import GuiSettings
+
+    settings = GuiSettings()
+    settings.host_fan.curve_preset = "normal"
+    snapshot = GenericFanSnapshot(
+        platform_name="Windows",
+        telemetry=_telemetry(),
+        channels=[GenericFanChannel(name="CPU Fan", windows_control_id="asus-fan://0", control_available=True)],
+        control_available=True,
+        control_reason="ASUS Fan Xpert control available",
+    )
+    monkeypatch.setattr(
+        fan_host,
+        "apply_asus_fan_profile",
+        lambda _preset: (_ for _ in ()).throw(RuntimeError("no profiles")),
+    )
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False, settings=settings, settings_saver=lambda _settings: None)
+    page._snapshot = snapshot
+    writes: list[int] = []
+    page._write_pwm_percent_to_channels = lambda percent: (writes.append(percent) or ["CPU Fan"], [])  # type: ignore[method-assign]
+
+    page._apply_selected_curve(snapshot, source="test")
+
+    assert writes == [55]
+    assert "兼容预设" in page.status_label.text()
+
+    page.release()
+    page.close()
+    app.quit()
+
+
 def test_fan_host_live_refresh_applies_curve_when_enabled():
     from PySide6.QtWidgets import QApplication
 
@@ -1084,7 +1190,7 @@ def test_fan_host_scan_reports_enabled_curve_without_writable_channel():
     app.quit()
 
 
-def test_fan_host_enabling_curve_requests_fresh_snapshot_before_writing(tmp_path):
+def test_fan_host_enabling_curve_reuses_discovered_channels_and_latest_telemetry(tmp_path):
     from PySide6.QtWidgets import QApplication
 
     from usb9_lcd.gui.fan_host import FanControlHostPage, GenericFanChannel, GenericFanSnapshot
@@ -1128,9 +1234,8 @@ def test_fan_host_enabling_curve_requests_fresh_snapshot_before_writing(tmp_path
 
     page._curve_enabled_changed(True)
 
-    assert direct_applies == []
-    assert reloads == [{"interactive_driver_probe": False, "apply_curve_after_scan": True}]
-    assert "刷新温度" in page.status_label.text()
+    assert direct_applies == [snapshot]
+    assert reloads == []
 
     page.release()
     page.close()
@@ -1234,6 +1339,23 @@ def test_fan_host_manual_pwm_mode_is_enabled_by_default():
     page = FanControlHostPage(auto_load=False)
 
     assert page.enable_manual.isChecked() is True
+
+    page.close()
+    app.quit()
+
+
+def test_fan_host_disables_expensive_live_polling_by_default_on_windows(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import usb9_lcd.gui.fan_host as fan_host
+    from usb9_lcd.gui.fan_host import FanControlHostPage
+
+    monkeypatch.setattr(fan_host.sys, "platform", "win32")
+    app = QApplication.instance() or QApplication([])
+    page = FanControlHostPage(auto_load=False)
+
+    assert page.live_refresh.isChecked() is False
+    assert page._live_timer.isActive() is False
 
     page.close()
     app.quit()

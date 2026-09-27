@@ -73,7 +73,17 @@ def build_pyinstaller_args(config: BuildConfig) -> list[str]:
     if config.clean:
         args.append("--clean")
     if config.is_windows:
-        args.append("--uac-admin")
+        args.extend(
+            [
+                "--uac-admin",
+                "--hidden-import",
+                "comtypes.client",
+                "--hidden-import",
+                "comtypes.automation",
+                "--hidden-import",
+                "comtypes.stream",
+            ]
+        )
 
     assets_dir = repo_root / "assets"
     args.extend(["--add-data", f"{assets_dir}{_data_separator(config.system)}assets"])

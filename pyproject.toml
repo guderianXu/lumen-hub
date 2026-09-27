@@ -12,6 +12,7 @@ dependencies = [
   "openrgb-python>=0.3.6",
   "Pillow>=10.0",
   "PySide6>=6.7",
+  "comtypes>=1.4; sys_platform == 'win32'",
 ]
 
 [project.scripts]

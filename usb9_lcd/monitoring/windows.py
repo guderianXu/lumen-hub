@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -21,6 +25,12 @@ _LHM_SENSOR_TYPES = ("Temperature", "Power", "Fan", "Control")
 _LHM_CACHE_SECONDS = 2.5
 _LHM_PROBE_LOCK = threading.Lock()
 _LHM_SENSOR_CACHE: tuple[float, list[dict[str, Any]]] = (0.0, [])
+_ASUS_FAN_CONTROL_CLSID = "{14083C53-B8E7-48E4-9320-811F3478C4A4}"
+_ASUS_FAN_CONTROL_PREFIX = "asus-fan://"
+_ASUS_FAN_LOCK = threading.Lock()
+_ASUS_FAN_LAST_ERROR = ""
+_ASUS_TEMPERATURE_PROBE_LOGGED = False
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -245,7 +255,20 @@ def _hardware_sensor_data(sensor_types: tuple[str, ...], name_pattern: str = "")
 
 def collect_windows_fan_channels(
     sensor_data_provider=_hardware_sensor_data,  # noqa: ANN001
+    *,
+    asus_channel_provider: Callable[[], list[WindowsFanChannel]] | None = None,
 ) -> list[WindowsFanChannel]:
+    resolved_asus_provider = asus_channel_provider
+    if resolved_asus_provider is None and sensor_data_provider is _hardware_sensor_data:
+        resolved_asus_provider = _collect_asus_fan_channels
+    if resolved_asus_provider is not None:
+        try:
+            asus_channels = resolved_asus_provider()
+        except Exception:  # noqa: BLE001 - generic sensor probing remains the cross-vendor fallback.
+            asus_channels = []
+        if asus_channels:
+            return asus_channels
+
     data = sensor_data_provider(("Fan", "Control"))
     fan_items = [item for item in data if str(item.get("SensorType") or "") == "Fan"]
     control_items = [item for item in data if str(item.get("SensorType") or "") == "Control"]
@@ -313,13 +336,21 @@ def set_windows_fan_control_percent(
     percent: int,
     *,
     runner=_run_powershell_json,  # noqa: ANN001
+    asus_manager_factory: Callable[[], Any] | None = None,
 ) -> None:
     resolved_percent = int(percent)
     if not 30 <= resolved_percent <= 100:
         raise ValueError("Windows fan control percent must be between 30 and 100")
     resolved_control_id = str(control_id).strip()
     if not resolved_control_id:
-        raise ValueError("Windows fan control requires a LibreHardwareMonitor control identifier")
+        raise ValueError("Windows fan control requires a control identifier")
+    if resolved_control_id.startswith(_ASUS_FAN_CONTROL_PREFIX):
+        _set_asus_fan_control_percent(
+            resolved_control_id,
+            resolved_percent,
+            manager_factory=asus_manager_factory,
+        )
+        return
 
     dll_path = _resolve_lhm_dll_path()
     if dll_path is None:
@@ -372,6 +403,209 @@ $computer.Close()
         _LHM_SENSOR_CACHE = (0.0, [])
 
 
+def apply_asus_fan_profile(
+    preset: str,
+    *,
+    manager_factory: Callable[[], Any] | None = None,
+) -> int:
+    aliases = {
+        "quiet": ("silent", "quiet"),
+        "normal": ("standard", "normal"),
+        "high": ("turbo", "performance", "high"),
+        "full": ("fullspeed", "full", "maximum", "max"),
+    }
+    key = str(preset).strip().casefold()
+    if key not in aliases:
+        raise ValueError(f"Unsupported ASUS fan profile: {preset}")
+
+    applied = 0
+    with _ASUS_FAN_LOCK:
+        with _asus_fan_manager(manager_factory) as manager:
+            controls = manager.Controls
+            for control_index in range(int(controls.Count)):
+                control = _com_collection_item(controls, control_index)
+                profiles = control.Profiles
+                available: list[str] = []
+                selected_index: int | None = None
+                for profile_index in range(int(profiles.Count)):
+                    profile = _com_collection_item(profiles, profile_index)
+                    name = str(_safe_com_value(lambda profile=profile: profile.Name, "") or "")
+                    available.append(name)
+                    normalized = re.sub(r"[^a-z0-9]+", "", name.casefold())
+                    if selected_index is None and any(alias in normalized for alias in aliases[key]):
+                        selected_index = profile_index
+                if selected_index is None:
+                    raise RuntimeError(
+                        f"ASUS fan channel {control_index} has no {preset} profile; available: {available}"
+                    )
+                control.EnableManualMode(False)
+                control.ApplyIndex(selected_index)
+                applied += 1
+                _LOGGER.info(
+                    "ASUS fan profile applied index=%s preset=%s profile_index=%s profile_name=%s",
+                    control_index,
+                    key,
+                    selected_index,
+                    available[selected_index],
+                )
+    return applied
+
+
+@contextmanager
+def _asus_fan_manager(
+    manager_factory: Callable[[], Any] | None = None,
+) -> Iterator[Any]:
+    if manager_factory is not None:
+        yield manager_factory()
+        return
+    if not sys.platform.startswith("win"):
+        raise RuntimeError("ASUS Fan Xpert control is only available on Windows")
+
+    try:
+        import comtypes
+        import comtypes.client
+    except ImportError as exc:
+        raise RuntimeError("comtypes is required for ASUS Fan Xpert control") from exc
+
+    logging.getLogger("comtypes").setLevel(logging.WARNING)
+    comtypes.CoInitialize()
+    manager = None
+    try:
+        manager = comtypes.client.CreateObject(_ASUS_FAN_CONTROL_CLSID, dynamic=True)
+        yield manager
+    finally:
+        manager = None
+        comtypes.CoUninitialize()
+
+
+def _com_collection_item(collection: Any, index: int) -> Any:
+    return _com_indexed_member(collection, "Item", index)
+
+
+def _com_indexed_member(target: Any, member_name: str, index: int) -> Any:
+    accessor = getattr(target, member_name)
+    attempts = (
+        lambda: accessor(index),
+        lambda: accessor[index],
+        lambda: target(index),
+        lambda: target[index],
+    )
+    last_error: Exception | None = None
+    for attempt in attempts:
+        try:
+            return attempt()
+        except Exception as exc:  # noqa: BLE001 - COM collections vary between wrappers.
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"ASUS COM member {member_name}[{index}] was not found")
+
+
+def _safe_com_value(reader: Callable[[], Any], default: Any = None) -> Any:
+    try:
+        return reader()
+    except Exception:  # noqa: BLE001 - optional ASUS properties vary by board generation.
+        return default
+
+
+def _collect_asus_fan_channels(
+    manager_factory: Callable[[], Any] | None = None,
+) -> list[WindowsFanChannel]:
+    global _ASUS_FAN_LAST_ERROR
+
+    with _ASUS_FAN_LOCK:
+        try:
+            with _asus_fan_manager(manager_factory) as manager:
+                controls = manager.Controls
+                count = int(controls.Count)
+                channels: list[WindowsFanChannel] = []
+                for index in range(count):
+                    control = _com_collection_item(controls, index)
+                    raw_duty = _safe_com_value(lambda: int(control.DutyCycle))
+                    minimum_duty = _safe_com_value(lambda: int(control.MinimalDuty), 0)
+                    service_name = str(_safe_com_value(lambda: control.Name, "") or "")
+                    display_name = str(_safe_com_value(lambda: control.DisplayName, "") or "")
+                    name = _asus_fan_display_name(display_name or service_name, index)
+                    minimum_percent = round(max(0, min(255, minimum_duty)) * 100 / 255)
+                    channels.append(
+                        WindowsFanChannel(
+                            name=name,
+                            percent=(
+                                round(max(0, min(255, raw_duty)) * 100 / 255, 1)
+                                if raw_duty is not None
+                                else None
+                            ),
+                            control_id=f"{_ASUS_FAN_CONTROL_PREFIX}{index}",
+                            control_available=True,
+                            control_reason=(
+                                "ASUS Fan Xpert control available"
+                                + (f"; channel minimum {minimum_percent}%" if minimum_percent else "")
+                            ),
+                            hardware_name="ASUS Fan Xpert",
+                            hardware_type="Motherboard",
+                            source="AsusFanControlService",
+                        )
+                    )
+            _ASUS_FAN_LAST_ERROR = ""
+            return channels
+        except Exception as exc:  # noqa: BLE001 - callers fall back to cross-vendor probing.
+            _ASUS_FAN_LAST_ERROR = f"{type(exc).__name__}: {exc}"
+            return []
+
+
+def _set_asus_fan_control_percent(
+    control_id: str,
+    percent: int,
+    *,
+    manager_factory: Callable[[], Any] | None = None,
+) -> None:
+    index_text = control_id.removeprefix(_ASUS_FAN_CONTROL_PREFIX).strip().strip("/")
+    if not index_text.isdigit():
+        raise ValueError(f"Invalid ASUS fan control identifier: {control_id}")
+    index = int(index_text)
+
+    with _ASUS_FAN_LOCK:
+        with _asus_fan_manager(manager_factory) as manager:
+            controls = manager.Controls
+            count = int(controls.Count)
+            if index < 0 or index >= count:
+                raise RuntimeError(f"ASUS fan control index {index} is no longer available")
+            control = _com_collection_item(controls, index)
+            minimum_duty = int(_safe_com_value(lambda: control.MinimalDuty, 0) or 0)
+            control_name = str(_safe_com_value(lambda: control.Name, "") or "")
+            if "PUMP" in re.sub(r"[^A-Z0-9]+", "", control_name.upper()):
+                minimum_duty = max(minimum_duty, round(0.8 * 255))
+            requested_duty = round(percent * 255 / 100)
+            safe_duty = max(requested_duty, max(0, min(255, minimum_duty)))
+            control.EnableManualMode(True)
+            control.DutyCycle = safe_duty
+            _LOGGER.info(
+                "ASUS fan duty applied index=%s requested_percent=%s duty=%s minimum_duty=%s",
+                index,
+                percent,
+                safe_duty,
+                minimum_duty,
+            )
+
+
+def _asus_fan_display_name(value: str, index: int) -> str:
+    compact = re.sub(r"[^A-Z0-9]+", "", value.upper())
+    names = {
+        "CPUFAN": "CPU Fan",
+        "CPUOPTFAN": "CPU OPT Fan",
+        "CHASSISFAN1": "Chassis Fan 1",
+        "CHASSISFAN2": "Chassis Fan 2",
+        "CHASSISFAN3": "Chassis Fan 3",
+        "ECCHASSISFAN4": "Chassis Fan 4",
+        "ECCHASSISFAN5": "Chassis Fan 5",
+        "AIOPUMPFAN": "AIO Pump",
+        "WPUMP1": "Water Pump 1",
+        "WPUMP2": "Water Pump 2",
+        "HAMPFAN": "High Amp Fan",
+    }
+    return names.get(compact, value.strip() or f"ASUS Fan {index + 1}")
+
+
 def _is_gpu_hardware(hardware_type: str, hardware_name: str) -> bool:
     text = f"{hardware_type} {hardware_name}".casefold()
     return "gpu" in text or "nvidia" in text or "radeon" in text
@@ -418,6 +652,53 @@ def _cpu_temperature_from_hardware_monitor() -> float | None:
         if value is not None and 0 < value < 130:
             readings.append(value)
     return max(readings) if readings else None
+
+
+def _cpu_temperature_from_asus_fan_service(
+    manager_factory: Callable[[], Any] | None = None,
+) -> float | None:
+    global _ASUS_TEMPERATURE_PROBE_LOGGED
+
+    if manager_factory is None and not sys.platform.startswith("win"):
+        return None
+    with _ASUS_FAN_LOCK:
+        try:
+            with _asus_fan_manager(manager_factory) as manager:
+                count = int(_safe_com_value(lambda: manager.FanCount, 0) or 0)
+                readings: list[float] = []
+                raw_values: dict[str, list[Any]] = {}
+                for member_name in ("AIFanCpuTemperature", "AIFanCpuTempIn"):
+                    member_values: list[Any] = []
+                    for index in range(count):
+                        value = _safe_com_value(
+                            lambda index=index, member_name=member_name: _com_indexed_member(
+                                manager,
+                                member_name,
+                                index,
+                            )
+                        )
+                        member_values.append(value)
+                        parsed = _normalize_asus_temperature(value)
+                        if parsed is not None:
+                            readings.append(parsed)
+                    raw_values[member_name] = member_values
+                if not _ASUS_TEMPERATURE_PROBE_LOGGED:
+                    _LOGGER.info("ASUS fan temperature probe raw=%s normalized=%s", raw_values, readings)
+                    _ASUS_TEMPERATURE_PROBE_LOGGED = True
+                return max(readings) if readings else None
+        except Exception:  # noqa: BLE001 - generic hardware monitoring remains the fallback.
+            return None
+
+
+def _normalize_asus_temperature(value: Any) -> float | None:
+    parsed = _first_number(value)
+    if parsed is None or parsed <= 0:
+        return None
+    for divisor in (1, 10, 100, 1000):
+        candidate = parsed / divisor
+        if 5 <= candidate < 130:
+            return candidate
+    return None
 
 
 def _cpu_power_from_hardware_monitor() -> float | None:
@@ -469,7 +750,11 @@ def collect_windows_cpu_telemetry() -> CpuTelemetry:
     except Exception as error:  # noqa: BLE001 - telemetry should degrade gracefully.
         errors.append(f"cpu power unavailable: {error}")
 
-    for collector in (_cpu_temperature_from_hardware_monitor, _cpu_temperature_from_acpi):
+    for collector in (
+        _cpu_temperature_from_asus_fan_service,
+        _cpu_temperature_from_hardware_monitor,
+        _cpu_temperature_from_acpi,
+    ):
         try:
             temperature = collector()
         except Exception as error:  # noqa: BLE001

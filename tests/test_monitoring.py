@@ -384,6 +384,135 @@ def test_collect_windows_fan_channels_pairs_rpm_and_control_sensors():
     assert channels[0].control_id == "/lpc/nct6799d/control/0"
 
 
+def test_collect_windows_fan_channels_prefers_asus_service_provider():
+    asus_channels = [
+        windows_monitoring.WindowsFanChannel(
+            name="CPU Fan",
+            percent=45,
+            control_id="asus-fan://0",
+            control_available=True,
+            source="AsusFanControlService",
+        )
+    ]
+    sensor_calls = []
+
+    channels = collect_windows_fan_channels(
+        sensor_data_provider=lambda *_args: sensor_calls.append(True) or [],
+        asus_channel_provider=lambda: asus_channels,
+    )
+
+    assert channels == asus_channels
+    assert sensor_calls == []
+
+
+def test_collect_asus_fan_channels_maps_duty_and_minimum():
+    class Control:
+        Name = "ChASSISFAN1"
+        DisplayName = ""
+        DutyCycle = 128
+        MinimalDuty = 51
+
+    class Controls:
+        Count = 1
+
+        @staticmethod
+        def Item(index):
+            assert index == 0
+            return Control()
+
+    class Manager:
+        pass
+
+    manager = Manager()
+    manager.Controls = Controls()
+
+    channels = windows_monitoring._collect_asus_fan_channels(lambda: manager)
+
+    assert len(channels) == 1
+    assert channels[0].name == "Chassis Fan 1"
+    assert channels[0].percent == 50.2
+    assert channels[0].control_id == "asus-fan://0"
+    assert channels[0].control_available is True
+    assert "minimum 20%" in channels[0].control_reason
+    assert channels[0].source == "AsusFanControlService"
+
+
+def test_asus_fan_service_cpu_temperature_uses_valid_fan_source_readings():
+    class IndexedTemperature:
+        def __call__(self, index):
+            return [48, 51, 0][index]
+
+    class Manager:
+        FanCount = 3
+        AIFanCpuTemperature = IndexedTemperature()
+        AIFanCpuTempIn = IndexedTemperature()
+        AIFanEntryTemp = IndexedTemperature()
+
+    assert windows_monitoring._cpu_temperature_from_asus_fan_service(lambda: Manager()) == 51
+
+
+def test_asus_fan_service_cpu_temperature_accepts_scaled_alternate_readings():
+    class EmptyTemperature:
+        def __call__(self, _index):
+            return 0
+
+    class ScaledTemperature:
+        def __call__(self, index):
+            return [487, 512][index]
+
+    class Manager:
+        FanCount = 2
+        AIFanCpuTemperature = EmptyTemperature()
+        AIFanCpuTempIn = ScaledTemperature()
+        AIFanEntryTemp = EmptyTemperature()
+
+    assert windows_monitoring._cpu_temperature_from_asus_fan_service(lambda: Manager()) == 51.2
+
+
+def test_apply_asus_fan_profile_matches_official_profile_names():
+    class Profile:
+        def __init__(self, name):
+            self.Name = name
+
+    class Profiles:
+        def __init__(self):
+            self.items = [Profile("Silent"), Profile("Standard"), Profile("Turbo"), Profile("Full Speed")]
+            self.Count = len(self.items)
+
+        def Item(self, index):
+            return self.items[index]
+
+    class Control:
+        def __init__(self):
+            self.Profiles = Profiles()
+            self.manual = None
+            self.applied = None
+
+        def EnableManualMode(self, enabled):
+            self.manual = enabled
+
+        def ApplyIndex(self, index):
+            self.applied = index
+
+    class Controls:
+        def __init__(self):
+            self.items = [Control(), Control()]
+            self.Count = len(self.items)
+
+        def Item(self, index):
+            return self.items[index]
+
+    class Manager:
+        pass
+
+    manager = Manager()
+    manager.Controls = Controls()
+
+    assert windows_monitoring.apply_asus_fan_profile("high", manager_factory=lambda: manager) == 2
+    assert [control.applied for control in manager.Controls.items] == [2, 2]
+    assert [control.manual for control in manager.Controls.items] == [False, False]
+
+
 def test_collect_windows_fan_channels_keeps_readonly_fans_visible():
     data = [
         {
@@ -471,6 +600,41 @@ def test_set_windows_fan_control_percent_targets_identifier_with_software_mode(m
     assert "SetSoftware(44)" in script
     assert str(dll_path) in script
     assert "-Recurse" not in script
+
+
+def test_set_windows_fan_control_percent_uses_asus_manual_mode_and_minimum():
+    class Control:
+        MinimalDuty = 153
+        DutyCycle = 0
+        manual_values = []
+
+        def EnableManualMode(self, enabled):
+            self.manual_values.append(bool(enabled))
+
+    control = Control()
+
+    class Controls:
+        Count = 1
+
+        @staticmethod
+        def Item(index):
+            assert index == 0
+            return control
+
+    class Manager:
+        pass
+
+    manager = Manager()
+    manager.Controls = Controls()
+
+    set_windows_fan_control_percent(
+        "asus-fan://0",
+        40,
+        asus_manager_factory=lambda: manager,
+    )
+
+    assert control.manual_values == [True]
+    assert control.DutyCycle == 153
 
 
 def test_lhm_sensor_probe_uses_cached_absolute_dll_path(monkeypatch, tmp_path):

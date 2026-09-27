@@ -933,7 +933,7 @@ def test_main_window_scene_action_applies_host_fan_preset():
     app.processEvents()
 
 
-def test_main_window_routes_dashboard_fan_preset_to_lianli_when_host_pwm_is_unavailable():
+def test_main_window_routes_dashboard_fan_preset_to_host_and_available_lianli():
     app, window = _scene_test_window()
     host_calls: list[tuple[object, bool]] = []
     lianli_calls: list[tuple[object, bool]] = []
@@ -949,7 +949,7 @@ def test_main_window_routes_dashboard_fan_preset_to_lianli_when_host_pwm_is_unav
     applied = window.apply_host_fan_preset("high")
 
     assert applied is True
-    assert host_calls == []
+    assert host_calls == [("high", True)]
     assert lianli_calls == [("high", True)]
     window.close()
     app.processEvents()
